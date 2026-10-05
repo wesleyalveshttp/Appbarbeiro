@@ -1,0 +1,6 @@
+{
+  "name": "BarberOS - Gestão SaaS para Barbearias e Salões",
+  "description": "Sistema completo para barbearias e salões: agendamento online, fila digital em tempo real, painel operacional de cadeiras, controle de profissionais, clientes e financeiro.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
