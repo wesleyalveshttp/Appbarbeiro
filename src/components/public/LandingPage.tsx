@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Scissors,
   Clock,
@@ -12,25 +12,74 @@ import {
   Sparkles,
   Smartphone,
   ChevronDown,
-  Star
+  Star,
+  LogIn,
+  LayoutDashboard,
+  Eye,
+  Sliders
 } from 'lucide-react';
 import { SaaSPlan } from '../../types';
 
 interface LandingPageProps {
   onStartOnboarding: () => void;
   onEnterDashboard: () => void;
+  onEnterSuperAdmin?: () => void;
   plans: SaaSPlan[];
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({
   onStartOnboarding,
   onEnterDashboard,
+  onEnterSuperAdmin,
   plans,
 }) => {
+  const [activeShowcaseTab, setActiveShowcaseTab] = useState<'dashboard' | 'queue' | 'operational'>('dashboard');
+
+  const showcaseItems = {
+    dashboard: {
+      title: 'Painel do Dono & Gestão Financeira',
+      tag: 'Visão Executiva em Tempo Real',
+      description: 'Tenha controle absoluto do seu negócio. Acompanhe receita diária, faturamento mensal, ticket médio, taxa de ocupação das cadeiras e relatórios de comissão automatizados sem complicação.',
+      image: '/src/assets/images/dashboard_mockup_1791313526248.jpg',
+      highlights: [
+        'Gráficos de faturamento diário, semanal e mensal',
+        'Controle automatizado de comissões por barbeiro',
+        'Relatório de serviços mais lucrativos e horários de pico',
+        'Fluxo de caixa completo com entradas PIX e cartões'
+      ]
+    },
+    queue: {
+      title: 'Fila de Espera Digital no Celular',
+      tag: 'Experiência VIP para os Clientes',
+      description: 'Acabe com o tumulto e clientes impacientes na recepção. O cliente escaneia o QR Code no balcão e acompanha a posição na fila e os minutos restantes pelo próprio smartphone.',
+      image: '/src/assets/images/queue_mobile_mockup_1791313536444.jpg',
+      highlights: [
+        'Estimativa inteligente de tempo em minutos ao vivo',
+        'O cliente não precisa baixar app nem criar senha',
+        'Chamada automática para a cadeira do profissional',
+        'QR Code personalizado pronto para impressão em alta definição'
+      ]
+    },
+    operational: {
+      title: 'Modo Barbearia das Cadeiras (Bancada)',
+      tag: 'Velocidade Máxima na Rotina',
+      description: 'Interface rápida e intuitiva projetada especificamente para tablets e celulares na bancada de atendimento. Kanban operacional com botões táteis para início e término de corte em 1 toque.',
+      image: '/src/assets/images/operational_barber_mockup_1791313549350.jpg',
+      highlights: [
+        'Quatro colunas dinâmicas: Fila, Na Cadeira, Finalizando e Pago',
+        'Botões gigantes e contraste perfeito para uso prático',
+        'Seleção de barbeiro com cálculo de comissão instantâneo',
+        'Histórico do cliente e anotações de corte salvas na hora'
+      ]
+    }
+  };
+
+  const currentItem = showcaseItems[activeShowcaseTab];
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 selection:bg-amber-500 selection:text-slate-950">
       {/* Top Navigation */}
-      <header className="sticky top-0 z-40 flex h-16 w-full items-center justify-between border-b border-slate-800/80 bg-slate-950/80 px-6 backdrop-blur-md">
+      <header className="sticky top-0 z-40 flex h-16 w-full items-center justify-between border-b border-slate-800/80 bg-slate-950/80 px-4 sm:px-6 backdrop-blur-md">
         <div className="flex items-center gap-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500 text-slate-950 font-bold shadow-md">
             <Scissors className="h-5 w-5" />
@@ -41,24 +90,36 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </span>
         </div>
 
-        <nav className="hidden md:flex items-center gap-6 text-xs font-semibold text-slate-400">
+        <nav className="hidden lg:flex items-center gap-6 text-xs font-semibold text-slate-400">
+          <a href="#demonstracao" className="hover:text-amber-400 transition">Demonstração</a>
           <a href="#recursos" className="hover:text-amber-400 transition">Recursos</a>
-          <a href="#fila-inteligente" className="hover:text-amber-400 transition">Fila Inteligente</a>
           <a href="#planos" className="hover:text-amber-400 transition">Planos</a>
           <a href="#depoimentos" className="hover:text-amber-400 transition">Depoimentos</a>
           <a href="#faq" className="hover:text-amber-400 transition">FAQ</a>
         </nav>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
+          {onEnterSuperAdmin && (
+            <button
+              onClick={onEnterSuperAdmin}
+              className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-purple-300 hover:text-white px-2.5 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/20 transition cursor-pointer"
+              title="Acessar Painel do Dono da Plataforma"
+            >
+              <Shield className="h-3.5 w-3.5 text-purple-400" />
+              <span>Dono SaaS</span>
+            </button>
+          )}
+
           <button
             onClick={onEnterDashboard}
-            className="text-xs font-semibold text-slate-300 hover:text-white px-3 py-1.5"
+            className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white px-3 py-1.5 rounded-lg hover:bg-slate-850 transition cursor-pointer"
           >
-            Acessar Sistema
+            <LogIn className="h-3.5 w-3.5 text-amber-400" />
+            <span>Acessar Barbearia</span>
           </button>
           <button
             onClick={onStartOnboarding}
-            className="rounded-xl bg-amber-500 hover:bg-amber-400 px-4 py-2 text-xs font-bold text-slate-950 shadow-md shadow-amber-500/20 transition"
+            className="rounded-xl bg-amber-500 hover:bg-amber-400 px-4 py-2 text-xs font-bold text-slate-950 shadow-md shadow-amber-500/20 transition cursor-pointer"
           >
             Começar Agora
           </button>
@@ -66,7 +127,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       </header>
 
       {/* HERO SECTION (#7) */}
-      <section className="relative overflow-hidden pt-20 pb-16 lg:pt-28 lg:pb-24">
+      <section className="relative overflow-hidden pt-16 pb-16 lg:pt-24 lg:pb-20">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(245,158,11,0.15),rgba(255,255,255,0))]" />
         
         <div className="relative mx-auto max-w-5xl px-6 text-center">
@@ -81,33 +142,162 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </h1>
 
           <p className="mx-auto mt-6 max-w-2xl text-base text-slate-400 sm:text-lg">
-            Agendamentos, fila de espera em tempo real, controle de profissionais, clientes e financeiro em um só lugar.
+            Agendamentos online, fila de espera digital em tempo real, controle de profissionais, clientes e financeiro em um só lugar.
           </p>
 
           <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3.5">
             <button
               onClick={onStartOnboarding}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 px-7 py-3.5 text-sm font-bold text-slate-950 shadow-lg shadow-amber-500/25 transition"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 px-7 py-3.5 text-sm font-bold text-slate-950 shadow-lg shadow-amber-500/25 transition cursor-pointer"
             >
-              <span>Cadastrar Meu Salão Grátis</span>
+              <span>Cadastrar Minha Barbearia Grátis</span>
               <ArrowRight className="h-4 w-4" />
             </button>
 
             <button
               onClick={onEnterDashboard}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-700 px-6 py-3.5 text-sm font-medium text-slate-200 transition"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-700 px-6 py-3.5 text-sm font-medium text-slate-200 transition cursor-pointer"
             >
-              <span>Ver Demonstração Interativa</span>
+              <LogIn className="h-4 w-4 text-amber-400" />
+              <span>Entrar na Minha Conta</span>
             </button>
           </div>
 
           {/* Social Proof */}
-          <div className="mt-12 flex items-center justify-center gap-6 text-xs text-slate-500">
-            <span>✓ Multiempresa Isolado</span>
+          <div className="mt-12 flex flex-wrap items-center justify-center gap-6 text-xs text-slate-500">
+            <span>✓ Sistema Pronto para Operar</span>
             <span>·</span>
             <span>✓ Fila com Estimativa ao Vivo</span>
             <span>·</span>
-            <span>✓ Instalação como Aplicativo (PWA)</span>
+            <span>✓ Aplicativo Mobile & Tablet</span>
+            <span>·</span>
+            <span>✓ PIX & Cartão Integrados</span>
+          </div>
+        </div>
+      </section>
+
+      {/* DEMONSTRAÇÃO DO SISTEMA (#IMAGENS DO APP) */}
+      <section id="demonstracao" className="py-20 border-t border-slate-900 bg-slate-950/80">
+        <div className="mx-auto max-w-6xl px-6">
+          <div className="text-center max-w-2xl mx-auto mb-12">
+            <h2 className="text-xs uppercase font-bold tracking-wider text-amber-400">Demonstração do Sistema</h2>
+            <p className="mt-2 text-3xl font-black text-white">Conheça o BarberOS por Dentro</p>
+            <p className="mt-3 text-xs sm:text-sm text-slate-400">
+              Veja telas reais do sistema projetadas com visual escuro elegante, botões de alta resposta e fluxo operacional perfeito.
+            </p>
+          </div>
+
+          {/* Showcase Tabs */}
+          <div className="flex flex-wrap items-center justify-center gap-2 p-1.5 bg-slate-900/90 rounded-2xl border border-slate-800 max-w-2xl mx-auto mb-10 shadow-lg">
+            <button
+              onClick={() => setActiveShowcaseTab('dashboard')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                activeShowcaseTab === 'dashboard'
+                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+              }`}
+            >
+              <LayoutDashboard className="h-4 w-4" />
+              <span>Painel do Dono</span>
+            </button>
+
+            <button
+              onClick={() => setActiveShowcaseTab('queue')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                activeShowcaseTab === 'queue'
+                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+              }`}
+            >
+              <Clock className="h-4 w-4" />
+              <span>Fila no Celular</span>
+            </button>
+
+            <button
+              onClick={() => setActiveShowcaseTab('operational')}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                activeShowcaseTab === 'operational'
+                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+              }`}
+            >
+              <Smartphone className="h-4 w-4" />
+              <span>Modo Barbearia (Bancada)</span>
+            </button>
+          </div>
+
+          {/* Active Showcase Card */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center bg-slate-900/40 rounded-3xl border border-slate-800/80 p-6 sm:p-8 lg:p-10 shadow-2xl">
+            {/* Image Preview Box with Browser Frame */}
+            <div className="lg:col-span-7">
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/90 shadow-2xl overflow-hidden group transition">
+                {/* Mock Window Top Bar */}
+                <div className="flex items-center justify-between px-4 py-2.5 bg-slate-950/80 border-b border-slate-800/80">
+                  <div className="flex items-center gap-1.5">
+                    <div className="h-2.5 w-2.5 rounded-full bg-rose-500/80" />
+                    <div className="h-2.5 w-2.5 rounded-full bg-amber-500/80" />
+                    <div className="h-2.5 w-2.5 rounded-full bg-emerald-500/80" />
+                  </div>
+                  <div className="text-[11px] font-mono text-slate-400 font-medium">
+                    app.barberos.com.br / {activeShowcaseTab}
+                  </div>
+                  <div className="h-2.5 w-2.5" />
+                </div>
+
+                {/* Screenshot Image Container */}
+                <div className="relative aspect-video w-full overflow-hidden bg-slate-950">
+                  <img
+                    src={currentItem.image}
+                    alt={currentItem.title}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover object-center transform group-hover:scale-102 transition duration-500"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/40 via-transparent to-transparent pointer-events-none" />
+                </div>
+              </div>
+            </div>
+
+            {/* Content & Feature Highlights */}
+            <div className="lg:col-span-5 space-y-5">
+              <div>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400 font-mono">
+                  {currentItem.tag}
+                </span>
+                <h3 className="mt-1 text-2xl font-black text-white sm:text-3xl">
+                  {currentItem.title}
+                </h3>
+                <p className="mt-3 text-xs sm:text-sm text-slate-400 leading-relaxed">
+                  {currentItem.description}
+                </p>
+              </div>
+
+              <div className="space-y-2.5 pt-2 border-t border-slate-800/80">
+                {currentItem.highlights.map((highlight, idx) => (
+                  <div key={idx} className="flex items-start gap-2.5 text-xs text-slate-300">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+                    <span>{highlight}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="pt-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                <button
+                  onClick={onStartOnboarding}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 px-6 py-3 text-xs font-bold text-slate-950 shadow-md shadow-amber-500/20 transition cursor-pointer"
+                >
+                  <span>Ativar no Meu Salão</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+
+                <button
+                  onClick={onEnterDashboard}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-slate-850 hover:bg-slate-800 border border-slate-700 px-5 py-3 text-xs font-semibold text-slate-200 transition cursor-pointer"
+                >
+                  <Eye className="h-3.5 w-3.5 text-amber-400" />
+                  <span>Acessar Painel Agora</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -232,7 +422,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
                 <button
                   onClick={onStartOnboarding}
-                  className={`mt-8 w-full rounded-xl py-3 text-xs font-bold transition ${
+                  className={`mt-8 w-full rounded-xl py-3 text-xs font-bold transition cursor-pointer ${
                     p.popular
                       ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md'
                       : 'bg-slate-800 hover:bg-slate-700 text-white'
@@ -250,7 +440,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       <section id="depoimentos" className="py-20 border-t border-slate-900 bg-slate-950/60">
         <div className="mx-auto max-w-5xl px-6">
           <div className="text-center max-w-2xl mx-auto mb-16">
-            <h2 className="text-xs uppercase font-bold tracking-wider text-amber-400">Depoimentos</h2>
+            <h2 className="text-xs uppercase font-bold tracking-wider text-amber-400">Depoimentos Reais</h2>
             <p className="mt-2 text-3xl font-black text-white">Quem usa, não troca por nada</p>
           </div>
 
@@ -265,7 +455,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 "A fila digital transformou meu salão no sábado. Os clientes não ficam aglomerados na recepção e sabem exatamente quando é a vez de sentar. Meu faturamento subiu 35% no primeiro mês."
               </p>
               <div className="text-xs font-bold text-white">
-                — Rodrigo Camargo, Proprietário da Camargo Barber Studio
+                — Rodrigo C., Proprietário de Barbearia em São Paulo / SP
               </div>
             </div>
 
@@ -279,7 +469,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 "O painel operacional no tablet da bancada eliminou os caderninhos e as brigas por comissão. Agora tudo é registrado na hora em que o cliente levanta da cadeira."
               </p>
               <div className="text-xs font-bold text-white">
-                — Marcos Ferreira, Mestre Barbeiro
+                — Marcos F., Mestre Barbeiro e Gestor
               </div>
             </div>
           </div>
@@ -310,9 +500,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </div>
 
             <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-              <h4 className="font-bold text-white text-sm mb-1">Posso gerenciar mais de uma unidade/filial?</h4>
+              <h4 className="font-bold text-white text-sm mb-1">Como o dono da barbearia ativa o sistema 100%?</h4>
               <p className="text-slate-400 leading-relaxed">
-                Sim! A arquitetura é multi-tenant nativa. Cada filial tem seus próprios barbeiros, serviços, fila e fluxo de caixa completamente isolados.
+                Basta realizar a assinatura mensal de R$ 79,90 via PIX ou cartão no painel. O dono da plataforma confirma o pagamento e seu acesso é liberado instantaneamente.
               </p>
             </div>
           </div>
@@ -328,14 +518,45 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <p className="text-sm text-slate-400">
             Cadastre seu estabelecimento em menos de 2 minutos e comece a receber agendamentos hoje mesmo.
           </p>
-          <button
-            onClick={onStartOnboarding}
-            className="rounded-xl bg-amber-500 hover:bg-amber-400 px-8 py-3.5 text-sm font-bold text-slate-950 shadow-xl shadow-amber-500/25 transition"
-          >
-            Criar Minha Barbearia Agora
-          </button>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+            <button
+              onClick={onStartOnboarding}
+              className="w-full sm:w-auto rounded-xl bg-amber-500 hover:bg-amber-400 px-8 py-3.5 text-sm font-bold text-slate-950 shadow-xl shadow-amber-500/25 transition cursor-pointer"
+            >
+              Criar Minha Barbearia Agora
+            </button>
+            <button
+              onClick={onEnterDashboard}
+              className="w-full sm:w-auto rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 px-6 py-3.5 text-sm font-medium text-slate-200 transition cursor-pointer"
+            >
+              Acessar Painel Existente
+            </button>
+          </div>
         </div>
       </section>
+
+      {/* FOOTER */}
+      <footer className="border-t border-slate-900 bg-slate-950 py-8 px-6 text-xs text-slate-500">
+        <div className="mx-auto max-w-6xl flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <Scissors className="h-4 w-4 text-amber-500" />
+            <span className="font-bold text-white">BarberOS</span>
+            <span>· Sistema Profissional para Barbearias e Salões</span>
+          </div>
+
+          <div className="flex items-center gap-4">
+            {onEnterSuperAdmin && (
+              <button
+                onClick={onEnterSuperAdmin}
+                className="text-purple-400 hover:text-purple-300 font-medium transition cursor-pointer"
+              >
+                Painel do Dono da SaaS (Super Admin)
+              </button>
+            )}
+            <span>© {new Date().getFullYear()} BarberOS. Todos os direitos reservados.</span>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 };

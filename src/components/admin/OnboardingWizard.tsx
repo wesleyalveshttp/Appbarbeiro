@@ -112,7 +112,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
         isOpenNow: true,
         whatsappApiConfigured: false,
       },
-      planId: 'profissional',
+      planId: 'premium',
     });
 
     // Create Initial Professional

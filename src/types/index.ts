@@ -42,6 +42,32 @@ export interface WorkingHours {
   lunchEnd?: string; // "13:30"
 }
 
+export type SubscriptionStatus = 'ATIVA' | 'TESTE_GRATIS' | 'PENDENTE' | 'AGUARDANDO_APROVACAO' | 'VENCIDA';
+
+export interface SubscriptionInvoice {
+  id: string;
+  date: string;
+  amount: number;
+  status: 'PAGO' | 'PENDENTE';
+  paymentMethod: 'PIX' | 'CARTAO_CREDITO';
+  receiptUrl?: string;
+  description: string;
+}
+
+export interface OrgSubscription {
+  status: SubscriptionStatus;
+  planName: string;
+  priceMonthly: number; // 79.90
+  trialDaysRemaining?: number;
+  nextBillingDate?: string;
+  lastPaymentDate?: string;
+  paymentMethod?: 'PIX' | 'CARTAO_CREDITO';
+  isPaid: boolean;
+  paymentProofSentAt?: string;
+  paymentProofNote?: string;
+  invoices: SubscriptionInvoice[];
+}
+
 export interface Organization {
   id: string;
   name: string;
@@ -76,6 +102,7 @@ export interface Organization {
     whatsappPhoneNumberId?: string;
   };
   planId: 'gratuito' | 'profissional' | 'premium';
+  subscription: OrgSubscription;
   isActive: boolean;
   createdAt: string;
 }

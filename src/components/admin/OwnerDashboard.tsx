@@ -16,12 +16,16 @@ import {
   ChevronRight,
   Smartphone,
   Sparkles,
-  PhoneCall
+  PhoneCall,
+  CreditCard,
+  RotateCcw,
+  Lock
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization, Appointment, WaitingQueueItem, Professional } from '../../types';
 import { QRCodeModal } from '../common/QRCodeModal';
 import { WhatsAppService } from '../../services/whatsapp';
+import { SubscriptionCheckoutModal } from './SubscriptionCheckoutModal';
 
 interface OwnerDashboardProps {
   organization: Organization;
@@ -42,6 +46,16 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
   const [isOpenNow, setIsOpenNow] = useState(organization.settings.isOpenNow);
   const [showQR, setShowQR] = useState(false);
   const [qrType, setQrType] = useState<'booking' | 'queue'>('booking');
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+
+  const sub = organization.subscription || {
+    status: 'TESTE_GRATIS',
+    planName: 'Plano Pro BarberOS',
+    priceMonthly: 79.9,
+    trialDaysRemaining: 3,
+    isPaid: false,
+    invoices: []
+  };
 
   const todayStr = new Date().toISOString().split('T')[0];
 
@@ -52,6 +66,13 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
     setAppointments(apts);
     setQueue(q);
     setProfessionals(profs);
+  };
+
+  const handleResetMetrics = () => {
+    if (confirm('Deseja zerar todas as métricas, fila, atendimentos e clientes deste salão para começar do zero?')) {
+      StorageService.resetAllMetrics(organization.id);
+      loadData();
+    }
   };
 
   useEffect(() => {
@@ -104,6 +125,46 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Subscription Alert Banner if not fully active */}
+      {sub.status !== 'ATIVA' && (
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-2xl bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-slate-900 border border-amber-500/40 p-4 text-xs shadow-lg">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-slate-950 font-bold shadow-md">
+              <CreditCard className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-white text-sm">Assinatura BarberOS Pro</span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] uppercase font-bold bg-amber-500 text-slate-950">
+                  R$ 79,90 / mês
+                </span>
+              </div>
+              <p className="text-slate-300 mt-0.5">
+                {sub.status === 'TESTE_GRATIS'
+                  ? `Seu salão está em período de testes (${sub.trialDaysRemaining || 3} dias restantes). Ative a mensalidade de R$ 79,90 para liberar 100% do app sem interrupções.`
+                  : 'Para desbloquear 100% do sistema (fila digital, painel de cadeiras, financeiro e agendamentos), ative sua assinatura mensal.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => onNavigate('assinatura')}
+              className="rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition"
+            >
+              Ver Detalhes
+            </button>
+            <button
+              onClick={() => setShowCheckoutModal(true)}
+              className="flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 px-4 py-2 text-xs font-bold text-slate-950 shadow-md shadow-amber-500/20 transition"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>Pagar R$ 79,90 e Liberar 100%</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Top Banner / Salutation */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900/90 to-slate-850 p-6 border border-slate-800 shadow-xl relative overflow-hidden">
         <div className="relative z-10">
@@ -130,6 +191,15 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
 
         {/* Quick actions top right */}
         <div className="flex flex-wrap items-center gap-2 relative z-10">
+          <button
+            onClick={handleResetMetrics}
+            className="flex items-center gap-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 px-3 py-2 text-xs font-medium text-slate-300 hover:text-rose-300 transition"
+            title="Limpar e zerar todas as métricas para começar do zero"
+          >
+            <RotateCcw className="h-3.5 w-3.5 text-slate-400" />
+            <span>Zerar Métricas</span>
+          </button>
+
           <button
             onClick={handleToggleOpen}
             className={`rounded-xl px-3.5 py-2 text-xs font-semibold transition border ${
@@ -598,6 +668,13 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
         title={qrType === 'booking' ? 'QR Code de Agendamento' : 'QR Code da Fila Digital'}
         url={qrType === 'booking' ? bookingUrl : queueUrl}
         establishmentName={organization.name}
+      />
+
+      <SubscriptionCheckoutModal
+        isOpen={showCheckoutModal}
+        onClose={() => setShowCheckoutModal(false)}
+        organization={organization}
+        onSuccess={loadData}
       />
     </div>
   );

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { StorageService } from './services/storage';
 import { Organization, Professional, UserRole } from './types';
+import { CreditCard, Sparkles } from 'lucide-react';
 
 // Common Layout Components
 import { Header } from './components/common/Header';
@@ -8,6 +9,7 @@ import { Sidebar } from './components/common/Sidebar';
 import { BottomNav } from './components/common/BottomNav';
 import { PWAInstallBanner } from './components/common/PWAInstallBanner';
 import { GlobalModals } from './components/common/GlobalModals';
+import { SubscriptionPaywallGate } from './components/common/SubscriptionPaywallGate';
 
 // Admin / Dashboard Views
 import { OwnerDashboard } from './components/admin/OwnerDashboard';
@@ -18,6 +20,8 @@ import { CustomersView } from './components/admin/CustomersView';
 import { ProfessionalsView } from './components/admin/ProfessionalsView';
 import { ServicesView } from './components/admin/ServicesView';
 import { FinancialView } from './components/admin/FinancialView';
+import { SubscriptionView } from './components/admin/SubscriptionView';
+import { SubscriptionCheckoutModal } from './components/admin/SubscriptionCheckoutModal';
 import { ReportsView } from './components/admin/ReportsView';
 import { ReviewsView } from './components/admin/ReviewsView';
 import { SettingsView } from './components/admin/SettingsView';
@@ -39,13 +43,20 @@ export default function App() {
   const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
   const [currentRole, setCurrentRole] = useState<UserRole>('OWNER');
   const [selectedProfessionalId, setSelectedProfessionalId] = useState<string | undefined>();
-  const [currentRoute, setCurrentRoute] = useState<string>('dashboard');
+  const [currentRoute, setCurrentRoute] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const isMobile = window.innerWidth < 1024;
+      return isMobile ? 'dashboard' : 'landing';
+    }
+    return 'landing';
+  });
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Global Modals State
   const [isNewAppointmentOpen, setIsNewAppointmentOpen] = useState(false);
   const [isNewQueueOpen, setIsNewQueueOpen] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+  const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
 
   // Path routing parsing (e.g. /agendar/dom-navalha, /fila/dom-navalha, /b/dom-navalha, /atendimento/token)
   const [publicRouteParams, setPublicRouteParams] = useState<{
@@ -80,6 +91,15 @@ export default function App() {
         setCurrentRoute('public-tracker');
         return;
       }
+
+      // Default initial view: on PC show landing page first; on mobile the barbershop owner is already logged in
+      const isMobile = window.innerWidth < 1024;
+      if (isMobile) {
+        setCurrentRoute('dashboard');
+        setCurrentRole('OWNER');
+      } else {
+        setCurrentRoute('landing');
+      }
     };
 
     parseUrl();
@@ -92,6 +112,23 @@ export default function App() {
     const roleInfo = StorageService.getCurrentRole();
     setCurrentRole(roleInfo.role);
     setSelectedProfessionalId(roleInfo.professionalId);
+
+    const unsub = StorageService.subscribeToRealtimeEvents((event) => {
+      if (
+        event.type === 'SUBSCRIPTION_UPDATED' ||
+        event.type === 'ORG_CHANGED' ||
+        event.type === 'ORGANIZATION_UPDATED' ||
+        event.type === 'METRICS_RESET'
+      ) {
+        const activeOrgId = StorageService.getCurrentOrgId();
+        const updated = StorageService.getOrganizationById(activeOrgId);
+        if (updated) setCurrentOrg({ ...updated });
+      }
+    });
+
+    return () => {
+      unsub();
+    };
   }, []);
 
   const handleSelectOrg = (org: Organization) => {
@@ -193,6 +230,10 @@ export default function App() {
       <LandingPage
         onStartOnboarding={() => setIsOnboardingOpen(true)}
         onEnterDashboard={() => handleNavigate('dashboard')}
+        onEnterSuperAdmin={() => {
+          handleChangeRole('SUPER_ADMIN');
+          handleNavigate('superadmin');
+        }}
         plans={StorageService.getPlans()}
       />
     );
@@ -229,6 +270,47 @@ export default function App() {
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
           <div className="mx-auto max-w-7xl">
+            {/* Subscription Alert for Owner if pending/not fully active */}
+            {currentRole === 'OWNER' && currentOrg.subscription?.status !== 'ATIVA' && currentRoute !== 'assinatura' && (
+              <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-2xl bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-slate-900 border border-amber-500/40 p-4 text-xs shadow-lg">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20">
+                    <CreditCard className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-white text-sm">Assinatura Mensal Necessária</span>
+                      <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-amber-500 text-slate-950">
+                        R$ 79,90 / mês
+                      </span>
+                      <span className="text-[10px] uppercase font-semibold text-amber-300">
+                        {currentOrg.subscription?.status === 'TESTE_GRATIS' ? 'Período de Testes' : 'Aguardando Pagamento'}
+                      </span>
+                    </div>
+                    <p className="text-slate-300 mt-0.5">
+                      Para que o dono da barbearia possa usar o app 100% (agendamentos ilimitados, fila ao vivo com QR Code, painel de cadeiras, comissões e financeiro), é necessário realizar o pagamento mensal de R$ 79,90.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => handleNavigate('assinatura')}
+                    className="rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition cursor-pointer"
+                  >
+                    Ver Detalhes
+                  </button>
+                  <button
+                    onClick={() => setIsSubscriptionModalOpen(true)}
+                    className="flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 px-4 py-2 text-xs font-bold text-slate-950 shadow-md shadow-amber-500/20 transition cursor-pointer"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>Pagar R$ 79,90 e Liberar 100%</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* View Switcher */}
             {currentRoute === 'dashboard' && (
               <OwnerDashboard
@@ -240,12 +322,23 @@ export default function App() {
             )}
 
             {currentRoute === 'operacional' && (
-              <OperationalBoard
+              <SubscriptionPaywallGate
                 organization={currentOrg}
-                selectedProfessionalId={selectedProfessionalId}
-                onOpenNewQueueModal={() => setIsNewQueueOpen(true)}
-                onOpenNewAppointmentModal={() => setIsNewAppointmentOpen(true)}
-              />
+                featureTitle="Modo Barbearia (Painel das Cadeiras)"
+                featureDescription="Visualização em tempo real das cadeiras em atendimento, tempo de corte e chamada da fila."
+                onUnlocked={() => {
+                  const updated = StorageService.getOrganizationById(currentOrg.id);
+                  if (updated) setCurrentOrg({ ...updated });
+                }}
+                onBackToDashboard={() => handleNavigate('dashboard')}
+              >
+                <OperationalBoard
+                  organization={currentOrg}
+                  selectedProfessionalId={selectedProfessionalId}
+                  onOpenNewQueueModal={() => setIsNewQueueOpen(true)}
+                  onOpenNewAppointmentModal={() => setIsNewAppointmentOpen(true)}
+                />
+              </SubscriptionPaywallGate>
             )}
 
             {currentRoute === 'agenda' && (
@@ -273,11 +366,37 @@ export default function App() {
             )}
 
             {currentRoute === 'financeiro' && (
-              <FinancialView organization={currentOrg} />
+              <SubscriptionPaywallGate
+                organization={currentOrg}
+                featureTitle="Controle Financeiro, Caixa e Comissões"
+                featureDescription="Fluxo de caixa, DRE gerencial, distribuição automática de comissões por barbeiro e despesas."
+                onUnlocked={() => {
+                  const updated = StorageService.getOrganizationById(currentOrg.id);
+                  if (updated) setCurrentOrg({ ...updated });
+                }}
+                onBackToDashboard={() => handleNavigate('dashboard')}
+              >
+                <FinancialView organization={currentOrg} />
+              </SubscriptionPaywallGate>
+            )}
+
+            {currentRoute === 'assinatura' && (
+              <SubscriptionView organization={currentOrg} />
             )}
 
             {currentRoute === 'relatorios' && (
-              <ReportsView organization={currentOrg} />
+              <SubscriptionPaywallGate
+                organization={currentOrg}
+                featureTitle="Relatórios e Indicadores Gerenciais"
+                featureDescription="Estatísticas de faturamento, serviços mais lucrativos, taxa de no-show e ranking de desempenho."
+                onUnlocked={() => {
+                  const updated = StorageService.getOrganizationById(currentOrg.id);
+                  if (updated) setCurrentOrg({ ...updated });
+                }}
+                onBackToDashboard={() => handleNavigate('dashboard')}
+              >
+                <ReportsView organization={currentOrg} />
+              </SubscriptionPaywallGate>
             )}
 
             {currentRoute === 'avaliacoes' && (
@@ -289,7 +408,10 @@ export default function App() {
             )}
 
             {currentRoute === 'configuracoes' && (
-              <SettingsView organization={currentOrg} />
+              <SettingsView
+                organization={currentOrg}
+                onNavigate={handleNavigate}
+              />
             )}
 
             {/* Super Admin Global Panel */}
@@ -344,6 +466,18 @@ export default function App() {
         isOpen={isOnboardingOpen}
         onClose={() => setIsOnboardingOpen(false)}
         onSuccess={handleOnboardingSuccess}
+      />
+
+      {/* Global Subscription Checkout Modal (R$ 79,90) */}
+      <SubscriptionCheckoutModal
+        isOpen={isSubscriptionModalOpen}
+        onClose={() => setIsSubscriptionModalOpen(false)}
+        organization={currentOrg}
+        onSuccess={() => {
+          setIsSubscriptionModalOpen(false);
+          const updated = StorageService.getOrganizationById(currentOrg.id);
+          if (updated) setCurrentOrg({ ...updated });
+        }}
       />
     </div>
   );

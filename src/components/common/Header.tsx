@@ -10,7 +10,8 @@ import {
   ChevronDown,
   Sparkles,
   ExternalLink,
-  Plus
+  Plus,
+  CreditCard
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization, Professional } from '../../types';
@@ -291,6 +292,47 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Notification Bell */}
           <NotificationBell organizationId={currentOrg.id} />
 
+          {/* Subscription Status Badge / Button */}
+          <button
+            onClick={() => onNavigate('assinatura')}
+            className={`hidden sm:flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-semibold border transition ${
+              currentOrg.subscription?.status === 'ATIVA'
+                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
+                : currentOrg.subscription?.status === 'AGUARDANDO_APROVACAO'
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30 animate-pulse'
+                : currentOrg.subscription?.status === 'TESTE_GRATIS'
+                ? 'bg-blue-500/10 text-blue-300 border-blue-500/30 hover:bg-blue-500/20'
+                : 'bg-rose-500/15 text-rose-300 border-rose-500/40 hover:bg-rose-500/25 animate-pulse'
+            }`}
+            title="Gerenciar Assinatura de R$ 79,90"
+          >
+            <CreditCard className="h-3.5 w-3.5" />
+            <span>
+              {currentOrg.subscription?.status === 'ATIVA'
+                ? 'Pro Ativo (R$ 79,90)'
+                : currentOrg.subscription?.status === 'AGUARDANDO_APROVACAO'
+                ? 'Aguardando Aprovação Dono'
+                : currentOrg.subscription?.status === 'TESTE_GRATIS'
+                ? 'Testes (R$ 79,90/mês)'
+                : 'Ativar Pro R$ 79,90'}
+            </span>
+          </button>
+
+          {/* SaaS Owner Quick Access Button */}
+          {currentRole !== 'SUPER_ADMIN' && (
+            <button
+              onClick={() => {
+                onChangeRole('SUPER_ADMIN');
+                onNavigate('superadmin');
+              }}
+              className="hidden xl:flex items-center gap-1.5 rounded-xl bg-purple-950/50 hover:bg-purple-900/70 border border-purple-500/40 px-2.5 py-1.5 text-xs text-purple-200 font-semibold transition cursor-pointer"
+              title="Painel do Dono da SaaS: Liberação de Pagamentos (R$ 79,90)"
+            >
+              <Shield className="h-3.5 w-3.5 text-purple-400" />
+              <span>Dono da SaaS (Aprovações)</span>
+            </button>
+          )}
+
           {/* Quick link to public page */}
           <a
             href={`/b/${currentOrg.slug}`}
@@ -302,6 +344,15 @@ export const Header: React.FC<HeaderProps> = ({
             <span>Página Pública</span>
             <ExternalLink className="h-3 w-3" />
           </a>
+
+          {/* Link back to Landing page on PC */}
+          <button
+            onClick={() => onNavigate('landing')}
+            className="hidden lg:flex items-center gap-1 rounded-lg text-slate-400 hover:text-white px-2 py-1.5 text-xs transition cursor-pointer"
+            title="Ver Landing Page do BarberOS"
+          >
+            <span>Landing Page</span>
+          </button>
         </div>
       </header>
 

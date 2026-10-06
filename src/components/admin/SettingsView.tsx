@@ -8,16 +8,21 @@ import {
   Save,
   CheckCircle2,
   AlertCircle,
-  Palette
+  Palette,
+  CreditCard,
+  RotateCcw,
+  Sparkles,
+  ArrowRight
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization } from '../../types';
 
 interface SettingsViewProps {
   organization: Organization;
+  onNavigate?: (route: string) => void;
 }
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ organization }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ organization, onNavigate }) => {
   const [name, setName] = useState(organization.name);
   const [description, setDescription] = useState(organization.description || '');
   const [phone, setPhone] = useState(organization.phone);
@@ -36,6 +41,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ organization }) => {
   const [whatsappPhoneNumberId, setWhatsappPhoneNumberId] = useState(organization.settings.whatsappPhoneNumberId || '');
 
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState(false);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -271,13 +277,98 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ organization }) => {
         <div className="flex justify-end">
           <button
             type="submit"
-            className="flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 px-6 py-2.5 text-xs font-bold text-slate-950 shadow-md transition"
+            className="flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 px-6 py-2.5 text-xs font-bold text-slate-950 shadow-md transition cursor-pointer"
           >
             <Save className="h-4 w-4" />
             <span>Salvar Alterações</span>
           </button>
         </div>
       </form>
+
+      {/* Subscription Card Section */}
+      <div className="rounded-2xl bg-gradient-to-r from-amber-950/40 via-slate-900 to-slate-900 border border-amber-500/30 p-6 shadow-xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20">
+              <CreditCard className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-white">Assinatura BarberOS Pro</h3>
+                <span
+                  className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded ${
+                    organization.subscription?.status === 'ATIVA'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      : organization.subscription?.status === 'TESTE_GRATIS'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                  }`}
+                >
+                  {organization.subscription?.status === 'ATIVA'
+                    ? '100% Liberado'
+                    : organization.subscription?.status === 'TESTE_GRATIS'
+                    ? 'Período de Testes'
+                    : 'Aguardando Pagamento'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Mensalidade de <strong>R$ 79,90/mês</strong> para uso ilimitado de agendamentos, fila ao vivo, cadeiras e financeiro.
+              </p>
+            </div>
+          </div>
+
+          {onNavigate && (
+            <button
+              type="button"
+              onClick={() => onNavigate('assinatura')}
+              className="flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 px-4 py-2 text-xs font-bold text-slate-950 transition cursor-pointer shrink-0"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>Gerenciar / Pagar R$ 79,90</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Zero Metrics / Clean Slate Section */}
+      <div className="rounded-2xl bg-rose-950/20 border border-rose-500/20 p-6 shadow-xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30">
+              <RotateCcw className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white">Zerar Métricas Demo para Primeiro Uso</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Apaga todos os agendamentos, fila de espera, transações de caixa, histórico de clientes e avaliações demo para deixar o app zerado para início real de operação.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (confirm('Tem certeza que deseja zerar todas as métricas, fila, atendimentos e clientes deste salão para o primeiro uso?')) {
+                StorageService.resetAllMetrics(organization.id);
+                setResetSuccess(true);
+                setTimeout(() => setResetSuccess(false), 3500);
+              }
+            }}
+            className="flex items-center gap-2 rounded-xl bg-rose-600 hover:bg-rose-500 px-4 py-2 text-xs font-bold text-white shadow-md transition cursor-pointer shrink-0"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            <span>Zerar Todas as Métricas Agora</span>
+          </button>
+        </div>
+
+        {resetSuccess && (
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <span>Todas as métricas deste estabelecimento foram zeradas com sucesso! O sistema está limpo para primeiro uso.</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

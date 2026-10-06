@@ -16,7 +16,8 @@ import {
   Globe,
   HelpCircle,
   LogOut,
-  ChevronRight
+  ChevronRight,
+  CreditCard
 } from 'lucide-react';
 import { UserRole } from '../../types';
 
@@ -85,6 +86,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       { id: 'profissionais', label: 'Profissionais & Comissões', icon: Scissors },
       { id: 'servicos', label: 'Serviços & Preços', icon: Sparkles },
       { id: 'financeiro', label: 'Financeiro & Caixa', icon: DollarSign },
+      { id: 'assinatura', label: 'Assinatura (R$ 79,90)', icon: CreditCard, badge: 'R$ 79,90' },
       { id: 'relatorios', label: 'Relatórios & DRE', icon: BarChart3 },
       { id: 'avaliacoes', label: 'Avaliações', icon: Star },
       { id: 'qrcodes', label: 'Links & QR Codes', icon: QrCode },

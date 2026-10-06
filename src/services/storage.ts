@@ -15,7 +15,7 @@ import {
   PaymentMethod
 } from '../types';
 
-const STORAGE_KEY = 'barberos_saas_data_v1';
+const STORAGE_KEY = 'barberos_saas_data_v6_real';
 const CURRENT_ORG_KEY = 'barberos_current_org_id';
 const CURRENT_ROLE_KEY = 'barberos_current_user_role';
 
@@ -74,54 +74,23 @@ export interface AppDatabase {
 
 const DEFAULT_PLANS: SaaSPlan[] = [
   {
-    id: 'gratuito',
-    name: 'Gratuito',
-    priceMonthly: 0,
-    priceAnnual: 0,
-    maxProfessionals: 1,
-    maxAppointmentsPerMonth: 50,
-    features: [
-      '1 Profissional habilitado',
-      'Até 50 agendamentos/mês',
-      'Agenda digital diária',
-      'Cadastro básico de clientes',
-      'Link público padrão'
-    ]
-  },
-  {
-    id: 'profissional',
-    name: 'Profissional',
-    priceMonthly: 39.9,
-    priceAnnual: 399.0,
-    maxProfessionals: 5,
-    maxAppointmentsPerMonth: -1,
-    popular: true,
-    features: [
-      'Até 5 Profissionais',
-      'Agendamentos ilimitados',
-      'Fila de espera em tempo real',
-      'Notificações no sistema',
-      'Relatórios e métricas de desempenho',
-      'Página personalizada com QR Code',
-      'Histórico de clientes e atendimentos'
-    ]
-  },
-  {
     id: 'premium',
-    name: 'Premium',
+    name: 'Plano Pro Barbearia (100% Liberado)',
     priceMonthly: 79.9,
     priceAnnual: 799.0,
     maxProfessionals: -1,
     maxAppointmentsPerMonth: -1,
+    popular: true,
     features: [
-      'Profissionais ilimitados',
-      'Fila inteligente com estimativa ao vivo',
-      'Camada de integração WhatsApp Oficial',
-      'Módulo financeiro completo & DRE',
-      'Controle de comissões individualizadas',
-      'Relatórios avançados com exportação',
-      'Personalização visual completa da marca',
-      'Suporte prioritário VIP'
+      'Uso 100% Completo do BarberOS',
+      'Profissionais e cadeiras ilimitados',
+      'Fila de espera digital ao vivo com QR Code',
+      'Painel operacional das cadeiras (Modo Barbearia)',
+      'Agendamentos online 24/7 sem taxa extra',
+      'Módulo financeiro completo, fluxo de caixa e DRE',
+      'Controle automático de comissões por profissional',
+      'Notificações no WhatsApp para clientes e barbeiros',
+      'Suporte prioritário e backup automático'
     ]
   }
 ];
@@ -137,18 +106,18 @@ const getSeedData = (): AppDatabase => {
 
   const org1: Organization = {
     id: 'org-prime',
-    name: 'Barbearia Dom Navalha',
-    slug: 'dom-navalha',
+    name: 'Minha Barbearia',
+    slug: 'barbearia',
     type: 'Barbearia',
-    description: 'A melhor experiência em corte tradicional, barba na toalha quente e cuidados masculinos de alto padrão.',
-    phone: '(11) 98765-4321',
-    whatsapp: '11987654321',
-    instagram: '@domnavalha.oficial',
+    description: 'Atendimento de alta qualidade, corte de cabelo moderno e tradicional, barba e estilo.',
+    phone: '(11) 99999-0000',
+    whatsapp: '11999990000',
+    instagram: '@minhabarbearia',
     address: {
       cep: '01310-100',
-      street: 'Av. Paulista',
-      number: '1420',
-      neighborhood: 'Bela Vista',
+      street: 'Rua Principal',
+      number: '100',
+      neighborhood: 'Centro',
       city: 'São Paulo',
       state: 'SP'
     },
@@ -168,122 +137,40 @@ const getSeedData = (): AppDatabase => {
       autoNotifyAheadCount: 2,
       primaryColor: '#f59e0b',
       secondaryColor: '#0f172a',
-      welcomeMessage: 'Bem-vindo à Dom Navalha! Agende seu horário ou acompanhe a fila ao vivo.',
+      welcomeMessage: 'Bem-vindo! Agende seu horário ou acompanhe a fila ao vivo.',
       isOpenNow: true,
       whatsappApiConfigured: false
     },
     planId: 'premium',
+    subscription: {
+      status: 'PENDENTE',
+      planName: 'Plano Pro Barbearia (R$ 79,90/mês)',
+      priceMonthly: 79.9,
+      trialDaysRemaining: 0,
+      nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      isPaid: false,
+      invoices: []
+    },
     isActive: true,
     createdAt: '2026-01-10T10:00:00.000Z'
-  };
-
-  const org2: Organization = {
-    id: 'org-glamour',
-    name: 'Studio Glamour & Hair',
-    slug: 'studio-glamour',
-    type: 'Salão de beleza',
-    description: 'Especialistas em mechas, visagismo, corte feminino e estética capilar.',
-    phone: '(21) 97654-3210',
-    whatsapp: '21976543210',
-    instagram: '@studioglamour.rio',
-    address: {
-      cep: '22041-001',
-      street: 'Rua Barata Ribeiro',
-      number: '502',
-      neighborhood: 'Copacabana',
-      city: 'Rio de Janeiro',
-      state: 'RJ'
-    },
-    workingHours: [
-      { dayOfWeek: 0, dayName: 'Domingo', isOpen: false, openTime: '10:00', closeTime: '16:00' },
-      { dayOfWeek: 1, dayName: 'Segunda-feira', isOpen: false, openTime: '09:00', closeTime: '19:00' },
-      { dayOfWeek: 2, dayName: 'Terça-feira', isOpen: true, openTime: '09:00', closeTime: '19:00' },
-      { dayOfWeek: 3, dayName: 'Quarta-feira', isOpen: true, openTime: '09:00', closeTime: '19:00' },
-      { dayOfWeek: 4, dayName: 'Quinta-feira', isOpen: true, openTime: '09:00', closeTime: '19:00' },
-      { dayOfWeek: 5, dayName: 'Sexta-feira', isOpen: true, openTime: '09:00', closeTime: '20:00' },
-      { dayOfWeek: 6, dayName: 'Sábado', isOpen: true, openTime: '08:30', closeTime: '19:00' }
-    ],
-    settings: {
-      maxLateMinutes: 20,
-      cancellationHoursLimit: 3,
-      queueMode: 'PER_PROFESSIONAL',
-      autoNotifyAheadCount: 1,
-      primaryColor: '#ec4899',
-      secondaryColor: '#1e1b4b',
-      welcomeMessage: 'Studio Glamour & Hair: Cuidando da sua beleza e bem-estar.',
-      isOpenNow: true,
-      whatsappApiConfigured: false
-    },
-    planId: 'profissional',
-    isActive: true,
-    createdAt: '2026-02-01T10:00:00.000Z'
   };
 
   const professionals: Professional[] = [
     {
       id: 'prof-1',
       organizationId: 'org-prime',
-      name: 'João Mestre Navalha',
-      email: 'joao@domnavalha.com.br',
-      phone: '(11) 98765-1111',
-      whatsapp: '11987651111',
-      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-      specialties: ['Corte Degradê Clássico', 'Barba Terapia', 'Navalhado'],
-      serviceIds: ['srv-1', 'srv-2', 'srv-3', 'srv-4'],
-      commissionPercent: 40,
+      name: 'Barbeiro Responsável',
+      email: 'barbeiro@barbearia.com',
+      phone: '(11) 99999-0001',
+      whatsapp: '11999990001',
+      avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
+      specialties: ['Corte Clássico & Fade', 'Barba Tradicional', 'Acabamento'],
+      serviceIds: ['srv-1', 'srv-2', 'srv-3'],
+      commissionPercent: 50,
       isActive: true,
       isAvailableToday: true,
       workingDays: [1, 2, 3, 4, 5, 6],
       createdAt: '2026-01-11T10:00:00.000Z'
-    },
-    {
-      id: 'prof-2',
-      organizationId: 'org-prime',
-      name: 'Carlos Oliveira',
-      email: 'carlos@domnavalha.com.br',
-      phone: '(11) 98765-2222',
-      whatsapp: '11987652222',
-      avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
-      specialties: ['Corte Moderno', 'Pigmentação de Barba', 'Freestyle'],
-      serviceIds: ['srv-1', 'srv-2', 'srv-4', 'srv-5'],
-      commissionPercent: 35,
-      isActive: true,
-      isAvailableToday: true,
-      workingDays: [1, 2, 3, 4, 5, 6],
-      createdAt: '2026-01-12T10:00:00.000Z'
-    },
-    {
-      id: 'prof-3',
-      organizationId: 'org-prime',
-      name: 'Lucas Barbeiro',
-      email: 'lucas@domnavalha.com.br',
-      phone: '(11) 98765-3333',
-      whatsapp: '11987653333',
-      avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80',
-      specialties: ['Fade Tradicional', 'Barboterapia', 'Sobrancelha'],
-      serviceIds: ['srv-1', 'srv-3', 'srv-5'],
-      commissionPercent: 35,
-      isActive: true,
-      isAvailableToday: true,
-      workingDays: [2, 3, 4, 5, 6],
-      createdAt: '2026-01-15T10:00:00.000Z'
-    },
-    // Org 2 professional
-    {
-      id: 'prof-4',
-      organizationId: 'org-glamour',
-      name: 'Juliana Paes Hair',
-      email: 'juliana@studioglamour.com.br',
-      phone: '(21) 98888-4444',
-      whatsapp: '21988884444',
-      avatarUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80',
-      specialties: ['Colorimetria', 'Corte em Camadas', 'Escova Modelada'],
-      serviceIds: ['srv-6', 'srv-7'],
-      commissionPercent: 45,
-      isActive: true,
-      isAvailableToday: true,
-      workingDays: [2, 3, 4, 5, 6],
-      createdAt: '2026-02-02T10:00:00.000Z'
     }
   ];
 
@@ -291,436 +178,57 @@ const getSeedData = (): AppDatabase => {
     {
       id: 'srv-1',
       organizationId: 'org-prime',
-      name: 'Corte Masculino Premium',
-      description: 'Corte tesoura e máquina, lavagem refrescante e finalização com pomada modeladora.',
-      price: 45,
+      name: 'Corte Masculino',
+      description: 'Corte na máquina e tesoura com lavagem e finalização.',
+      price: 40,
       durationMinutes: 30,
       category: 'Cabelo',
-      professionalIds: ['prof-1', 'prof-2', 'prof-3'],
+      professionalIds: ['prof-1'],
       isActive: true,
       createdAt: '2026-01-10T11:00:00.000Z'
     },
     {
       id: 'srv-2',
       organizationId: 'org-prime',
-      name: 'Combo Corte + Barba Terapia',
-      description: 'Corte completo alinhado e barba com toalha quente, vapor de ozônio e óleos essenciais.',
-      price: 80,
-      durationMinutes: 60,
-      category: 'Combos',
-      professionalIds: ['prof-1', 'prof-2'],
+      name: 'Barba Tradicional',
+      description: 'Toalha quente, navalhete descartável e hidratação.',
+      price: 35,
+      durationMinutes: 30,
+      category: 'Barba',
+      professionalIds: ['prof-1'],
       isActive: true,
       createdAt: '2026-01-10T11:00:00.000Z'
     },
     {
       id: 'srv-3',
       organizationId: 'org-prime',
-      name: 'Barba Tradicional',
-      description: 'Alinhamento com navalhete descartável, toalha quente e pós-barba balsâmico.',
-      price: 40,
-      durationMinutes: 30,
-      category: 'Barba',
-      professionalIds: ['prof-1', 'prof-3'],
-      isActive: true,
-      createdAt: '2026-01-10T11:00:00.000Z'
-    },
-    {
-      id: 'srv-4',
-      organizationId: 'org-prime',
-      name: 'Pigmentação de Barba ou Cabelo',
-      description: 'Disfarce de fios brancos e realce dos contornos faciais.',
-      price: 35,
-      durationMinutes: 20,
-      category: 'Tratamentos',
-      professionalIds: ['prof-1', 'prof-2'],
-      isActive: true,
-      createdAt: '2026-01-10T11:00:00.000Z'
-    },
-    {
-      id: 'srv-5',
-      organizationId: 'org-prime',
-      name: 'Design de Sobrancelha na Navalha',
-      description: 'Limpeza e alinhamento milimétrico das sobrancelhas.',
-      price: 20,
-      durationMinutes: 15,
-      category: 'Rosto',
-      professionalIds: ['prof-2', 'prof-3'],
-      isActive: true,
-      createdAt: '2026-01-10T11:00:00.000Z'
-    },
-    // Org 2 services
-    {
-      id: 'srv-6',
-      organizationId: 'org-glamour',
-      name: 'Corte e Escova Glamour',
-      description: 'Visagismo, lavagem hidratante e escova modelada.',
-      price: 120,
+      name: 'Combo Corte + Barba',
+      description: 'Corte completo e barba alinhada com toalha quente.',
+      price: 70,
       durationMinutes: 50,
-      category: 'Cabelo',
-      professionalIds: ['prof-4'],
+      category: 'Combos',
+      professionalIds: ['prof-1'],
       isActive: true,
-      createdAt: '2026-02-02T11:00:00.000Z'
-    },
-    {
-      id: 'srv-7',
-      organizationId: 'org-glamour',
-      name: 'Hidratação Profunda & Reconstrução',
-      description: 'Tratamento intensivo com ampola de queratina e selagem térmica.',
-      price: 160,
-      durationMinutes: 60,
-      category: 'Tratamentos',
-      professionalIds: ['prof-4'],
-      isActive: true,
-      createdAt: '2026-02-02T11:00:00.000Z'
+      createdAt: '2026-01-10T11:00:00.000Z'
     }
   ];
 
-  const customers: Customer[] = [
-    {
-      id: 'cust-1',
-      organizationId: 'org-prime',
-      name: 'Pedro Henrique Ramos',
-      phone: '(11) 99111-2233',
-      whatsapp: '11991112233',
-      email: 'pedro.ramos@email.com',
-      notes: 'Prefere degradê na zero alta. Café expresso sem açúcar.',
-      totalAppointments: 8,
-      totalSpent: 480,
-      favoriteProfessionalId: 'prof-1',
-      favoriteServiceId: 'srv-2',
-      lastVisit: today,
-      createdAt: '2026-01-20T14:00:00.000Z'
-    },
-    {
-      id: 'cust-2',
-      organizationId: 'org-prime',
-      name: 'Marcos Vinicius Silva',
-      phone: '(11) 98222-3344',
-      whatsapp: '11982223344',
-      email: 'marcos.v@email.com',
-      notes: 'Pele sensível no pescoço, usar loção calmante.',
-      totalAppointments: 5,
-      totalSpent: 225,
-      favoriteProfessionalId: 'prof-2',
-      favoriteServiceId: 'srv-1',
-      lastVisit: today,
-      createdAt: '2026-02-01T15:00:00.000Z'
-    },
-    {
-      id: 'cust-3',
-      organizationId: 'org-prime',
-      name: 'André Carvalho',
-      phone: '(11) 97333-4455',
-      whatsapp: '11973334455',
-      notes: 'Cliente pontual.',
-      totalAppointments: 3,
-      totalSpent: 165,
-      favoriteProfessionalId: 'prof-1',
-      favoriteServiceId: 'srv-1',
-      lastVisit: '2026-03-28',
-      createdAt: '2026-02-15T16:00:00.000Z'
-    },
-    {
-      id: 'cust-4',
-      organizationId: 'org-prime',
-      name: 'Felipe Santana',
-      phone: '(11) 96444-5566',
-      whatsapp: '11964445566',
-      totalAppointments: 2,
-      totalSpent: 120,
-      favoriteProfessionalId: 'prof-3',
-      favoriteServiceId: 'srv-2',
-      createdAt: '2026-03-01T10:00:00.000Z'
-    },
-    {
-      id: 'cust-5',
-      organizationId: 'org-prime',
-      name: 'Rodrigo Medeiros',
-      phone: '(11) 95555-6677',
-      whatsapp: '11955556677',
-      totalAppointments: 1,
-      totalSpent: 45,
-      favoriteProfessionalId: 'prof-1',
-      favoriteServiceId: 'srv-1',
-      createdAt: '2026-03-10T12:00:00.000Z'
-    }
-  ];
-
-  const appointments: Appointment[] = [
-    {
-      id: 'apt-1',
-      token: 'tok_pedro_live_01',
-      organizationId: 'org-prime',
-      customerId: 'cust-1',
-      customerName: 'Pedro Henrique Ramos',
-      customerPhone: '(11) 99111-2233',
-      serviceId: 'srv-2',
-      serviceName: 'Combo Corte + Barba Terapia',
-      servicePrice: 80,
-      durationMinutes: 60,
-      professionalId: 'prof-1',
-      professionalName: 'João Mestre Navalha',
-      date: today,
-      time: '14:00',
-      status: 'NA CADEIRA',
-      statusHistory: [
-        { status: 'AGENDADO', timestamp: `${today}T10:00:00.000Z`, note: 'Agendado online' },
-        { status: 'CHEGOU', timestamp: `${today}T13:55:00.000Z`, note: 'Chegou na recepção' },
-        { status: 'NA CADEIRA', timestamp: `${today}T14:02:00.000Z`, note: 'Iniciou atendimento com João' }
-      ],
-      paymentStatus: 'PENDENTE',
-      notes: 'Toalha quente e barba alinhada',
-      arrivedAt: `${today}T13:55:00.000Z`,
-      onChairAt: `${today}T14:02:00.000Z`,
-      createdAt: `${today}T10:00:00.000Z`
-    },
-    {
-      id: 'apt-2',
-      token: 'tok_marcos_live_02',
-      organizationId: 'org-prime',
-      customerId: 'cust-2',
-      customerName: 'Marcos Vinicius Silva',
-      customerPhone: '(11) 98222-3344',
-      serviceId: 'srv-1',
-      serviceName: 'Corte Masculino Premium',
-      servicePrice: 45,
-      durationMinutes: 30,
-      professionalId: 'prof-2',
-      professionalName: 'Carlos Oliveira',
-      date: today,
-      time: '14:30',
-      status: 'A CAMINHO',
-      statusHistory: [
-        { status: 'AGENDADO', timestamp: `${today}T09:30:00.000Z` },
-        { status: 'CONFIRMADO', timestamp: `${today}T12:00:00.000Z` },
-        { status: 'A CAMINHO', timestamp: `${today}T14:15:00.000Z`, note: 'Cliente informou que está a 5 min' }
-      ],
-      paymentStatus: 'PENDENTE',
-      createdAt: `${today}T09:30:00.000Z`
-    },
-    {
-      id: 'apt-3',
-      token: 'tok_andre_live_03',
-      organizationId: 'org-prime',
-      customerId: 'cust-3',
-      customerName: 'André Carvalho',
-      customerPhone: '(11) 97333-4455',
-      serviceId: 'srv-1',
-      serviceName: 'Corte Masculino Premium',
-      servicePrice: 45,
-      durationMinutes: 30,
-      professionalId: 'prof-1',
-      professionalName: 'João Mestre Navalha',
-      date: today,
-      time: '11:00',
-      status: 'FINALIZADO',
-      statusHistory: [
-        { status: 'AGENDADO', timestamp: `${today}T08:00:00.000Z` },
-        { status: 'CHEGOU', timestamp: `${today}T10:58:00.000Z` },
-        { status: 'NA CADEIRA', timestamp: `${today}T11:05:00.000Z` },
-        { status: 'FINALIZADO', timestamp: `${today}T11:38:00.000Z`, note: 'Atendimento concluído com sucesso' }
-      ],
-      paymentMethod: 'PIX',
-      paymentStatus: 'PAGO',
-      commissionPaid: 18, // 40% of 45
-      arrivedAt: `${today}T10:58:00.000Z`,
-      onChairAt: `${today}T11:05:00.000Z`,
-      finishedAt: `${today}T11:38:00.000Z`,
-      reviewId: 'rev-1',
-      createdAt: `${today}T08:00:00.000Z`
-    },
-    {
-      id: 'apt-4',
-      token: 'tok_felipe_live_04',
-      organizationId: 'org-prime',
-      customerId: 'cust-4',
-      customerName: 'Felipe Santana',
-      customerPhone: '(11) 96444-5566',
-      serviceId: 'srv-2',
-      serviceName: 'Combo Corte + Barba Terapia',
-      servicePrice: 80,
-      durationMinutes: 60,
-      professionalId: 'prof-3',
-      professionalName: 'Lucas Barbeiro',
-      date: today,
-      time: '15:30',
-      status: 'CONFIRMADO',
-      statusHistory: [
-        { status: 'AGENDADO', timestamp: `${today}T11:15:00.000Z` },
-        { status: 'CONFIRMADO', timestamp: `${today}T13:00:00.000Z` }
-      ],
-      paymentStatus: 'PENDENTE',
-      createdAt: `${today}T11:15:00.000Z`
-    },
-    {
-      id: 'apt-5',
-      token: 'tok_rodrigo_live_05',
-      organizationId: 'org-prime',
-      customerId: 'cust-5',
-      customerName: 'Rodrigo Medeiros',
-      customerPhone: '(11) 95555-6677',
-      serviceId: 'srv-1',
-      serviceName: 'Corte Masculino Premium',
-      servicePrice: 45,
-      durationMinutes: 30,
-      professionalId: 'prof-1',
-      professionalName: 'João Mestre Navalha',
-      date: today,
-      time: '16:45',
-      status: 'AGENDADO',
-      statusHistory: [
-        { status: 'AGENDADO', timestamp: `${today}T12:00:00.000Z` }
-      ],
-      paymentStatus: 'PENDENTE',
-      createdAt: `${today}T12:00:00.000Z`
-    }
-  ];
-
-  const queue: WaitingQueueItem[] = [
-    {
-      id: 'q-1',
-      ticketNumber: 101,
-      organizationId: 'org-prime',
-      customerName: 'Lucas Martins',
-      customerPhone: '(11) 94444-1234',
-      serviceId: 'srv-1',
-      serviceName: 'Corte Masculino Premium',
-      preferredProfessionalId: 'prof-2',
-      status: 'PROXIMO',
-      joinedAt: `${today}T13:40:00.000Z`,
-      notes: 'Sem preferência rígida, pode ser qualquer um disponível',
-      estimatedWaitMinutes: 5
-    },
-    {
-      id: 'q-2',
-      ticketNumber: 102,
-      organizationId: 'org-prime',
-      customerName: 'Gabriel Souza',
-      customerPhone: '(11) 93333-5678',
-      serviceId: 'srv-2',
-      serviceName: 'Combo Corte + Barba Terapia',
-      preferredProfessionalId: 'prof-1',
-      status: 'AGUARDANDO',
-      joinedAt: `${today}T13:52:00.000Z`,
-      notes: 'Prefere ser atendido pelo João',
-      estimatedWaitMinutes: 25
-    },
-    {
-      id: 'q-3',
-      ticketNumber: 103,
-      organizationId: 'org-prime',
-      customerName: 'Matheus Costa',
-      customerPhone: '(11) 92222-9012',
-      serviceId: 'srv-3',
-      serviceName: 'Barba Tradicional',
-      status: 'AGUARDANDO',
-      joinedAt: `${today}T14:10:00.000Z`,
-      estimatedWaitMinutes: 45
-    }
-  ];
-
-  const transactions: Transaction[] = [
-    {
-      id: 'tx-1',
-      organizationId: 'org-prime',
-      type: 'INCOME',
-      category: 'Serviço',
-      description: 'Atendimento André Carvalho - Corte Masculino Premium',
-      amount: 45,
-      paymentMethod: 'PIX',
-      appointmentId: 'apt-3',
-      professionalId: 'prof-1',
-      date: today,
-      createdAt: `${today}T11:38:00.000Z`
-    },
-    {
-      id: 'tx-2',
-      organizationId: 'org-prime',
-      type: 'COMMISSION',
-      category: 'Comissão',
-      description: 'Comissão João Mestre Navalha (40%)',
-      amount: -18,
-      appointmentId: 'apt-3',
-      professionalId: 'prof-1',
-      date: today,
-      createdAt: `${today}T11:38:00.000Z`
-    },
-    {
-      id: 'tx-3',
-      organizationId: 'org-prime',
-      type: 'EXPENSE',
-      category: 'Insumos',
-      description: 'Compra de Lâminas descartáveis e toalhas térmicas',
-      amount: -120,
-      paymentMethod: 'CARTAO_DEBITO',
-      date: today,
-      createdAt: `${today}T09:00:00.000Z`
-    },
-    {
-      id: 'tx-4',
-      organizationId: 'org-prime',
-      type: 'INCOME',
-      category: 'Serviço',
-      description: 'Atendimento do dia anterior - Pacote Barba & Cabelo',
-      amount: 160,
-      paymentMethod: 'CARTAO_CREDITO',
-      date: '2026-03-29',
-      createdAt: '2026-03-29T18:00:00.000Z'
-    }
-  ];
-
-  const reviews: Review[] = [
-    {
-      id: 'rev-1',
-      organizationId: 'org-prime',
-      appointmentId: 'apt-3',
-      customerName: 'André Carvalho',
-      rating: 5,
-      comment: 'Atendimento impecável do João! Barba na toalha quente e corte perfeito. Recomendo demais!',
-      serviceName: 'Corte Masculino Premium',
-      professionalName: 'João Mestre Navalha',
-      createdAt: `${today}T12:00:00.000Z`
-    },
-    {
-      id: 'rev-2',
-      organizationId: 'org-prime',
-      appointmentId: 'apt-old-1',
-      customerName: 'Pedro Henrique Ramos',
-      rating: 5,
-      comment: 'Ambiente top, cerveja gelada enquanto espera e profissionais nota 10.',
-      serviceName: 'Combo Corte + Barba Terapia',
-      professionalName: 'João Mestre Navalha',
-      createdAt: '2026-03-25T17:00:00.000Z'
-    }
-  ];
+  // Zeroed metrics for clean first use
+  const customers: Customer[] = [];
+  const appointments: Appointment[] = [];
+  const queue: WaitingQueueItem[] = [];
+  const transactions: Transaction[] = [];
+  const reviews: Review[] = [];
 
   const notifications: NotificationItem[] = [
     {
       id: 'notif-1',
       organizationId: 'org-prime',
-      type: 'CUSTOMER_ARRIVED',
-      title: 'Cliente chegou!',
-      message: 'Pedro Henrique Ramos chegou na barbearia para o horário das 14:00.',
-      timestamp: `${today}T13:55:00.000Z`,
-      isRead: false
-    },
-    {
-      id: 'notif-2',
-      organizationId: 'org-prime',
-      type: 'QUEUE_JOIN',
-      title: 'Novo cliente na fila!',
-      message: 'Matheus Costa entrou na fila de espera (Senha #103).',
-      timestamp: `${today}T14:10:00.000Z`,
-      isRead: false
-    },
-    {
-      id: 'notif-3',
-      organizationId: 'org-prime',
       type: 'STATUS_CHANGE',
-      title: 'Cliente a caminho',
-      message: 'Marcos Vinicius Silva avisou que está a caminho do horário das 14:30.',
-      timestamp: `${today}T14:15:00.000Z`,
-      isRead: true
+      title: 'Métricas Zeradas & Primeiro Uso',
+      message: 'Todas as métricas foram zeradas para uso real. Para usar o app 100%, o dono da barbearia deve realizar o pagamento mensal de R$ 79,90 no menu Assinatura.',
+      timestamp: new Date().toISOString(),
+      isRead: false
     }
   ];
 
@@ -728,23 +236,15 @@ const getSeedData = (): AppDatabase => {
     {
       id: 'log-1',
       organizationId: 'org-prime',
-      userName: 'João Proprietário',
-      action: 'ABERTURA_EXPEDIENTE',
-      details: 'Estabelecimento aberto para atendimentos e fila digital',
-      timestamp: `${today}T08:30:00.000Z`
-    },
-    {
-      id: 'log-2',
-      organizationId: 'org-prime',
-      userName: 'Carlos Oliveira',
-      action: 'CHAMAR_FILA',
-      details: 'Lucas Martins (#101) colocado como PRÓXIMO',
-      timestamp: `${today}T13:45:00.000Z`
+      userName: 'Sistema',
+      action: 'INICIALIZACAO',
+      details: 'Plataforma BarberOS inicializada zerada para primeiro uso',
+      timestamp: new Date().toISOString()
     }
   ];
 
   return {
-    organizations: [org1, org2],
+    organizations: [org1],
     professionals,
     services,
     customers,
@@ -831,12 +331,25 @@ export class StorageService {
     return this.getDB().organizations.find(o => o.slug.toLowerCase() === slug.toLowerCase());
   }
 
-  static createOrganization(data: Omit<Organization, 'id' | 'createdAt' | 'isActive'>): Organization {
+  static createOrganization(
+    data: Omit<Organization, 'id' | 'createdAt' | 'isActive' | 'subscription'> & {
+      subscription?: Organization['subscription'];
+    }
+  ): Organization {
     const db = this.getDB();
     const id = `org-${Date.now()}`;
     const newOrg: Organization = {
       ...data,
       id,
+      subscription: data.subscription || {
+        status: 'PENDENTE',
+        planName: 'Plano Pro Barbearia (R$ 79,90/mês)',
+        priceMonthly: 79.9,
+        trialDaysRemaining: 0,
+        nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        isPaid: false,
+        invoices: []
+      },
       isActive: true,
       createdAt: new Date().toISOString()
     };
@@ -1572,5 +1085,219 @@ export class StorageService {
       this.saveDB(db);
       broadcastEvent('PLANS_UPDATED');
     }
+  }
+
+  // --- Subscription Management (R$ 79,90/mês) ---
+  static activateSubscription(
+    orgId: string,
+    paymentMethod: 'PIX' | 'CARTAO_CREDITO',
+    receiptDescription?: string
+  ): Organization {
+    const db = this.getDB();
+    const org = db.organizations.find(o => o.id === orgId);
+    if (!org) throw new Error('Organização não encontrada');
+
+    const todayIso = new Date().toISOString().split('T')[0];
+    const nextDate = new Date();
+    nextDate.setDate(nextDate.getDate() + 30);
+    const nextBillingDate = nextDate.toISOString().split('T')[0];
+
+    const invoiceId = `inv-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const invoice = {
+      id: invoiceId,
+      date: todayIso,
+      amount: 79.9,
+      status: 'PAGO' as const,
+      paymentMethod,
+      description: receiptDescription || 'Mensalidade BarberOS Pro (R$ 79,90) - Acesso 100% Liberado'
+    };
+
+    if (!org.subscription) {
+      org.subscription = {
+        status: 'ATIVA',
+        planName: 'Plano Pro BarberOS',
+        priceMonthly: 79.9,
+        isPaid: true,
+        invoices: []
+      };
+    }
+
+    org.subscription.status = 'ATIVA';
+    org.subscription.isPaid = true;
+    org.subscription.paymentMethod = paymentMethod;
+    org.subscription.lastPaymentDate = todayIso;
+    org.subscription.nextBillingDate = nextBillingDate;
+    org.subscription.invoices.unshift(invoice);
+
+    this.saveDB(db);
+
+    this.createNotification({
+      organizationId: org.id,
+      type: 'STATUS_CHANGE',
+      title: 'Assinatura Ativada com Sucesso!',
+      message: `Pagamento de R$ 79,90 confirmado via ${paymentMethod === 'PIX' ? 'PIX Instantâneo' : 'Cartão de Crédito'}. O acesso a 100% das ferramentas do salão está liberado!`
+    });
+
+    this.logAudit(org.id, 'Proprietário', `Pagamento mensal de R$ 79,90 confirmado via ${paymentMethod}. Assinatura renovada até ${nextBillingDate}`);
+    broadcastEvent('SUBSCRIPTION_UPDATED', { orgId, status: 'ATIVA' });
+    return org;
+  }
+
+  static updateSubscriptionStatus(orgId: string, status: any): Organization {
+    const db = this.getDB();
+    const org = db.organizations.find(o => o.id === orgId);
+    if (!org) throw new Error('Organização não encontrada');
+
+    if (!org.subscription) {
+      org.subscription = {
+        status,
+        planName: 'Plano Pro BarberOS',
+        priceMonthly: 79.9,
+        isPaid: status === 'ATIVA',
+        invoices: []
+      };
+    } else {
+      org.subscription.status = status;
+      org.subscription.isPaid = status === 'ATIVA';
+    }
+
+    this.saveDB(db);
+    this.logAudit(org.id, 'Sistema', `Status da assinatura alterado para ${status}`);
+    broadcastEvent('SUBSCRIPTION_UPDATED', { orgId, status });
+    return org;
+  }
+
+  // --- SaaS Owner / Super Admin Payment Approval Workflow ---
+  static requestSubscriptionApproval(
+    orgId: string,
+    proofNote?: string,
+    paymentMethod: 'PIX' | 'CARTAO_CREDITO' = 'PIX'
+  ): Organization {
+    const db = this.getDB();
+    const org = db.organizations.find(o => o.id === orgId);
+    if (!org) throw new Error('Organização não encontrada');
+
+    if (!org.subscription) {
+      org.subscription = {
+        status: 'AGUARDANDO_APROVACAO',
+        planName: 'Plano Pro Barbearia (R$ 79,90/mês)',
+        priceMonthly: 79.9,
+        isPaid: false,
+        invoices: []
+      };
+    }
+
+    org.subscription.status = 'AGUARDANDO_APROVACAO';
+    org.subscription.paymentMethod = paymentMethod;
+    org.subscription.paymentProofSentAt = new Date().toISOString();
+    org.subscription.paymentProofNote = proofNote || 'Comprovante PIX de R$ 79,90 enviado para análise do Dono da SaaS';
+
+    this.saveDB(db);
+
+    this.createNotification({
+      organizationId: org.id,
+      type: 'STATUS_CHANGE',
+      title: 'Comprovante Enviado para Análise',
+      message: 'Seu comprovante de pagamento de R$ 79,90 foi enviado para o Dono da SaaS. O acesso 100% será liberado assim que confirmado.'
+    });
+
+    this.logAudit(org.id, 'Proprietário', `Comprovante de pagamento de R$ 79,90 enviado para aprovação do Dono da SaaS`);
+    broadcastEvent('SUBSCRIPTION_UPDATED', { orgId, status: 'AGUARDANDO_APROVACAO' });
+    return org;
+  }
+
+  static approveSubscription(orgId: string, approvedBy: string = 'Dono da SaaS'): Organization {
+    const db = this.getDB();
+    const org = db.organizations.find(o => o.id === orgId);
+    if (!org) throw new Error('Organização não encontrada');
+
+    const todayIso = new Date().toISOString().split('T')[0];
+    const nextDate = new Date();
+    nextDate.setDate(nextDate.getDate() + 30);
+    const nextBillingDate = nextDate.toISOString().split('T')[0];
+
+    const invoiceId = `inv-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const invoice = {
+      id: invoiceId,
+      date: todayIso,
+      amount: 79.9,
+      status: 'PAGO' as const,
+      paymentMethod: org.subscription?.paymentMethod || 'PIX',
+      description: 'Mensalidade BarberOS Pro (R$ 79,90) - Confirmado pelo Dono da SaaS (100% Liberado)'
+    };
+
+    if (!org.subscription) {
+      org.subscription = {
+        status: 'ATIVA',
+        planName: 'Plano Pro Barbearia (R$ 79,90/mês)',
+        priceMonthly: 79.9,
+        isPaid: true,
+        invoices: []
+      };
+    }
+
+    org.subscription.status = 'ATIVA';
+    org.subscription.isPaid = true;
+    org.subscription.lastPaymentDate = todayIso;
+    org.subscription.nextBillingDate = nextBillingDate;
+    org.subscription.invoices.unshift(invoice);
+
+    this.saveDB(db);
+
+    this.createNotification({
+      organizationId: org.id,
+      type: 'STATUS_CHANGE',
+      title: '🎉 Pagamento Aprovado pelo Dono da SaaS!',
+      message: `Seu pagamento mensal de R$ 79,90 foi confirmado pelo dono da plataforma! O acesso 100% às ferramentas da sua barbearia está liberado até ${nextBillingDate}.`
+    });
+
+    this.logAudit(org.id, approvedBy, `Acesso 100% liberado após confirmação do pagamento de R$ 79,90`);
+    broadcastEvent('SUBSCRIPTION_UPDATED', { orgId, status: 'ATIVA' });
+    return org;
+  }
+
+  static rejectSubscription(orgId: string, reason?: string): Organization {
+    const db = this.getDB();
+    const org = db.organizations.find(o => o.id === orgId);
+    if (!org) throw new Error('Organização não encontrada');
+
+    if (org.subscription) {
+      org.subscription.status = 'PENDENTE';
+      org.subscription.isPaid = false;
+    }
+
+    this.saveDB(db);
+
+    this.createNotification({
+      organizationId: org.id,
+      type: 'STATUS_CHANGE',
+      title: 'Pagamento Não Identificado',
+      message: reason || 'O comprovante de R$ 79,90 não pôde ser confirmado. Por favor, envie o comprovante atualizado via WhatsApp.'
+    });
+
+    this.logAudit(org.id, 'Dono da SaaS', `Pagamento não confirmado: ${reason || 'Comprovante inválido ou pendente'}`);
+    broadcastEvent('SUBSCRIPTION_UPDATED', { orgId, status: 'PENDENTE' });
+    return org;
+  }
+
+  // --- Reset All Metrics for Clean State ---
+  static resetAllMetrics(orgId?: string): void {
+    const db = this.getDB();
+    if (orgId) {
+      db.appointments = db.appointments.filter(a => a.organizationId !== orgId);
+      db.queue = db.queue.filter(q => q.organizationId !== orgId);
+      db.customers = db.customers.filter(c => c.organizationId !== orgId);
+      db.transactions = db.transactions.filter(t => t.organizationId !== orgId);
+      db.reviews = db.reviews.filter(r => r.organizationId !== orgId);
+    } else {
+      db.appointments = [];
+      db.queue = [];
+      db.customers = [];
+      db.transactions = [];
+      db.reviews = [];
+    }
+    this.saveDB(db);
+    this.logAudit(orgId, 'Administrador', 'Todas as métricas foram zeradas para primeiro uso');
+    broadcastEvent('METRICS_RESET', { orgId });
   }
 }

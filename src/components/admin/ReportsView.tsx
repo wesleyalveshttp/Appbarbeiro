@@ -62,7 +62,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ organization }) => {
   const queueWaitTimes = queueHistory.map(q => q.estimatedWaitMinutes);
   const avgWaitTime = queueWaitTimes.length > 0
     ? Math.round(queueWaitTimes.reduce((a, b) => a + b, 0) / queueWaitTimes.length)
-    : 18;
+    : 0;
 
   const handlePrint = () => {
     window.print();
