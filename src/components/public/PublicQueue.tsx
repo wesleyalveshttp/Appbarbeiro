@@ -11,7 +11,8 @@ import {
   Armchair,
   Volume2,
   LogOut,
-  RefreshCw
+  RefreshCw,
+  MessageCircle
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization, WaitingQueueItem, Service, Professional } from '../../types';
@@ -181,33 +182,56 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
           <div className="space-y-6">
             {/* Status Alert Header */}
             {myQueueItem.status === 'CHAMADO' ? (
-              <div className="rounded-3xl bg-blue-500 text-white p-6 text-center shadow-2xl animate-pulse space-y-2">
-                <Volume2 className="h-8 w-8 mx-auto" />
-                <h2 className="text-2xl font-black">Chegou a sua vez!</h2>
-                <p className="text-xs text-blue-100 font-medium">
-                  Por favor, dirija-se à cadeira do barbeiro agora mesmo. Estamos te esperando!
+              <div className="rounded-3xl bg-gradient-to-r from-emerald-500 to-emerald-400 text-slate-950 p-6 text-center shadow-2xl animate-pulse space-y-3">
+                <Volume2 className="h-9 w-9 mx-auto" />
+                <h2 className="text-2xl font-black">🎉 Chegou a sua vez de cortar / fazer sua barba!</h2>
+                <p className="text-xs font-bold text-slate-900 leading-relaxed">
+                  O barbeiro já está te aguardando na cadeira! Uma mensagem automática foi disparada para o seu WhatsApp.
                 </p>
+                <a
+                  href={`https://wa.me/55${organization.whatsapp.replace(/\D/g, '')}?text=${encodeURIComponent(`Olá! Estou a caminho para meu corte/barba na ${organization.name}.`)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-950 text-emerald-300 text-xs font-bold shadow-md hover:bg-slate-900 transition"
+                >
+                  <MessageCircle className="h-4 w-4 text-emerald-400" />
+                  <span>Responder no WhatsApp da Barbearia</span>
+                </a>
               </div>
             ) : myQueueItem.status === 'PROXIMO' ? (
               <div className="rounded-3xl bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 p-6 text-center shadow-2xl space-y-1">
                 <h2 className="text-2xl font-black">Você é o próximo da fila!</h2>
                 <p className="text-xs text-slate-900 font-bold">
-                  Fique atento, seu atendimento iniciará em poucos minutos.
+                  Faltam cerca de 5 minutos! Aproxime-se da barbearia para seu corte ou barba.
                 </p>
               </div>
             ) : myQueueItem.status === 'NA CADEIRA' ? (
               <div className="rounded-3xl bg-emerald-500 text-slate-950 p-6 text-center shadow-2xl space-y-1">
                 <Armchair className="h-8 w-8 mx-auto" />
                 <h2 className="text-2xl font-black">Você está na cadeira!</h2>
-                <p className="text-xs font-bold">Atendimento em andamento. Relaxe e aproveite!</p>
+                <p className="text-xs font-bold">Atendimento em andamento. Relaxe e aproveite o estilo!</p>
               </div>
             ) : (
-              <div className="text-center space-y-1">
-                <span className="text-xs uppercase font-bold tracking-wider text-amber-400">
-                  {organization.name}
-                </span>
-                <h2 className="text-2xl font-black text-white">Você está na fila</h2>
-                <p className="text-xs text-slate-400">Esta tela atualiza automaticamente ao vivo.</p>
+              <div className="text-center space-y-2">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Lugar Garantido na Fila Virtual
+                </div>
+                <h2 className="text-2xl font-black text-white">Você está na Fila Virtual</h2>
+                <p className="text-xs text-amber-300 font-medium">
+                  Não precisa esperar na barbearia! Fique à vontade onde quiser. O app te avisa no WhatsApp quando for sua vez.
+                </p>
+              </div>
+            )}
+
+            {/* Reassuring Virtual Queue Notice */}
+            {myQueueItem.status !== 'CHAMADO' && myQueueItem.status !== 'NA CADEIRA' && (
+              <div className="rounded-2xl bg-amber-500/10 border border-amber-500/30 p-4 text-xs text-amber-200/90 leading-relaxed flex items-start gap-3">
+                <Clock className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="text-white block font-semibold mb-0.5">Esperando de onde você quiser:</strong>
+                  Você não precisa ficar sentado na recepção. Quando chegar o momento de cortar seu cabelo ou fazer sua barba, enviaremos uma mensagem automática no WhatsApp <strong>{myQueueItem.customerPhone}</strong> para você vir!
+                </div>
               </div>
             )}
 
@@ -273,13 +297,14 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
         ) : (
           /* CASE 2: CLIENT NOT IN QUEUE YET -> FORM TO JOIN (#13) */
           <div className="space-y-6">
-            <div className="text-center space-y-1">
-              <span className="text-xs uppercase font-bold tracking-wider text-amber-400">
-                {organization.name}
-              </span>
-              <h2 className="text-2xl font-black text-white">Entrar na Fila de Espera</h2>
-              <p className="text-xs text-slate-400">
-                Preencha seus dados rápidos para receber sua senha e acompanhar no celular.
+            <div className="text-center space-y-2">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold">
+                <Scissors className="h-3.5 w-3.5" />
+                <span>{organization.name}</span>
+              </div>
+              <h2 className="text-2xl font-black text-white">Fila Virtual Inteligente</h2>
+              <p className="text-xs text-amber-200/90 font-medium max-w-sm mx-auto leading-relaxed">
+                Você <strong>NÃO precisa ficar esperando na barbearia</strong>! Informe seu <strong>Nome e WhatsApp</strong> abaixo para garantir sua vaga. Quando for a sua vez de cortar o cabelo ou fazer a barba, o app enviará automaticamente uma mensagem no seu WhatsApp.
               </p>
             </div>
 
@@ -288,20 +313,24 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
               <div>
                 <span className="text-slate-400">Pessoas na fila agora:</span>
                 <div className="text-xl font-black text-amber-400 font-mono mt-0.5">
-                  {activeWaitingList.length} aguardando
+                  {activeWaitingList.length} {activeWaitingList.length === 1 ? 'aguardando' : 'aguardando'}
                 </div>
               </div>
               <div className="text-right">
-                <span className="text-slate-400">Tempo de espera aprox.:</span>
+                <span className="text-slate-400">Tempo estimado:</span>
                 <div className="text-xl font-black text-slate-200 font-mono mt-0.5">
                   ~{Math.max(10, activeWaitingList.length * 20)} min
                 </div>
               </div>
             </div>
 
-            <form onSubmit={handleJoinQueue} className="rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-4">
+            <form onSubmit={handleJoinQueue} className="rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-4 shadow-xl">
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300">
+                ✨ <strong>Lugar Garantido:</strong> Só precisamos do seu nome e WhatsApp para te avisar automaticamente quando o barbeiro estiver pronto para te atender!
+              </div>
+
               <div>
-                <label className="text-xs font-semibold text-slate-300">Seu Nome *</label>
+                <label className="text-xs font-semibold text-slate-300">Seu Nome Completo *</label>
                 <input
                   type="text"
                   required
@@ -313,15 +342,18 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-300">Seu WhatsApp *</label>
+                <label className="text-xs font-semibold text-slate-300">Seu Número de WhatsApp *</label>
                 <input
                   type="text"
                   required
                   value={customerPhone}
                   onChange={(e) => setCustomerPhone(e.target.value)}
                   placeholder="(11) 98765-4321"
-                  className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500"
+                  className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500 font-mono"
                 />
+                <span className="text-[10px] text-slate-500 mt-1 block">
+                  Enviaremos a mensagem automática neste WhatsApp quando chegar a sua vez.
+                </span>
               </div>
 
               <div>
@@ -364,16 +396,16 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
                   type="text"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Ex: Vou esperar no café da esquina"
+                  placeholder="Ex: Estou no café da esquina, aguardando mensagem"
                   className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500"
                 />
               </div>
 
               <button
                 type="submit"
-                className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 py-3.5 text-xs font-black text-slate-950 shadow-lg shadow-amber-500/20 transition"
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 py-3.5 text-xs font-black text-slate-950 shadow-lg shadow-amber-500/25 transition cursor-pointer"
               >
-                <span>ENTRAR NA FILA</span>
+                <span>ENTRAR NA FILA VIRTUAL (GARANTIR LUGAR)</span>
                 <ArrowRight className="h-4 w-4" />
               </button>
             </form>

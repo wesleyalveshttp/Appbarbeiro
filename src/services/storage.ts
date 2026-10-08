@@ -12,12 +12,15 @@ import {
   SaaSPlan,
   AppointmentStatus,
   QueueStatus,
-  PaymentMethod
+  PaymentMethod,
+  AuthSession
 } from '../types';
 
-const STORAGE_KEY = 'barberos_saas_data_v6_real';
+const STORAGE_KEY = 'barberos_saas_data_v7_real';
 const CURRENT_ORG_KEY = 'barberos_current_org_id';
 const CURRENT_ROLE_KEY = 'barberos_current_user_role';
+const SUPER_ADMIN_PASSWORD_KEY = 'barberos_superadmin_password_custom';
+const AUTH_SESSION_KEY = 'barberos_auth_session';
 
 // Real-time broadcast channel for multi-tab synchronization
 const channel = typeof window !== 'undefined' && 'BroadcastChannel' in window
@@ -74,23 +77,42 @@ export interface AppDatabase {
 
 const DEFAULT_PLANS: SaaSPlan[] = [
   {
-    id: 'premium',
-    name: 'Plano Pro Barbearia (100% Liberado)',
+    id: 'profissional',
+    name: 'Plano Pro Mensal',
     priceMonthly: 79.9,
-    priceAnnual: 799.0,
+    priceAnnual: 958.8,
+    maxProfessionals: -1,
+    maxAppointmentsPerMonth: -1,
+    popular: false,
+    features: [
+      'Uso 100% Completo do BarberOS',
+      'Profissionais e cadeiras ilimitados',
+      'Fila virtual de espera sem espera física',
+      'Notificação automática no WhatsApp do cliente',
+      'Painel operacional das cadeiras (Bancada)',
+      'Agendamentos online 24/7 sem taxas por agendamento',
+      'Módulo financeiro completo e comissões automáticas',
+      'QR Codes personalizados prontos para balcão',
+      'Pagamento flexível mês a mês (R$ 79,90/mês)'
+    ]
+  },
+  {
+    id: 'premium',
+    name: 'Plano Pro Anual (12x R$ 69,90)',
+    priceMonthly: 69.9,
+    priceAnnual: 838.8,
     maxProfessionals: -1,
     maxAppointmentsPerMonth: -1,
     popular: true,
     features: [
-      'Uso 100% Completo do BarberOS',
-      'Profissionais e cadeiras ilimitados',
-      'Fila de espera digital ao vivo com QR Code',
-      'Painel operacional das cadeiras (Modo Barbearia)',
-      'Agendamentos online 24/7 sem taxa extra',
-      'Módulo financeiro completo, fluxo de caixa e DRE',
-      'Controle automático de comissões por profissional',
-      'Notificações no WhatsApp para clientes e barbeiros',
-      'Suporte prioritário e backup automático'
+      'Todas as ferramentas 100% Liberadas',
+      '12x de R$ 69,90 (Economia de R$ 120 no ano!)',
+      'Fila virtual com chamada e WhatsApp automático',
+      'Agendamento online 24/7 ilimitado',
+      'Painel de cadeiras em tempo real para bancada',
+      'Controle de caixa, fluxo e comissões por barbeiro',
+      'Suporte VIP prioritário do dono da plataforma',
+      'Garantia de preço congelado por 1 ano inteiro'
     ]
   }
 ];
@@ -113,6 +135,9 @@ const getSeedData = (): AppDatabase => {
     phone: '(11) 99999-0000',
     whatsapp: '11999990000',
     instagram: '@minhabarbearia',
+    ownerEmail: 'dono@barbearia.com',
+    ownerPassword: '123',
+    ownerName: 'Dono da Barbearia',
     address: {
       cep: '01310-100',
       street: 'Rua Principal',
@@ -334,6 +359,9 @@ export class StorageService {
   static createOrganization(
     data: Omit<Organization, 'id' | 'createdAt' | 'isActive' | 'subscription'> & {
       subscription?: Organization['subscription'];
+      ownerEmail?: string;
+      ownerPassword?: string;
+      ownerName?: string;
     }
   ): Organization {
     const db = this.getDB();
@@ -341,6 +369,9 @@ export class StorageService {
     const newOrg: Organization = {
       ...data,
       id,
+      ownerEmail: data.ownerEmail || `dono@${data.slug || 'barbearia'}.com.br`,
+      ownerPassword: data.ownerPassword || '123',
+      ownerName: data.ownerName || data.name,
       subscription: data.subscription || {
         status: 'PENDENTE',
         planName: 'Plano Pro Barbearia (R$ 79,90/mês)',
@@ -377,6 +408,52 @@ export class StorageService {
     org.isActive = !org.isActive;
     this.saveDB(db);
     broadcastEvent('ORGANIZATION_UPDATED', { orgId: id });
+    return org;
+  }
+
+  static deleteOrganization(id: string): void {
+    const db = this.getDB();
+    const org = db.organizations.find(o => o.id === id);
+    if (!org) return;
+
+    // Filter out the organization
+    db.organizations = db.organizations.filter(o => o.id !== id);
+
+    // Filter out all associated entities for clean deletion
+    db.professionals = db.professionals.filter(p => p.organizationId !== id);
+    db.services = db.services.filter(s => s.organizationId !== id);
+    db.customers = db.customers.filter(c => c.organizationId !== id);
+    db.appointments = db.appointments.filter(a => a.organizationId !== id);
+    db.queue = db.queue.filter(q => q.organizationId !== id);
+    db.transactions = db.transactions.filter(t => t.organizationId !== id);
+    db.reviews = db.reviews.filter(r => r.organizationId !== id);
+    db.notifications = db.notifications.filter(n => n.organizationId !== id);
+
+    // If current selected organization was deleted, switch to the first remaining one
+    const currentActiveId = this.getCurrentOrgId();
+    if (currentActiveId === id && db.organizations.length > 0) {
+      this.setCurrentOrgId(db.organizations[0].id);
+    }
+
+    this.saveDB(db);
+    this.logAudit(id, 'Super Admin', `Estabelecimento "${org.name}" excluído permanentemente da plataforma`);
+    broadcastEvent('ORGANIZATION_DELETED', { orgId: id });
+    broadcastEvent('ORGANIZATIONS_UPDATED');
+    broadcastEvent('ORG_CHANGED', { orgId: db.organizations[0]?.id });
+  }
+
+  static updateOwnerCredentials(orgId: string, email: string, password: string, name?: string): Organization {
+    const db = this.getDB();
+    const org = db.organizations.find(o => o.id === orgId);
+    if (!org) throw new Error('Organização não encontrada');
+
+    org.ownerEmail = email.trim();
+    org.ownerPassword = password.trim();
+    if (name) org.ownerName = name.trim();
+
+    this.saveDB(db);
+    this.logAudit(orgId, 'Proprietário', `Credenciais de login e senha atualizadas`);
+    broadcastEvent('ORGANIZATION_UPDATED', { orgId });
     return org;
   }
 
@@ -857,9 +934,19 @@ export class StorageService {
     if (!item) throw new Error('Item da fila não encontrado');
 
     const prof = db.professionals.find(p => p.id === assignedProfessionalId);
+    const org = db.organizations.find(o => o.id === item.organizationId);
+    const orgName = org?.name || 'Barbearia';
+    const profName = prof?.name || 'Barbeiro da Cadeira';
+
     item.status = 'CHAMADO';
     item.calledAt = new Date().toISOString();
     item.assignedProfessionalId = assignedProfessionalId;
+
+    // Build the automatic WhatsApp notification message for the customer
+    const whatsappMsg = `💈 *${orgName}*\n\n🎉 *Olá, ${item.customerName}! Chegou a sua vez!*\nSua cadeira com o barbeiro *${profName}* (${item.serviceName}) está pronta agora mesmo para cortar seu cabelo ou fazer sua barba.\n\nPor favor, dirija-se à barbearia agora. Seu lugar está garantido!`;
+    item.whatsappNotificationSent = true;
+    item.whatsappNotificationTime = new Date().toISOString();
+    item.whatsappMessageText = whatsappMsg;
 
     // Promote next waiting item to PROXIMO
     const nextItem = db.queue.find(
@@ -876,12 +963,23 @@ export class StorageService {
       organizationId: item.organizationId,
       type: 'QUEUE_CALLED',
       title: 'Cliente Chamado!',
-      message: `${item.customerName} foi chamado para a cadeira de ${prof?.name || 'Barbeiro'}.`
+      message: `${item.customerName} foi chamado para a cadeira de ${profName}. Mensagem WhatsApp gerada.`
     });
 
-    this.logAudit(item.organizationId, prof?.name || 'Profissional', `Chamou cliente ${item.customerName} da fila`);
-    broadcastEvent('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id });
+    this.logAudit(item.organizationId, profName, `Chamou cliente ${item.customerName} da fila e disparou aviso WhatsApp`);
+    broadcastEvent('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id, called: true });
     return item;
+  }
+
+  static getWhatsAppCallLink(queueId: string): string {
+    const db = this.getDB();
+    const item = db.queue.find(q => q.id === queueId);
+    if (!item) return '';
+
+    const cleanPhone = item.customerPhone.replace(/\D/g, '');
+    const phoneWithCountry = cleanPhone.startsWith('55') ? cleanPhone : `55${cleanPhone}`;
+    const text = item.whatsappMessageText || `💈 Olá ${item.customerName}! É a sua vez na barbearia! Sua cadeira está pronta. Pode se aproximar para seu atendimento!`;
+    return `https://wa.me/${phoneWithCountry}?text=${encodeURIComponent(text)}`;
   }
 
   static moveQueueToChair(queueId: string, professionalId?: string): WaitingQueueItem {
@@ -1073,7 +1171,13 @@ export class StorageService {
 
   // --- SaaS Plans ---
   static getPlans(): SaaSPlan[] {
-    return this.getDB().plans;
+    const db = this.getDB();
+    const hasAnnual69 = db.plans && db.plans.some(p => p.priceMonthly === 69.9 || p.name.includes('69,90'));
+    if (!hasAnnual69 || db.plans.length === 0) {
+      db.plans = DEFAULT_PLANS;
+      this.saveDB(db);
+    }
+    return db.plans;
   }
 
   static updatePlanPrice(planId: string, priceMonthly: number, priceAnnual: number): void {
@@ -1299,5 +1403,111 @@ export class StorageService {
     this.saveDB(db);
     this.logAudit(orgId, 'Administrador', 'Todas as métricas foram zeradas para primeiro uso');
     broadcastEvent('METRICS_RESET', { orgId });
+  }
+
+  // --- Authentication & Passwords ---
+  static getSuperAdminPassword(): string {
+    if (typeof window === 'undefined') return 'admin123';
+    return localStorage.getItem(SUPER_ADMIN_PASSWORD_KEY) || 'admin123';
+  }
+
+  static updateSuperAdminPassword(newPassword: string): void {
+    if (typeof window === 'undefined') return;
+    const cleanPass = newPassword.trim();
+    localStorage.setItem(SUPER_ADMIN_PASSWORD_KEY, cleanPass);
+    this.logAudit('global', 'Super Admin', `Senha mestra do Super Admin alterada com sucesso`);
+    broadcastEvent('SUPER_ADMIN_PASSWORD_UPDATED');
+  }
+
+  static getAuthSession(): AuthSession {
+    if (typeof window === 'undefined') {
+      return { isAuthenticated: false, role: 'OWNER' };
+    }
+    try {
+      const raw = localStorage.getItem(AUTH_SESSION_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return { isAuthenticated: false, role: 'OWNER' };
+  }
+
+  static setAuthSession(session: AuthSession): void {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
+    this.setCurrentRole(session.role);
+    if (session.organizationId) {
+      this.setCurrentOrgId(session.organizationId);
+    }
+    broadcastEvent('AUTH_SESSION_CHANGED', session);
+  }
+
+  static loginOwner(emailOrSlug: string, password: string): { success: boolean; organization?: Organization; error?: string } {
+    const db = this.getDB();
+    const term = emailOrSlug.trim().toLowerCase();
+
+    // Find organization by ownerEmail, slug, or phone
+    const org = db.organizations.find(o => 
+      (o.ownerEmail && o.ownerEmail.toLowerCase() === term) ||
+      o.slug.toLowerCase() === term ||
+      o.phone.replace(/\D/g, '') === term.replace(/\D/g, '')
+    );
+
+    if (!org) {
+      return { success: false, error: 'Nenhuma barbearia encontrada com este e-mail ou usuário.' };
+    }
+
+    if (!org.isActive) {
+      return { success: false, error: 'Este estabelecimento está bloqueado pelo administrador da plataforma.' };
+    }
+
+    // Check password
+    const expectedPassword = org.ownerPassword || '123';
+    if (password.trim() !== expectedPassword) {
+      return { success: false, error: 'Senha incorreta para esta barbearia.' };
+    }
+
+    // Success: set session
+    const session: AuthSession = {
+      isAuthenticated: true,
+      role: 'OWNER',
+      organizationId: org.id,
+      userEmail: org.ownerEmail || `${org.slug}@barberos.app`,
+      userName: org.ownerName || org.name,
+      loggedAt: new Date().toISOString()
+    };
+    this.setAuthSession(session);
+    this.logAudit(org.id, org.ownerName || org.name, `Login de proprietário realizado`);
+
+    return { success: true, organization: org };
+  }
+
+  static loginSuperAdmin(password: string): { success: boolean; error?: string } {
+    const currentAdminPass = this.getSuperAdminPassword();
+    if (password.trim() !== currentAdminPass) {
+      return { success: false, error: 'Senha incorreta do Super Admin.' };
+    }
+
+    const session: AuthSession = {
+      isAuthenticated: true,
+      role: 'SUPER_ADMIN',
+      userEmail: 'admin@barberos.com.br',
+      userName: 'Super Administrador (Dono da SaaS)',
+      loggedAt: new Date().toISOString()
+    };
+    this.setAuthSession(session);
+    this.logAudit('global', 'Super Admin', `Login de Super Admin realizado com sucesso`);
+
+    return { success: true };
+  }
+
+  static isSuperAdminAuthenticated(): boolean {
+    const session = this.getAuthSession();
+    return session.isAuthenticated && session.role === 'SUPER_ADMIN';
+  }
+
+  static logout(): void {
+    if (typeof window === 'undefined') return;
+    localStorage.removeItem(AUTH_SESSION_KEY);
+    this.setCurrentRole('OWNER');
+    broadcastEvent('AUTH_SESSION_CHANGED', { isAuthenticated: false, role: 'OWNER' });
   }
 }

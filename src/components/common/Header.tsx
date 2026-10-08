@@ -11,7 +11,8 @@ import {
   Sparkles,
   ExternalLink,
   Plus,
-  CreditCard
+  CreditCard,
+  LogIn
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization, Professional } from '../../types';
@@ -27,6 +28,7 @@ interface HeaderProps {
   onToggleMobileMenu: () => void;
   onOpenOnboarding: () => void;
   onNavigate: (route: string) => void;
+  onOpenLogin?: (tab?: 'OWNER' | 'SUPER_ADMIN') => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -38,6 +40,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleMobileMenu,
   onOpenOnboarding,
   onNavigate,
+  onOpenLogin,
 }) => {
   const [showOrgDropdown, setShowOrgDropdown] = useState(false);
   const [showRoleDropdown, setShowRoleDropdown] = useState(false);
@@ -322,14 +325,33 @@ export const Header: React.FC<HeaderProps> = ({
           {currentRole !== 'SUPER_ADMIN' && (
             <button
               onClick={() => {
-                onChangeRole('SUPER_ADMIN');
-                onNavigate('superadmin');
+                if (StorageService.isSuperAdminAuthenticated()) {
+                  onChangeRole('SUPER_ADMIN');
+                  onNavigate('superadmin');
+                } else if (onOpenLogin) {
+                  onOpenLogin('SUPER_ADMIN');
+                } else {
+                  onChangeRole('SUPER_ADMIN');
+                  onNavigate('superadmin');
+                }
               }}
               className="hidden xl:flex items-center gap-1.5 rounded-xl bg-purple-950/50 hover:bg-purple-900/70 border border-purple-500/40 px-2.5 py-1.5 text-xs text-purple-200 font-semibold transition cursor-pointer"
               title="Painel do Dono da SaaS: Liberação de Pagamentos (R$ 79,90)"
             >
               <Shield className="h-3.5 w-3.5 text-purple-400" />
               <span>Dono da SaaS (Aprovações)</span>
+            </button>
+          )}
+
+          {/* Login / Trocar Conta */}
+          {onOpenLogin && (
+            <button
+              onClick={() => onOpenLogin('OWNER')}
+              className="hidden md:flex items-center gap-1 rounded-lg text-slate-300 hover:text-white px-2.5 py-1.5 text-xs border border-slate-800 hover:border-slate-750 hover:bg-slate-850 transition cursor-pointer"
+              title="Fazer Login ou Trocar de Conta"
+            >
+              <LogIn className="h-3.5 w-3.5 text-amber-400" />
+              <span>Login</span>
             </button>
           )}
 

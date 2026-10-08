@@ -38,6 +38,7 @@ import { PublicBooking } from './components/public/PublicBooking';
 import { PublicQueue } from './components/public/PublicQueue';
 import { PublicStorefront } from './components/public/PublicStorefront';
 import { PublicAppointmentTracker } from './components/public/PublicAppointmentTracker';
+import { LoginModal } from './components/auth/LoginModal';
 
 export default function App() {
   const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
@@ -57,6 +58,8 @@ export default function App() {
   const [isNewQueueOpen, setIsNewQueueOpen] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [loginInitialTab, setLoginInitialTab] = useState<'OWNER' | 'SUPER_ADMIN'>('OWNER');
 
   // Path routing parsing (e.g. /agendar/dom-navalha, /fila/dom-navalha, /b/dom-navalha, /atendimento/token)
   const [publicRouteParams, setPublicRouteParams] = useState<{
@@ -148,6 +151,25 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleOpenLogin = (tab: 'OWNER' | 'SUPER_ADMIN' = 'OWNER') => {
+    setLoginInitialTab(tab);
+    setIsLoginModalOpen(true);
+  };
+
+  const handleLoginSuccess = (role: UserRole, org?: Organization) => {
+    if (role === 'SUPER_ADMIN') {
+      handleChangeRole('SUPER_ADMIN');
+      handleNavigate('superadmin');
+    } else if (org) {
+      handleSelectOrg(org);
+      handleChangeRole('OWNER');
+      handleNavigate('dashboard');
+    } else {
+      handleChangeRole('OWNER');
+      handleNavigate('dashboard');
+    }
+  };
+
   const handleOnboardingSuccess = (newOrg: Organization) => {
     setCurrentOrg(newOrg);
     StorageService.setCurrentOrgId(newOrg.id);
@@ -227,15 +249,47 @@ export default function App() {
   // Render Marketing Landing Page (#7)
   if (currentRoute === 'landing') {
     return (
-      <LandingPage
-        onStartOnboarding={() => setIsOnboardingOpen(true)}
-        onEnterDashboard={() => handleNavigate('dashboard')}
-        onEnterSuperAdmin={() => {
-          handleChangeRole('SUPER_ADMIN');
-          handleNavigate('superadmin');
-        }}
-        plans={StorageService.getPlans()}
-      />
+      <>
+        <LandingPage
+          onStartOnboarding={() => setIsOnboardingOpen(true)}
+          onEnterDashboard={() => handleOpenLogin('OWNER')}
+          onEnterSuperAdmin={() => {
+            if (StorageService.isSuperAdminAuthenticated()) {
+              handleChangeRole('SUPER_ADMIN');
+              handleNavigate('superadmin');
+            } else {
+              handleOpenLogin('SUPER_ADMIN');
+            }
+          }}
+          onOpenLogin={handleOpenLogin}
+          plans={StorageService.getPlans()}
+        />
+
+        {/* 7-Step Onboarding Wizard on top of Landing Page */}
+        <OnboardingWizard
+          isOpen={isOnboardingOpen}
+          onClose={() => {
+            setIsOnboardingOpen(false);
+            setCurrentRoute('landing');
+          }}
+          onSuccess={handleOnboardingSuccess}
+        />
+
+        {/* Global Login Modal on top of Landing Page */}
+        <LoginModal
+          isOpen={isLoginModalOpen}
+          onClose={() => {
+            setIsLoginModalOpen(false);
+            setCurrentRoute('landing');
+          }}
+          initialTab={loginInitialTab}
+          onSuccess={handleLoginSuccess}
+          onOpenRegister={() => {
+            setIsLoginModalOpen(false);
+            setIsOnboardingOpen(true);
+          }}
+        />
+      </>
     );
   }
 
@@ -253,7 +307,14 @@ export default function App() {
         selectedProfessional={selectedProfessional}
         onToggleMobileMenu={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
         onOpenOnboarding={() => setIsOnboardingOpen(true)}
-        onNavigate={handleNavigate}
+        onNavigate={(route) => {
+          if ((route === 'superadmin' || route.startsWith('superadmin-')) && !StorageService.isSuperAdminAuthenticated()) {
+            handleOpenLogin('SUPER_ADMIN');
+            return;
+          }
+          handleNavigate(route);
+        }}
+        onOpenLogin={handleOpenLogin}
       />
 
       <div className="flex-1 flex overflow-hidden">
@@ -477,6 +538,18 @@ export default function App() {
           setIsSubscriptionModalOpen(false);
           const updated = StorageService.getOrganizationById(currentOrg.id);
           if (updated) setCurrentOrg({ ...updated });
+        }}
+      />
+
+      {/* Global Login Modal (#UserRequest: Login/Senha para cada salão e Super Admin) */}
+      <LoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
+        initialTab={loginInitialTab}
+        onSuccess={handleLoginSuccess}
+        onOpenRegister={() => {
+          setIsLoginModalOpen(false);
+          setIsOnboardingOpen(true);
         }}
       />
     </div>

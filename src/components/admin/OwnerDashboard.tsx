@@ -19,7 +19,8 @@ import {
   PhoneCall,
   CreditCard,
   RotateCcw,
-  Lock
+  Lock,
+  MessageCircle
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization, Appointment, WaitingQueueItem, Professional } from '../../types';
@@ -120,6 +121,13 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
     const availableProf = professionals.find(p => p.isActive) || professionals[0];
     if (!availableProf) return;
     StorageService.callQueueCustomer(queueItem.id, availableProf.id);
+
+    // Automatically trigger WhatsApp direct message link
+    const link = StorageService.getWhatsAppCallLink(queueItem.id);
+    if (link) {
+      window.open(link, '_blank');
+    }
+
     loadData();
   };
 
@@ -421,10 +429,12 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
                         {item.status === 'AGUARDANDO' || item.status === 'PROXIMO' ? (
                           <button
                             onClick={() => handleCallCustomer(item)}
-                            className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-amber-400 transition"
+                            className="flex items-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-amber-400 shadow-md shadow-amber-500/20 transition cursor-pointer"
+                            title="Chamar cliente e disparar mensagem WhatsApp"
                           >
                             <Play className="h-3 w-3 fill-current" />
-                            <span>Chamar</span>
+                            <MessageCircle className="h-3 w-3 text-slate-950" />
+                            <span>Chamar & WhatsApp</span>
                           </button>
                         ) : item.status === 'CHAMADO' ? (
                           <button

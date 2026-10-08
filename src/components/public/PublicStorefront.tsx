@@ -153,17 +153,17 @@ export const PublicStorefront: React.FC<PublicStorefrontProps> = ({
 
           <div
             onClick={() => onNavigateToQueue(organization.slug)}
-            className="cursor-pointer group rounded-3xl bg-gradient-to-br from-blue-500/15 via-slate-900 to-slate-900 border border-blue-500/30 p-6 hover:border-blue-400 transition shadow-xl"
+            className="cursor-pointer group rounded-3xl bg-gradient-to-br from-amber-500/15 via-slate-900 to-slate-900 border border-amber-500/30 p-6 hover:border-amber-400 transition shadow-xl"
           >
             <div className="flex items-center justify-between mb-4">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-500 text-white font-bold shadow-md">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500 text-slate-950 font-bold shadow-md">
                 <Clock className="h-6 w-6" />
               </div>
-              <ArrowRight className="h-5 w-5 text-blue-400 group-hover:translate-x-1 transition" />
+              <ArrowRight className="h-5 w-5 text-amber-400 group-hover:translate-x-1 transition" />
             </div>
-            <h3 className="text-lg font-black text-white">Entrar na Fila de Espera</h3>
+            <h3 className="text-lg font-black text-white">Fila Virtual (Sem Espera Física)</h3>
             <p className="mt-1 text-xs text-slate-400">
-              Chegou sem agendamento? Entre na fila digital e acompanhe sua senha no celular.
+              Entre na fila com Nome e WhatsApp. Seu lugar fica garantido e o app avisa no WhatsApp quando chegar a sua vez de cortar ou fazer a barba!
             </p>
           </div>
         </div>

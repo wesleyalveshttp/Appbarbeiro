@@ -24,6 +24,7 @@ interface LandingPageProps {
   onStartOnboarding: () => void;
   onEnterDashboard: () => void;
   onEnterSuperAdmin?: () => void;
+  onOpenLogin?: (tab?: 'OWNER' | 'SUPER_ADMIN') => void;
   plans: SaaSPlan[];
 }
 
@@ -31,6 +32,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   onStartOnboarding,
   onEnterDashboard,
   onEnterSuperAdmin,
+  onOpenLogin,
   plans,
 }) => {
   const [activeShowcaseTab, setActiveShowcaseTab] = useState<'dashboard' | 'queue' | 'operational'>('dashboard');
@@ -99,7 +101,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         </nav>
 
         <div className="flex items-center gap-2 sm:gap-3">
-          {onEnterSuperAdmin && (
+          {onOpenLogin ? (
+            <button
+              onClick={() => onOpenLogin('SUPER_ADMIN')}
+              className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-purple-300 hover:text-white px-2.5 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/20 transition cursor-pointer"
+              title="Acessar Painel do Dono da Plataforma com Senha"
+            >
+              <Shield className="h-3.5 w-3.5 text-purple-400" />
+              <span>Dono SaaS</span>
+            </button>
+          ) : onEnterSuperAdmin ? (
             <button
               onClick={onEnterSuperAdmin}
               className="hidden sm:flex items-center gap-1.5 text-xs font-semibold text-purple-300 hover:text-white px-2.5 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/20 transition cursor-pointer"
@@ -108,14 +119,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <Shield className="h-3.5 w-3.5 text-purple-400" />
               <span>Dono SaaS</span>
             </button>
-          )}
+          ) : null}
 
           <button
-            onClick={onEnterDashboard}
+            onClick={() => onOpenLogin ? onOpenLogin('OWNER') : onEnterDashboard()}
             className="flex items-center gap-1.5 text-xs font-semibold text-slate-300 hover:text-white px-3 py-1.5 rounded-lg hover:bg-slate-850 transition cursor-pointer"
           >
             <LogIn className="h-3.5 w-3.5 text-amber-400" />
-            <span>Acessar Barbearia</span>
+            <span>Login / Entrar</span>
           </button>
           <button
             onClick={onStartOnboarding}
@@ -155,7 +166,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </button>
 
             <button
-              onClick={onEnterDashboard}
+              onClick={() => onOpenLogin ? onOpenLogin('OWNER') : onEnterDashboard()}
               className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-700 px-6 py-3.5 text-sm font-medium text-slate-200 transition cursor-pointer"
             >
               <LogIn className="h-4 w-4 text-amber-400" />

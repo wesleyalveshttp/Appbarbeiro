@@ -79,6 +79,10 @@ export interface Organization {
   phone: string;
   whatsapp: string;
   instagram?: string;
+  // Account login credentials for the establishment owner
+  ownerEmail?: string;
+  ownerPassword?: string;
+  ownerName?: string;
   address: {
     cep: string;
     street: string;
@@ -207,6 +211,20 @@ export interface WaitingQueueItem {
   finishedAt?: string;
   notes?: string;
   estimatedWaitMinutes: number;
+  // WhatsApp Automatic Notifications for Virtual Queue
+  whatsappNotificationSent?: boolean;
+  whatsappNotificationTime?: string;
+  whatsappMessageText?: string;
+  token?: string;
+}
+
+export interface AuthSession {
+  isAuthenticated: boolean;
+  role: UserRole;
+  organizationId?: string;
+  userEmail?: string;
+  userName?: string;
+  loggedAt?: string;
 }
 
 export interface Transaction {

@@ -12,7 +12,11 @@ import {
   CreditCard,
   RotateCcw,
   Sparkles,
-  ArrowRight
+  ArrowRight,
+  Key,
+  Lock,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization } from '../../types';
@@ -28,6 +32,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ organization, onNavi
   const [phone, setPhone] = useState(organization.phone);
   const [whatsapp, setWhatsapp] = useState(organization.whatsapp);
   const [instagram, setInstagram] = useState(organization.instagram || '');
+
+  // Owner Access Credentials (#UserRequest)
+  const [ownerEmail, setOwnerEmail] = useState(organization.ownerEmail || `dono@${organization.slug}.com.br`);
+  const [ownerPassword, setOwnerPassword] = useState(organization.ownerPassword || '123');
+  const [showPassword, setShowPassword] = useState(false);
   
   // Settings
   const [maxLateMinutes, setMaxLateMinutes] = useState(organization.settings.maxLateMinutes);
@@ -62,6 +71,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ organization, onNavi
         whatsappPhoneNumberId,
       },
     });
+
+    // Save Owner Credentials (#UserRequest)
+    if (ownerEmail.trim() && ownerPassword.trim()) {
+      StorageService.updateOwnerCredentials(organization.id, ownerEmail.trim(), ownerPassword.trim());
+    }
 
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 3000);
@@ -152,6 +166,59 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ organization, onNavi
                 onChange={(e) => setWhatsapp(e.target.value)}
                 className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2 text-xs text-white focus:outline-hidden focus:border-amber-500"
               />
+            </div>
+          </div>
+        </div>
+
+        {/* Minha Conta de Acesso: Login & Senha (#UserRequest) */}
+        <div className="rounded-2xl bg-gradient-to-r from-amber-950/30 via-slate-900 to-slate-900 border border-amber-500/40 p-6 space-y-4 shadow-xl">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Key className="h-4 w-4 text-amber-400" />
+              Conta de Acesso do Dono da Barbearia (Login & Senha)
+            </h3>
+            <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              Credenciais do Salão
+            </span>
+          </div>
+
+          <p className="text-xs text-slate-400">
+            Utilize este e-mail e senha para fazer login no BarberOS pelo celular ou computador.
+          </p>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="text-xs font-semibold text-slate-300">E-mail de Login do Dono *</label>
+              <input
+                type="text"
+                required
+                value={ownerEmail}
+                onChange={(e) => setOwnerEmail(e.target.value)}
+                placeholder="dono@barbearia.com"
+                className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2 text-xs text-white font-mono focus:outline-hidden focus:border-amber-500"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-slate-300">Senha de Acesso *</label>
+              <div className="relative mt-1">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  value={ownerPassword}
+                  onChange={(e) => setOwnerPassword(e.target.value)}
+                  placeholder="Sua senha de acesso"
+                  className="w-full rounded-xl bg-slate-950 border border-slate-800 pl-3.5 pr-10 py-2 text-xs text-white font-mono focus:outline-hidden focus:border-amber-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-2 text-slate-400 hover:text-white p-0.5 cursor-pointer"
+                  title={showPassword ? 'Ocultar' : 'Exibir'}
+                >
+                  {showPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </button>
+              </div>
             </div>
           </div>
         </div>

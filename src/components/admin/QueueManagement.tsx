@@ -92,11 +92,22 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization }
     loadData();
   };
 
-  // Call Item
+  // Call Item with automatic WhatsApp dispatch (#UserRequest)
+  const [calledNotice, setCalledNotice] = useState<{ customerName: string; phone: string } | null>(null);
+
   const handleCall = (item: WaitingQueueItem, profId?: string) => {
     const targetProf = profId || item.preferredProfessionalId || professionals[0]?.id;
     if (!targetProf) return;
     StorageService.callQueueCustomer(item.id, targetProf);
+
+    // Automatically trigger WhatsApp direct message
+    const link = StorageService.getWhatsAppCallLink(item.id);
+    if (link) {
+      window.open(link, '_blank');
+    }
+
+    setCalledNotice({ customerName: item.customerName, phone: item.customerPhone });
+    setTimeout(() => setCalledNotice(null), 5000);
     loadData();
   };
 
@@ -122,6 +133,27 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization }
 
   return (
     <div className="space-y-6">
+      {/* Toast Notification when customer called and WhatsApp dispatched (#UserRequest) */}
+      {calledNotice && (
+        <div className="p-4 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-semibold flex items-center justify-between shadow-xl animate-bounce">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
+            <div>
+              <span className="text-white block font-bold">Cliente {calledNotice.customerName} chamado para o atendimento!</span>
+              <span className="text-emerald-200/90 text-[11px]">
+                Mensagem automática aberta para o WhatsApp ({calledNotice.phone}) avisando que chegou a vez de cortar/fazer a barba.
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => setCalledNotice(null)}
+            className="text-emerald-400 hover:text-white text-xs px-2 py-1 rounded-lg bg-emerald-500/10"
+          >
+            Fechar
+          </button>
+        </div>
+      )}
+
       {/* Top Banner */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-xl">
         <div className="flex items-center gap-4">
@@ -340,10 +372,12 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization }
                           {item.status === 'AGUARDANDO' || item.status === 'PROXIMO' ? (
                             <button
                               onClick={() => handleCall(item)}
-                              className="flex items-center gap-1 rounded-lg bg-amber-500 hover:bg-amber-400 px-2.5 py-1 text-xs font-bold text-slate-950 transition"
+                              className="flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 px-3 py-1.5 text-xs font-bold text-slate-950 shadow-md shadow-amber-500/20 transition cursor-pointer"
+                              title="Chamar cliente e disparar mensagem no WhatsApp automaticamente"
                             >
                               <Play className="h-3 w-3 fill-current" />
-                              Chamar
+                              <MessageCircle className="h-3 w-3 text-slate-950" />
+                              <span>Chamar & WhatsApp</span>
                             </button>
                           ) : item.status === 'CHAMADO' ? (
                             <button

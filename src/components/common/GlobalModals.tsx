@@ -249,10 +249,10 @@ export const GlobalModals: React.FC<GlobalModalsProps> = ({
 
             <h3 className="text-lg font-bold text-white flex items-center gap-2">
               <Clock className="h-5 w-5 text-amber-400" />
-              Adicionar na Fila de Espera
+              Inserir na Fila Virtual Inteligente
             </h3>
             <p className="mt-1 text-xs text-slate-400">
-              Emita uma senha para o cliente presencial sem horário marcado.
+              O cliente não precisa esperar no local: receberá mensagem automática no WhatsApp quando for chamado para o corte ou barba.
             </p>
 
             <form onSubmit={handleCreateQueue} className="mt-4 space-y-3.5">

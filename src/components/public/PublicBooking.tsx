@@ -220,19 +220,22 @@ export const PublicBooking: React.FC<PublicBookingProps> = ({
 
       {/* Main Container */}
       <div className="mx-auto max-w-2xl px-4 pt-6 space-y-6">
-        {/* Banner Não encontrou horário? (#12) */}
-        <div className="flex items-center justify-between gap-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 p-4 text-xs">
+        {/* Banner Fila Virtual Sem Espera Física (#UserRequest) */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl bg-gradient-to-r from-amber-500/15 via-slate-900 to-slate-900 border border-amber-500/40 p-4 text-xs shadow-lg">
           <div>
-            <span className="font-bold text-amber-300 block">Não encontrou o horário ideal?</span>
-            <span className="text-slate-400 text-[11px]">
-              Entre na nossa fila digital de espera e acompanhe em tempo real pelo celular.
-            </span>
+            <div className="flex items-center gap-1.5 text-amber-300 font-bold">
+              <Clock className="h-4 w-4" />
+              <span>Prefere vir hoje sem agendar? Entre na Fila Virtual!</span>
+            </div>
+            <p className="text-slate-300 text-[11px] mt-0.5">
+              Você <strong>não precisa ficar esperando na barbearia</strong>! Basta colocar seu Nome e WhatsApp. Nós garantimos seu lugar e o app envia mensagem automática quando for a hora de cortar ou fazer a barba.
+            </p>
           </div>
           <button
             onClick={() => onNavigateToQueue(organization.slug)}
-            className="rounded-xl bg-amber-500 hover:bg-amber-400 px-3.5 py-2 text-xs font-bold text-slate-950 shrink-0 transition"
+            className="rounded-xl bg-amber-500 hover:bg-amber-400 px-4 py-2.5 text-xs font-black text-slate-950 shrink-0 transition shadow-md shadow-amber-500/20 cursor-pointer"
           >
-            Entrar na Fila
+            Entrar na Fila Virtual Agora
           </button>
         </div>
 

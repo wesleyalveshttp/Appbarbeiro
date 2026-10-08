@@ -26,13 +26,13 @@ export class WhatsAppService {
         return `💈 *${data.establishmentName}*\n\nOlá, *${data.customerName}*! Passando para lembrar do seu atendimento hoje às *${data.time}* com *${data.professionalName}*.\n\nCaso precise avisar que está a caminho ou reagendar:\n${data.trackingUrl || ''}`;
 
       case 'FILA_ENTRADA':
-        return `💈 *${data.establishmentName}*\n\nOlá, *${data.customerName}*! Você entrou na nossa fila digital de espera (Senha #${data.ticketNumber}).\n\nSua posição atual é *#${data.queuePosition}*.\n\nAcompanhe sua posição ao vivo pelo link:\n${data.trackingUrl || ''}`;
+        return `💈 *${data.establishmentName}*\n\nOlá, *${data.customerName}*! Você entrou na nossa fila virtual de espera (Senha #${data.ticketNumber}).\n\nSua posição atual é *#${data.queuePosition}*.\n\n✨ *Você NÃO precisa ficar esperando na barbearia!* O seu lugar já está garantido na fila. Fique à vontade onde estiver: quando chegar o momento de cortar seu cabelo ou fazer sua barba, enviaremos automaticamente uma mensagem avisando para você vir!\n\nAcompanhe sua posição ao vivo:\n${data.trackingUrl || ''}`;
 
       case 'PROXIMO':
-        return `💈 *${data.establishmentName}*\n\n⚠️ Atenção, *${data.customerName}*!\nVocê é o *próximo da fila* para ser atendido. Por favor, aproxime-se da recepção.`;
+        return `💈 *${data.establishmentName}*\n\n⚠️ *Atenção, ${data.customerName}! Faltam cerca de 5 minutos!*\nVocê é o *próximo da fila*. Por favor, dirija-se à barbearia para o seu corte ou barba.`;
 
       case 'SUA_VEZ':
-        return `💈 *${data.establishmentName}*\n\n🎉 *Chegou a sua vez!* O profissional *${data.professionalName || 'da cadeira'}* está pronto para te atender. Dirija-se à cadeira!`;
+        return `💈 *${data.establishmentName}*\n\n🎉 *Chegou a sua vez, ${data.customerName}!* O seu barbeiro *${data.professionalName || 'da cadeira'}* já está te aguardando na barbearia para cortar seu cabelo ou fazer sua barba. Dirija-se à cadeira agora mesmo!`;
 
       case 'FINALIZADO':
         return `💈 *${data.establishmentName}*\n\nObrigado pela preferência, *${data.customerName}*! Esperamos que tenha gostado do atendimento de hoje.\n\nPoderia deixar uma avaliação rápida de 1 minuto para nos ajudar?\n${data.trackingUrl || ''}`;

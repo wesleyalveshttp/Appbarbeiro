@@ -19,12 +19,14 @@ interface OnboardingWizardProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (newOrg: Organization) => void;
+  onOpenLogin?: () => void;
 }
 
 export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
   isOpen,
   onClose,
   onSuccess,
+  onOpenLogin,
 }) => {
   const [step, setStep] = useState(1);
 
@@ -42,10 +44,12 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
   const [city, setCity] = useState('');
   const [state, setState] = useState('SP');
 
-  // Step 4: Contact
+  // Step 4: Contact & Access
   const [whatsapp, setWhatsapp] = useState('');
   const [phone, setPhone] = useState('');
   const [instagram, setInstagram] = useState('');
+  const [ownerEmail, setOwnerEmail] = useState('');
+  const [ownerPassword, setOwnerPassword] = useState('123');
 
   // Step 5: Hours
   const [openTime, setOpenTime] = useState('09:00');
@@ -92,6 +96,9 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
       phone: phone || whatsapp,
       whatsapp: whatsapp.replace(/\D/g, ''),
       instagram,
+      ownerEmail: ownerEmail || `dono@${slug || 'barbearia'}.com.br`,
+      ownerPassword: ownerPassword || '123',
+      ownerName: name,
       address: {
         cep,
         street,
@@ -160,19 +167,48 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
           <X className="h-5 w-5" />
         </button>
 
+        <div className="flex items-center justify-between pr-8 mb-4">
+          <div className="flex items-center gap-2">
+            <span className="text-base font-black text-white">Criar Nova Barbearia</span>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              Cadastro Rápido
+            </span>
+          </div>
+          {onOpenLogin && (
+            <button
+              type="button"
+              onClick={onOpenLogin}
+              className="text-xs text-amber-400 hover:text-amber-300 font-semibold underline cursor-pointer"
+            >
+              Já tenho conta (Login)
+            </button>
+          )}
+        </div>
+
         {/* Stepper Progress */}
         <div className="mb-6">
           <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
             <span>Passo {step} de 7</span>
-            <span className="font-semibold text-amber-400">
-              {step === 1 && 'Identidade'}
-              {step === 2 && 'Tipo de Salão'}
-              {step === 3 && 'Endereço'}
-              {step === 4 && 'Contatos'}
-              {step === 5 && 'Horários'}
-              {step === 6 && 'Profissional'}
-              {step === 7 && 'Primeiro Serviço'}
-            </span>
+            <div className="flex items-center gap-3">
+              {onOpenLogin && (
+                <button
+                  type="button"
+                  onClick={onOpenLogin}
+                  className="text-amber-400 hover:text-amber-300 font-semibold underline text-[11px] cursor-pointer"
+                >
+                  Já tem conta? Fazer login
+                </button>
+              )}
+              <span className="font-semibold text-amber-400">
+                {step === 1 && 'Identidade'}
+                {step === 2 && 'Tipo de Salão'}
+                {step === 3 && 'Endereço'}
+                {step === 4 && 'Contatos'}
+                {step === 5 && 'Horários'}
+                {step === 6 && 'Profissional'}
+                {step === 7 && 'Primeiro Serviço'}
+              </span>
+            </div>
           </div>
           <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
             <div
@@ -295,10 +331,14 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
           </div>
         )}
 
-        {/* STEP 4: CONTATO */}
+        {/* STEP 4: CONTATO & ACESSO */}
         {step === 4 && (
           <div className="space-y-3">
-            <h3 className="text-lg font-bold text-white">Canais de Contato</h3>
+            <h3 className="text-lg font-bold text-white">Contato e Conta de Acesso</h3>
+            <p className="text-xs text-slate-400">
+              Defina o WhatsApp do salão e o login e senha que você usará para acessar sua conta.
+            </p>
+
             <div>
               <label className="text-xs font-semibold text-slate-300">WhatsApp Oficial *</label>
               <input
@@ -310,8 +350,35 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
                 className="w-full rounded-lg bg-slate-950 border border-slate-800 p-2.5 text-xs text-white"
               />
             </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-slate-800/80">
+              <div>
+                <label className="text-xs font-semibold text-amber-300">E-mail de Login do Dono *</label>
+                <input
+                  type="email"
+                  required
+                  value={ownerEmail}
+                  onChange={(e) => setOwnerEmail(e.target.value)}
+                  placeholder="seuemail@barbearia.com"
+                  className="w-full rounded-lg bg-slate-950 border border-slate-800 p-2.5 text-xs text-white font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-amber-300">Senha de Acesso *</label>
+                <input
+                  type="text"
+                  required
+                  value={ownerPassword}
+                  onChange={(e) => setOwnerPassword(e.target.value)}
+                  placeholder="Ex: 123456"
+                  className="w-full rounded-lg bg-slate-950 border border-slate-800 p-2.5 text-xs text-white font-mono"
+                />
+              </div>
+            </div>
+
             <div>
-              <label className="text-xs font-semibold text-slate-300">Instagram</label>
+              <label className="text-xs font-semibold text-slate-300">Instagram (Opcional)</label>
               <input
                 type="text"
                 value={instagram}
