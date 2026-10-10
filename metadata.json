@@ -1,6 +1,6 @@
 {
-  "name": "BarberOS - Gestão SaaS para Barbearias e Salões",
-  "description": "Sistema completo para barbearias e salões: agendamento online, fila digital em tempo real, painel operacional de cadeiras, controle de profissionais, clientes e financeiro.",
+  "name": "BarberOS - Fila Virtual Inteligente para Barbearias e Salões",
+  "description": "Plataforma de Fila Virtual Inteligente para barbearias e salões: entre na fila pelo celular, acompanhe a posição ao vivo e receba notificação com som e vibração no aparelho.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

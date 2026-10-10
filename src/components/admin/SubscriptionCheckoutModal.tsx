@@ -32,10 +32,14 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
   organization,
   onSuccess,
 }) => {
+  const [selectedPlan, setSelectedPlan] = useState<'MONTHLY' | 'ANNUAL'>('ANNUAL');
   const [paymentTab, setPaymentTab] = useState<'PIX' | 'CARTAO'>('PIX');
   const [copiedPix, setCopiedPix] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [proofSent, setProofSent] = useState(organization.subscription?.status === 'AGUARDANDO_APROVACAO');
+
+  const planAmount = selectedPlan === 'ANNUAL' ? 838.8 : 79.9;
+  const planLabel = selectedPlan === 'ANNUAL' ? 'Plano Pro Anual (12x R$ 69,90)' : 'Plano Pro Mensal (R$ 79,90/mês)';
 
   // Card form
   const [cardNumber, setCardNumber] = useState('');
@@ -46,12 +50,12 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Realistic PIX Copia e Cola String for R$ 79,90
-  const pixCode = `00020126580014BR.GOV.BCB.PIX0136barberos-pagamentos@saas.com.br520400005303986540579.905802BR5920BARBEROS TECNOLOGIA6009SAO PAULO62140510AS_${organization.slug.toUpperCase()}_79906304E7A2`;
+  // Realistic PIX Copia e Cola String
+  const pixCode = `00020126580014BR.GOV.BCB.PIX0136barberos-pagamentos@saas.com.br5204000053039865405${planAmount.toFixed(2)}5802BR5920BARBEROS TECNOLOGIA6009SAO PAULO62140510AS_${organization.slug.toUpperCase()}_${selectedPlan === 'ANNUAL' ? 'ANUAL' : 'MENSAL'}6304E7A2`;
 
   const ownerWhatsAppNumber = '5511999998888';
   const ownerWhatsAppUrl = `https://wa.me/${ownerWhatsAppNumber}?text=${encodeURIComponent(
-    `Olá! Sou o dono da ${organization.name}. Acabei de realizar o pagamento via PIX no valor de R$ 79,90 do plano BarberOS Pro. Segue o comprovante para confirmação e liberação do acesso 100%!`
+    `Olá! Sou o dono da ${organization.name}. Acabei de realizar o pagamento via PIX no valor de R$ ${planAmount.toFixed(2).replace('.', ',')} do ${planLabel}. Segue o comprovante para confirmação e liberação do acesso 100%!`
   )}`;
 
   useEffect(() => {
@@ -80,7 +84,7 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
     setTimeout(() => {
       StorageService.requestSubscriptionApproval(
         organization.id,
-        'Comprovante de pagamento PIX R$ 79,90 enviado pelo dono da barbearia'
+        `Comprovante de pagamento PIX de R$ ${planAmount.toFixed(2).replace('.', ',')} (${planLabel}) enviado pelo dono da barbearia`
       );
       setIsProcessing(false);
       setProofSent(true);
@@ -94,7 +98,7 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
       StorageService.activateSubscription(
         organization.id,
         'PIX',
-        'Mensalidade BarberOS Pro (R$ 79,90) - Aprovado Instantaneamente (Modo Teste)'
+        `${planLabel} - Aprovado Instantaneamente (Modo Teste)`
       );
       setIsProcessing(false);
       onSuccess();
@@ -111,7 +115,7 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
       StorageService.activateSubscription(
         organization.id,
         'CARTAO_CREDITO',
-        `Mensalidade BarberOS Pro (R$ 79,90) - Cartão final ${cardNumber.slice(-4) || '4242'}`
+        `${planLabel} - Cartão final ${cardNumber.slice(-4) || '4242'}`
       );
       setIsProcessing(false);
       onSuccess();
@@ -140,20 +144,64 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
           </div>
         </div>
 
+        {/* Plan Selector Toggle (12x 69,90 vs 79,90/mês) */}
+        <div className="mt-4 grid grid-cols-2 gap-2 p-1.5 bg-slate-950 rounded-2xl border border-slate-800">
+          <button
+            type="button"
+            onClick={() => setSelectedPlan('ANNUAL')}
+            className={`p-3 rounded-xl text-left transition relative cursor-pointer ${
+              selectedPlan === 'ANNUAL'
+                ? 'bg-gradient-to-r from-amber-500/20 to-amber-500/10 border-2 border-amber-500 text-white'
+                : 'text-slate-400 hover:text-white border border-transparent'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] uppercase font-bold text-amber-400 tracking-wider">
+                12x R$ 69,90
+              </span>
+              <span className="text-[9px] font-bold bg-amber-500 text-slate-950 px-1.5 py-0.5 rounded">
+                -R$ 120
+              </span>
+            </div>
+            <div className="text-sm font-black text-white">Plano Anual Pro</div>
+            <div className="text-[10px] text-slate-400 mt-0.5">R$ 838,80/ano parcelado</div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedPlan('MONTHLY')}
+            className={`p-3 rounded-xl text-left transition cursor-pointer ${
+              selectedPlan === 'MONTHLY'
+                ? 'bg-slate-800 border-2 border-slate-600 text-white'
+                : 'text-slate-400 hover:text-white border border-transparent'
+            }`}
+          >
+            <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1">
+              Mês a Mês
+            </div>
+            <div className="text-sm font-black text-white">Plano Mensal Pro</div>
+            <div className="text-[10px] text-slate-400 mt-0.5">R$ 79,90 / mês sem fidelidade</div>
+          </button>
+        </div>
+
         {/* Price & Summary Box */}
-        <div className="mt-4 rounded-2xl bg-gradient-to-r from-amber-500/15 via-slate-950 to-slate-950 p-4 border border-amber-500/30">
+        <div className="mt-3 rounded-2xl bg-gradient-to-r from-amber-500/15 via-slate-950 to-slate-950 p-4 border border-amber-500/30">
           <div className="flex items-center justify-between">
             <div>
               <span className="text-[10px] uppercase font-bold tracking-wider text-amber-400 block">
-                Assinatura Mensal
+                {selectedPlan === 'ANNUAL' ? 'Total Promocional Anual' : 'Valor da Mensalidade'}
               </span>
               <span className="text-2xl font-black text-white font-mono">
-                R$ 79,90 <span className="text-xs text-slate-400 font-normal">/ mês</span>
+                {selectedPlan === 'ANNUAL' ? (
+                  <>12x R$ 69,90 <span className="text-xs text-slate-400 font-normal">(= R$ 838,80)</span></>
+                ) : (
+                  <>R$ 79,90 <span className="text-xs text-slate-400 font-normal">/ mês</span></>
+                )}
               </span>
             </div>
             <div className="text-right text-[11px] text-slate-400">
               <span className="text-emerald-400 font-semibold block">✓ Acesso Imediato</span>
-              <span>Cancele a qualquer momento</span>
+              <span>100% Liberado</span>
             </div>
           </div>
 
@@ -164,11 +212,11 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
             </div>
             <div className="flex items-center gap-1.5">
               <CheckCircle2 className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-              <span>Modo Barbearia das Cadeiras</span>
+              <span>Alertas com som & vibração</span>
             </div>
             <div className="flex items-center gap-1.5">
               <CheckCircle2 className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-              <span>Agendamento online ilimitado</span>
+              <span>Painel das Cadeiras</span>
             </div>
             <div className="flex items-center gap-1.5">
               <CheckCircle2 className="h-3.5 w-3.5 text-amber-400 shrink-0" />
@@ -212,7 +260,7 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
             <div className="flex flex-col items-center justify-center rounded-2xl bg-white p-4 shadow-inner max-w-xs mx-auto">
               <canvas ref={canvasRef} className="rounded-lg" />
               <span className="text-[11px] font-bold text-slate-800 mt-1">
-                Valor: R$ 79,90 · BarberOS SaaS
+                Valor: R$ {planAmount.toFixed(2).replace('.', ',')} · {selectedPlan === 'ANNUAL' ? '12x R$ 69,90 (Anual)' : 'Mensal'}
               </span>
             </div>
 
@@ -368,10 +416,14 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
               <button
                 type="submit"
                 disabled={isProcessing}
-                className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 py-3.5 text-xs font-black text-slate-950 shadow-lg shadow-emerald-500/20 transition disabled:opacity-50"
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 py-3.5 text-xs font-black text-slate-950 shadow-lg shadow-emerald-500/20 transition disabled:opacity-50 cursor-pointer"
               >
                 <Lock className="h-4 w-4" />
-                <span>{isProcessing ? 'Processando...' : 'Pagar R$ 79,90 e Desbloquear'}</span>
+                <span>
+                  {isProcessing
+                    ? 'Processando...'
+                    : `Pagar R$ ${planAmount.toFixed(2).replace('.', ',')} e Desbloquear`}
+                </span>
               </button>
             </div>
           </form>
@@ -379,7 +431,9 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
 
         <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-center gap-2 text-[10px] text-slate-500">
           <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
-          <span>Pagamento Seguro com Criptografia SSL · Renovação Mensal de R$ 79,90</span>
+          <span>
+            Pagamento Seguro SSL · {selectedPlan === 'ANNUAL' ? '12x R$ 69,90 (R$ 838,80/ano)' : 'R$ 79,90 / mês'}
+          </span>
         </div>
       </div>
     </div>

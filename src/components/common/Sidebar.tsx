@@ -20,6 +20,7 @@ import {
   CreditCard
 } from 'lucide-react';
 import { UserRole } from '../../types';
+import { StorageService } from '../../services/storage';
 
 interface SidebarProps {
   currentRole: UserRole;
@@ -171,6 +172,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span>Ver Landing Page</span>
             </div>
             <ChevronRight className="h-3 w-3 text-slate-600" />
+          </button>
+
+          <button
+            onClick={() => {
+              StorageService.logout();
+              handleSelect('landing');
+            }}
+            className="w-full flex items-center justify-between px-3 py-2 text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-lg transition"
+          >
+            <div className="flex items-center gap-2">
+              <LogOut className="h-4 w-4 text-rose-400" />
+              <span>Sair da Conta</span>
+            </div>
+            <ChevronRight className="h-3 w-3 text-rose-400/60" />
           </button>
         </div>
       </aside>

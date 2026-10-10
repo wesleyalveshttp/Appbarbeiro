@@ -12,7 +12,8 @@ import {
   ExternalLink,
   Plus,
   CreditCard,
-  LogIn
+  LogIn,
+  LogOut
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization, Professional } from '../../types';
@@ -374,6 +375,19 @@ export const Header: React.FC<HeaderProps> = ({
             title="Ver Landing Page do BarberOS"
           >
             <span>Landing Page</span>
+          </button>
+
+          {/* Sair / Logout */}
+          <button
+            onClick={() => {
+              StorageService.logout();
+              onNavigate('landing');
+            }}
+            className="flex items-center gap-1 rounded-lg text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 px-2.5 py-1.5 text-xs transition cursor-pointer border border-rose-500/20"
+            title="Sair da Conta"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Sair</span>
           </button>
         </div>
       </header>

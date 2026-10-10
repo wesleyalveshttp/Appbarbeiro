@@ -15,10 +15,13 @@ export type QueueStatus =
   | 'AGUARDANDO'
   | 'PROXIMO'
   | 'CHAMADO'
+  | 'A_CAMINHO'
+  | 'PEDIU_TOLERANCIA'
   | 'NA CADEIRA'
   | 'FINALIZADO'
   | 'CANCELADO'
-  | 'DESISTIU';
+  | 'DESISTIU'
+  | 'NAO_COMPARECEU';
 
 export type PaymentMethod = 'PIX' | 'DINHEIRO' | 'CARTAO_CREDITO' | 'CARTAO_DEBITO' | 'OUTRO';
 
@@ -96,7 +99,9 @@ export interface Organization {
     maxLateMinutes: number; // default 15 min
     cancellationHoursLimit: number; // default 2 hours
     queueMode: 'SINGLE' | 'PER_PROFESSIONAL';
-    autoNotifyAheadCount: number; // default 2
+    autoNotifyAheadCount: number; // default 3
+    callToleranceMinutes: number; // default 3 min
+    allowToleranceRequest: boolean; // default true
     primaryColor: string;
     secondaryColor: string;
     welcomeMessage: string;
@@ -207,15 +212,52 @@ export interface WaitingQueueItem {
   status: QueueStatus;
   joinedAt: string;
   calledAt?: string;
+  calledToleranceExpiresAt?: string;
+  clientResponse?: 'A_CAMINHO' | 'PEDIU_TOLERANCIA' | 'NAO_PODE';
+  clientResponseTime?: string;
+  toleranceExtraMinutes?: number;
   onChairAt?: string;
   finishedAt?: string;
   notes?: string;
   estimatedWaitMinutes: number;
-  // WhatsApp Automatic Notifications for Virtual Queue
+  // Native Push & In-App Notification tracking
+  notifiedStep3?: boolean;   // Aviso 1: Faltam 3 pessoas
+  notifiedNext?: boolean;    // Aviso 2: Você é o próximo
+  notifiedCalled?: boolean;  // Aviso 3: Chegou sua vez!
+  notificationToken?: string;
+  deviceRegisteredAt?: string;
+  token?: string;
+  // Real Remote Push Delivery Audit
+  pushDeliveryStatus?: PushDeliveryStatus;
+  pushDeliveryMessage?: string;
+  pushDeliveryTime?: string;
+  pushHttpStatus?: number;
+  pushSubscriptionData?: any;
+  // Optional secondary WhatsApp message
   whatsappNotificationSent?: boolean;
   whatsappNotificationTime?: string;
   whatsappMessageText?: string;
-  token?: string;
+}
+
+export type PushDeliveryStatus =
+  | 'DELIVERED_TO_PUSH_SERVICE'
+  | 'NO_DEVICE_REGISTERED'
+  | 'INVALID_TOKEN_PURGED'
+  | 'PUSH_SERVICE_ERROR'
+  | 'NOT_ATTEMPTED';
+
+export interface PushDispatchLog {
+  id: string;
+  organizationId: string;
+  queueItemId?: string;
+  customerName: string;
+  ticketNumber: number;
+  type: 'STEP_3' | 'NEXT' | 'CALLED' | 'TEST';
+  status: PushDeliveryStatus;
+  httpStatus?: number;
+  endpointDomain?: string;
+  message: string;
+  timestamp: string;
 }
 
 export interface AuthSession {

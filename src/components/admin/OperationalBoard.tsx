@@ -91,10 +91,10 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
   const finishedQueue = queue.filter(q => q.status === 'FINALIZADO');
 
   // Actions
-  const handleCallQueueItem = (item: WaitingQueueItem) => {
+  const handleCallQueueItem = async (item: WaitingQueueItem) => {
     const prof = professionals[0] || StorageService.getProfessionals(organization.id)[0];
     if (!prof) return;
-    StorageService.callQueueCustomer(item.id, prof.id);
+    await StorageService.callQueueCustomer(item.id, prof.id);
     loadData();
   };
 
@@ -164,21 +164,37 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
         </div>
 
         {/* Quick Action Buttons */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={async () => {
+              const res = await StorageService.callNextCustomer(organization.id, selectedProfessionalId);
+              if (res.success && res.item) {
+                loadData();
+              } else {
+                alert(res.error || 'Nenhum cliente aguardando na fila.');
+              }
+            }}
+            disabled={waitingQueue.length === 0}
+            className="flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 px-4 py-2 text-xs font-black text-slate-950 shadow-md shadow-amber-500/20 transition disabled:opacity-40 cursor-pointer"
+          >
+            <Scissors className="h-4 w-4" />
+            <span>CHAMAR PRÓXIMO DA FILA</span>
+          </button>
+
           <button
             onClick={onOpenNewQueueModal}
             className="flex items-center gap-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition"
           >
             <Plus className="h-4 w-4 text-amber-400" />
-            <span>+ Cliente Chegou (Fila)</span>
+            <span>+ Adicionar na Fila</span>
           </button>
 
           <button
             onClick={onOpenNewAppointmentModal}
-            className="flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 px-4 py-2 text-xs font-bold text-slate-950 shadow-md transition"
+            className="flex items-center gap-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 px-3 py-2 text-xs font-semibold text-slate-200 transition"
           >
             <Clock className="h-4 w-4" />
-            <span>+ Novo Horário</span>
+            <span>+ Agendamento</span>
           </button>
         </div>
       </div>

@@ -95,11 +95,16 @@ export default function App() {
         return;
       }
 
-      // Default initial view: on PC show landing page first; on mobile the barbershop owner is already logged in
-      const isMobile = window.innerWidth < 1024;
-      if (isMobile) {
-        setCurrentRoute('dashboard');
-        setCurrentRole('OWNER');
+      // Default initial view: ALWAYS show landing page first, unless user already has an active authenticated session
+      const session = StorageService.getAuthSession();
+      if (session.isAuthenticated) {
+        if (session.role === 'SUPER_ADMIN') {
+          setCurrentRoute('superadmin');
+          setCurrentRole('SUPER_ADMIN');
+        } else {
+          setCurrentRoute('dashboard');
+          setCurrentRole('OWNER');
+        }
       } else {
         setCurrentRoute('landing');
       }
@@ -168,13 +173,29 @@ export default function App() {
       handleChangeRole('OWNER');
       handleNavigate('dashboard');
     }
+    setIsLoginModalOpen(false);
   };
 
   const handleOnboardingSuccess = (newOrg: Organization) => {
     setCurrentOrg(newOrg);
     StorageService.setCurrentOrgId(newOrg.id);
+    StorageService.setAuthSession({
+      isAuthenticated: true,
+      role: 'OWNER',
+      organizationId: newOrg.id,
+      userEmail: newOrg.ownerEmail || `${newOrg.slug}@barberos.app`,
+      userName: newOrg.ownerName || newOrg.name,
+      loggedAt: new Date().toISOString()
+    });
     setIsOnboardingOpen(false);
     setCurrentRoute('dashboard');
+    setCurrentRole('OWNER');
+  };
+
+  const handleLogout = () => {
+    StorageService.logout();
+    setCurrentRoute('landing');
+    setCurrentRole('OWNER');
   };
 
   if (!currentOrg) {
@@ -246,8 +267,18 @@ export default function App() {
     );
   }
 
-  // Render Marketing Landing Page (#7)
-  if (currentRoute === 'landing') {
+  // Check authentication session
+  const authSession = StorageService.getAuthSession();
+  const isPublicRoute =
+    currentRoute === 'landing' ||
+    currentRoute === 'public-booking' ||
+    currentRoute === 'public-queue' ||
+    currentRoute === 'public-store' ||
+    currentRoute === 'public-tracker' ||
+    currentRoute === 'client-portal';
+
+  // Render Marketing Landing Page or Protect Internal Routes if not authenticated
+  if (currentRoute === 'landing' || (!isPublicRoute && !authSession.isAuthenticated)) {
     return (
       <>
         <LandingPage
@@ -265,7 +296,7 @@ export default function App() {
           plans={StorageService.getPlans()}
         />
 
-        {/* 7-Step Onboarding Wizard on top of Landing Page */}
+        {/* 7-Step Onboarding Wizard */}
         <OnboardingWizard
           isOpen={isOnboardingOpen}
           onClose={() => {
@@ -273,9 +304,13 @@ export default function App() {
             setCurrentRoute('landing');
           }}
           onSuccess={handleOnboardingSuccess}
+          onOpenLogin={() => {
+            setIsOnboardingOpen(false);
+            handleOpenLogin('OWNER');
+          }}
         />
 
-        {/* Global Login Modal on top of Landing Page */}
+        {/* Global Login Modal */}
         <LoginModal
           isOpen={isLoginModalOpen}
           onClose={() => {
@@ -525,11 +560,20 @@ export default function App() {
       {/* 7-Step Onboarding Wizard */}
       <OnboardingWizard
         isOpen={isOnboardingOpen}
-        onClose={() => setIsOnboardingOpen(false)}
+        onClose={() => {
+          setIsOnboardingOpen(false);
+          if (!StorageService.getAuthSession().isAuthenticated) {
+            setCurrentRoute('landing');
+          }
+        }}
         onSuccess={handleOnboardingSuccess}
+        onOpenLogin={() => {
+          setIsOnboardingOpen(false);
+          handleOpenLogin('OWNER');
+        }}
       />
 
-      {/* Global Subscription Checkout Modal (R$ 79,90) */}
+      {/* Global Subscription Checkout Modal (R$ 79,90 e 12x 69,90) */}
       <SubscriptionCheckoutModal
         isOpen={isSubscriptionModalOpen}
         onClose={() => setIsSubscriptionModalOpen(false)}
@@ -541,10 +585,15 @@ export default function App() {
         }}
       />
 
-      {/* Global Login Modal (#UserRequest: Login/Senha para cada salão e Super Admin) */}
+      {/* Global Login Modal */}
       <LoginModal
         isOpen={isLoginModalOpen}
-        onClose={() => setIsLoginModalOpen(false)}
+        onClose={() => {
+          setIsLoginModalOpen(false);
+          if (!StorageService.getAuthSession().isAuthenticated) {
+            setCurrentRoute('landing');
+          }
+        }}
         initialTab={loginInitialTab}
         onSuccess={handleLoginSuccess}
         onOpenRegister={() => {

@@ -20,7 +20,8 @@ import {
   CreditCard,
   RotateCcw,
   Lock,
-  MessageCircle
+  MessageCircle,
+  Scissors
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization, Appointment, WaitingQueueItem, Professional } from '../../types';
@@ -117,10 +118,10 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
   const bookingUrl = `${origin}/agendar/${organization.slug}`;
   const queueUrl = `${origin}/fila/${organization.slug}`;
 
-  const handleCallCustomer = (queueItem: WaitingQueueItem) => {
+  const handleCallCustomer = async (queueItem: WaitingQueueItem) => {
     const availableProf = professionals.find(p => p.isActive) || professionals[0];
     if (!availableProf) return;
-    StorageService.callQueueCustomer(queueItem.id, availableProf.id);
+    await StorageService.callQueueCustomer(queueItem.id, availableProf.id);
 
     // Automatically trigger WhatsApp direct message link
     const link = StorageService.getWhatsAppCallLink(queueItem.id);
@@ -343,17 +344,32 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
 
               <div className="flex items-center gap-2">
                 <button
+                  onClick={async () => {
+                    const res = await StorageService.callNextCustomer(organization.id);
+                    if (res.success && res.item) {
+                      loadData();
+                    } else {
+                      alert(res.error || 'Nenhum cliente aguardando na fila.');
+                    }
+                  }}
+                  disabled={waitingInQueueCount === 0}
+                  className="flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 px-3.5 py-1.5 text-xs font-black text-slate-950 shadow-md shadow-amber-500/20 transition disabled:opacity-40 cursor-pointer"
+                >
+                  <Scissors className="h-3.5 w-3.5" />
+                  <span>CHAMAR PRÓXIMO</span>
+                </button>
+                <button
                   onClick={onOpenNewQueueModal}
                   className="flex items-center gap-1.5 rounded-lg bg-slate-800 hover:bg-slate-750 px-3 py-1.5 text-xs font-medium text-slate-200 border border-slate-700 transition"
                 >
                   <UserPlus className="h-3.5 w-3.5 text-amber-400" />
-                  <span>+ Inserir na Fila</span>
+                  <span>+ Inserir</span>
                 </button>
                 <button
                   onClick={() => onNavigate('fila')}
                   className="text-xs text-amber-400 hover:text-amber-300 transition flex items-center gap-1 font-medium"
                 >
-                  Ver Fila Completa <ArrowRight className="h-3 w-3" />
+                  Ver Fila <ArrowRight className="h-3 w-3" />
                 </button>
               </div>
             </div>

@@ -11,10 +11,19 @@ import {
   Armchair,
   Volume2,
   LogOut,
+  Bell,
+  BellRing,
+  Vibrate,
+  Smartphone,
+  Sparkles,
   RefreshCw,
-  MessageCircle
+  Send,
+  HelpCircle,
+  ShieldCheck,
+  User
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
+import { NotificationService, PushPermissionState } from '../../services/notificationService';
 import { Organization, WaitingQueueItem, Service, Professional } from '../../types';
 import { QRCodeModal } from '../common/QRCodeModal';
 
@@ -44,8 +53,15 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
   const [preferredProfId, setPreferredProfId] = useState('');
   const [notes, setNotes] = useState('');
 
-  const [showQR, setShowQR] = useState(false);
+  // Notification & Audio/Vibration State
+  const [permissionState, setPermissionState] = useState<PushPermissionState>('default');
+  const [testNotificationFeedback, setTestNotificationFeedback] = useState<string | null>(null);
   const [hasPlayedChime, setHasPlayedChime] = useState(false);
+
+  // Tolerance countdown for called client
+  const [secondsRemaining, setSecondsRemaining] = useState<number | null>(null);
+
+  const [showQR, setShowQR] = useState(false);
 
   const loadData = () => {
     const org = StorageService.getOrganizationBySlug(slug) || StorageService.getAllOrganizations()[0];
@@ -62,6 +78,9 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
   };
 
   useEffect(() => {
+    // Check permission state
+    setPermissionState(NotificationService.getPermissionStatus());
+
     // Restore my ticket if active
     const savedTicket = localStorage.getItem(`barberos_queue_ticket_${slug}`);
     if (savedTicket) setMyTicketId(savedTicket);
@@ -73,315 +92,580 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
     return unsub;
   }, [slug]);
 
-  if (!organization) {
-    return (
-      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-4">
-        <p className="text-slate-400">Estabelecimento não encontrado.</p>
-      </div>
-    );
-  }
-
   // Find My Item
   const myQueueItem = queue.find(q => q.id === myTicketId);
-  const isCurrentlyInQueue = !!myQueueItem && myQueueItem.status !== 'FINALIZADO' && myQueueItem.status !== 'DESISTIU';
+  const isCurrentlyInQueue =
+    !!myQueueItem &&
+    myQueueItem.status !== 'FINALIZADO' &&
+    myQueueItem.status !== 'CANCELADO' &&
+    myQueueItem.status !== 'DESISTIU' &&
+    myQueueItem.status !== 'NAO_COMPARECEU';
 
-  // Calculate my position
-  const activeWaitingList = queue.filter(q => q.status === 'AGUARDANDO' || q.status === 'PROXIMO' || q.status === 'CHAMADO');
+  // Calculate my position among active waiting items
+  const activeWaitingList = queue.filter(
+    q =>
+      q.status === 'AGUARDANDO' ||
+      q.status === 'PROXIMO' ||
+      q.status === 'CHAMADO' ||
+      q.status === 'A_CAMINHO' ||
+      q.status === 'PEDIU_TOLERANCIA'
+  );
   const myPositionIndex = myQueueItem ? activeWaitingList.findIndex(q => q.id === myQueueItem.id) : -1;
   const peopleAhead = myPositionIndex > 0 ? myPositionIndex : 0;
-  const estimatedTime = (peopleAhead + 1) * 20;
+  const estimatedTime = myQueueItem ? myQueueItem.estimatedWaitMinutes : (peopleAhead + 1) * 20;
 
-  // Sound chime when called or next
+  // Approximate forecast clock time (e.g. "17:45")
+  const forecastTimeStr = (() => {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() + estimatedTime);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  })();
+
+  // Sound & Vibration alert when status changes to PROXIMO or CHAMADO
   useEffect(() => {
-    if (myQueueItem && (myQueueItem.status === 'PROXIMO' || myQueueItem.status === 'CHAMADO') && !hasPlayedChime) {
-      if (typeof window !== 'undefined' && 'AudioContext' in window) {
-        try {
-          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.connect(gain);
-          gain.connect(ctx.destination);
-          osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
-          osc.frequency.setValueAtTime(880, ctx.currentTime + 0.15); // A5
-          gain.gain.setValueAtTime(0.2, ctx.currentTime);
-          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.6);
-          osc.start();
-          osc.stop(ctx.currentTime + 0.6);
-        } catch {}
+    if (myQueueItem && (myQueueItem.status === 'CHAMADO' || myQueueItem.status === 'PROXIMO') && !hasPlayedChime) {
+      if (myQueueItem.status === 'CHAMADO') {
+        NotificationService.playSound('CALLED');
+        NotificationService.vibrate([400, 150, 400, 150, 800, 200, 800]);
+      } else {
+        NotificationService.playSound('NEXT');
+        NotificationService.vibrate([300, 150, 300, 150, 300]);
       }
       setHasPlayedChime(true);
     }
   }, [myQueueItem?.status, hasPlayedChime]);
 
-  const handleJoinQueue = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!customerName.trim() || !customerPhone.trim() || !selectedServiceId) return;
+  // Tolerance countdown timer when called
+  useEffect(() => {
+    if (!myQueueItem?.calledToleranceExpiresAt) {
+      setSecondsRemaining(null);
+      return;
+    }
 
-    const newItem = StorageService.joinQueue({
+    const updateCountdown = () => {
+      const expiry = new Date(myQueueItem.calledToleranceExpiresAt!).getTime();
+      const now = Date.now();
+      const diff = Math.max(0, Math.floor((expiry - now) / 1000));
+      setSecondsRemaining(diff);
+    };
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [myQueueItem?.calledToleranceExpiresAt]);
+
+  const handleRequestNotificationPermission = async () => {
+    if (!organization) return;
+    const perm = await NotificationService.requestPermission();
+    setPermissionState(perm);
+    if (perm === 'granted') {
+      const subResult = await NotificationService.subscribeToRemotePush({
+        organizationId: organization.id,
+        queueItemId: myTicketId || undefined,
+        customerName: customerName || undefined,
+        customerPhone: customerPhone || undefined,
+      });
+
+      NotificationService.playSound('NEXT');
+      NotificationService.vibrate([200, 100, 200]);
+      if (subResult.success) {
+        setTestNotificationFeedback('✅ Notificações push ativadas com sucesso no aparelho! Seu celular irá vibrar e tocar mesmo em segundo plano.');
+      } else {
+        setTestNotificationFeedback('Permissão concedida no navegador. Alertas ao vivo com som e vibração ativos.');
+      }
+      setTimeout(() => setTestNotificationFeedback(null), 6000);
+    }
+  };
+
+  const handleTestNotification = async () => {
+    setTestNotificationFeedback('Disparando alerta de teste via servidor push...');
+    NotificationService.playSound('CALLED');
+    NotificationService.vibrate([400, 150, 400, 150, 800]);
+
+    const testRes = await NotificationService.sendTestPush();
+    if (testRes.success) {
+      setTestNotificationFeedback(`✅ Alerta de teste enviado pelo servidor (Status: ${testRes.status})! Verifique a vibração e notificação do aparelho.`);
+    } else {
+      // Fallback direct notification
+      await NotificationService.dispatchNotification({
+        title: '✂️ Teste de Notificação — BarberOS',
+        body: 'Seu celular está configurado! Alertas com som e vibração habilitados.',
+        type: 'CALLED',
+      });
+      setTestNotificationFeedback('Teste concluído no navegador! Permissões de áudio e vibração verificadas.');
+    }
+    setTimeout(() => setTestNotificationFeedback(null), 6000);
+  };
+
+  const handleJoinQueue = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!organization) return;
+    if (!customerName.trim() || !selectedServiceId) return;
+
+    // Auto-request notifications if default
+    let pushSub: any = undefined;
+    if (NotificationService.isSupported()) {
+      try {
+        const perm = await NotificationService.requestPermission();
+        setPermissionState(perm);
+        if (perm === 'granted') {
+          const subRes = await NotificationService.subscribeToRemotePush({
+            organizationId: organization.id,
+            customerName: customerName.trim(),
+            customerPhone: customerPhone.trim(),
+          });
+          if (subRes.success && subRes.subscription) {
+            pushSub = subRes.subscription;
+          }
+        }
+      } catch (err) {
+        console.warn('Push subscription during join warning:', err);
+      }
+    }
+
+    const newItem = await StorageService.joinQueue({
       organizationId: organization.id,
       customerName: customerName.trim(),
-      customerPhone: customerPhone.trim(),
+      customerPhone: customerPhone.trim() || '(Celular Web)',
       serviceId: selectedServiceId,
       preferredProfessionalId: preferredProfId || undefined,
       notes: notes.trim() || undefined,
+      notificationToken: NotificationService.getDeviceToken(),
+      subscription: pushSub,
     });
 
     setMyTicketId(newItem.id);
     localStorage.setItem(`barberos_queue_ticket_${slug}`, newItem.id);
+    setHasPlayedChime(false);
     loadData();
   };
 
-  const handleLeaveQueue = () => {
+  const handleLeaveQueue = async () => {
     if (!myQueueItem) return;
-    if (confirm('Tem certeza que deseja sair da fila de espera?')) {
-      StorageService.cancelQueueItem(myQueueItem.id, 'Cliente desistiu pelo link público');
+    if (confirm('Tem certeza que deseja sair da fila virtual de espera?')) {
+      await StorageService.cancelQueueItem(myQueueItem.id, 'Cliente desistiu pelo celular');
       localStorage.removeItem(`barberos_queue_ticket_${slug}`);
       setMyTicketId(null);
       loadData();
     }
   };
 
+  const handleRespondCalled = async (response: 'A_CAMINHO' | 'PEDIU_TOLERANCIA' | 'NAO_PODE') => {
+    if (!myQueueItem) return;
+    await StorageService.respondCalledQueueItem(myQueueItem.id, response);
+    loadData();
+  };
+
+  if (!organization) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-4">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
+      </div>
+    );
+  }
+
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const queueUrl = `${origin}/fila/${slug}`;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white selection:bg-amber-500 selection:text-slate-950 pb-16">
+    <div className="min-h-screen bg-slate-950 text-white selection:bg-amber-500 selection:text-slate-950 pb-20">
       {/* Top Header */}
       <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-800 bg-slate-950/90 px-4 sm:px-6 backdrop-blur-md">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500 text-slate-950 font-bold">
-            <Clock className="h-5 w-5" />
-          </div>
+          <button
+            onClick={onBackToHome}
+            className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500 text-slate-950 font-bold hover:bg-amber-400 transition"
+            title="Voltar ao início"
+          >
+            <Scissors className="h-5 w-5" />
+          </button>
           <div>
-            <h1 className="text-sm font-bold text-white">{organization.name}</h1>
-            <p className="text-[10px] text-slate-400">Fila Digital em Tempo Real</p>
+            <h1 className="text-sm font-bold text-white tracking-tight">{organization.name}</h1>
+            <div className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              <p className="text-[10px] font-semibold text-emerald-400">Fila Virtual Inteligente ao Vivo</p>
+            </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowQR(true)}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-900 border border-slate-800 transition"
-            title="Compartilhar QR Code"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-white bg-slate-900 border border-slate-800 transition"
+            title="Compartilhar QR Code da Fila"
           >
-            <QrCode className="h-4 w-4" />
+            <QrCode className="h-3.5 w-3.5 text-amber-400" />
+            <span className="hidden sm:inline">QR Code</span>
           </button>
           <button
             onClick={() => onNavigateToBooking(organization.slug)}
-            className="text-xs text-amber-400 hover:underline font-semibold"
+            className="text-xs text-amber-400 hover:underline font-semibold px-2 py-1"
           >
-            Agendar Horário
+            Agendamento
           </button>
         </div>
       </header>
 
       {/* Main Container */}
-      <div className="mx-auto max-w-md px-4 pt-6 space-y-6">
-        {/* CASE 1: CLIENT IS CURRENTLY IN QUEUE (#16) */}
-        {isCurrentlyInQueue && myQueueItem ? (
-          <div className="space-y-6">
-            {/* Status Alert Header */}
-            {myQueueItem.status === 'CHAMADO' ? (
-              <div className="rounded-3xl bg-gradient-to-r from-emerald-500 to-emerald-400 text-slate-950 p-6 text-center shadow-2xl animate-pulse space-y-3">
-                <Volume2 className="h-9 w-9 mx-auto" />
-                <h2 className="text-2xl font-black">🎉 Chegou a sua vez de cortar / fazer sua barba!</h2>
-                <p className="text-xs font-bold text-slate-900 leading-relaxed">
-                  O barbeiro já está te aguardando na cadeira! Uma mensagem automática foi disparada para o seu WhatsApp.
-                </p>
-                <a
-                  href={`https://wa.me/55${organization.whatsapp.replace(/\D/g, '')}?text=${encodeURIComponent(`Olá! Estou a caminho para meu corte/barba na ${organization.name}.`)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-950 text-emerald-300 text-xs font-bold shadow-md hover:bg-slate-900 transition"
-                >
-                  <MessageCircle className="h-4 w-4 text-emerald-400" />
-                  <span>Responder no WhatsApp da Barbearia</span>
-                </a>
+      <div className="mx-auto max-w-md px-4 pt-5 space-y-5">
+        {/* PUSH NOTIFICATION PERMISSION ACTIVATION BANNER (#Requirement 3 & 4) */}
+        {permissionState !== 'granted' && (
+          <div className="rounded-2xl bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-slate-900 border border-amber-500/40 p-4 text-xs shadow-lg space-y-2.5">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20">
+                <BellRing className="h-5 w-5" />
               </div>
-            ) : myQueueItem.status === 'PROXIMO' ? (
-              <div className="rounded-3xl bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 p-6 text-center shadow-2xl space-y-1">
-                <h2 className="text-2xl font-black">Você é o próximo da fila!</h2>
-                <p className="text-xs text-slate-900 font-bold">
-                  Faltam cerca de 5 minutos! Aproxime-se da barbearia para seu corte ou barba.
-                </p>
-              </div>
-            ) : myQueueItem.status === 'NA CADEIRA' ? (
-              <div className="rounded-3xl bg-emerald-500 text-slate-950 p-6 text-center shadow-2xl space-y-1">
-                <Armchair className="h-8 w-8 mx-auto" />
-                <h2 className="text-2xl font-black">Você está na cadeira!</h2>
-                <p className="text-xs font-bold">Atendimento em andamento. Relaxe e aproveite o estilo!</p>
-              </div>
-            ) : (
-              <div className="text-center space-y-2">
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-bold">
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  Lugar Garantido na Fila Virtual
-                </div>
-                <h2 className="text-2xl font-black text-white">Você está na Fila Virtual</h2>
-                <p className="text-xs text-amber-300 font-medium">
-                  Não precisa esperar na barbearia! Fique à vontade onde quiser. O app te avisa no WhatsApp quando for sua vez.
-                </p>
-              </div>
-            )}
-
-            {/* Reassuring Virtual Queue Notice */}
-            {myQueueItem.status !== 'CHAMADO' && myQueueItem.status !== 'NA CADEIRA' && (
-              <div className="rounded-2xl bg-amber-500/10 border border-amber-500/30 p-4 text-xs text-amber-200/90 leading-relaxed flex items-start gap-3">
-                <Clock className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
-                <div>
-                  <strong className="text-white block font-semibold mb-0.5">Esperando de onde você quiser:</strong>
-                  Você não precisa ficar sentado na recepção. Quando chegar o momento de cortar seu cabelo ou fazer sua barba, enviaremos uma mensagem automática no WhatsApp <strong>{myQueueItem.customerPhone}</strong> para você vir!
-                </div>
-              </div>
-            )}
-
-            {/* Position & Ticket Big Card (#16) */}
-            <div className="rounded-3xl bg-slate-900 border border-slate-800 p-8 text-center shadow-2xl space-y-6">
-              <div className="inline-block px-4 py-1 rounded-full bg-slate-800 text-amber-300 font-mono text-xs font-bold">
-                Sua Senha: #{myQueueItem.ticketNumber}
-              </div>
-
               <div>
-                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
-                  Sua Posição Atual
-                </span>
-                <div className="mt-2 text-6xl font-black text-white font-mono tracking-tight">
-                  #{myPositionIndex + 1}
-                </div>
+                <span className="font-bold text-white text-sm block">Ativar Notificação com Som & Vibração</span>
+                <p className="text-slate-300 text-[11px] mt-0.5 leading-relaxed">
+                  Não dependa de WhatsApp ou SMS. Permita que o próprio app avise e vibre seu celular quando chegar sua vez de cortar!
+                </p>
               </div>
+            </div>
 
-              <div className="grid grid-cols-2 gap-3 pt-4 border-t border-slate-800 text-xs">
-                <div className="bg-slate-950 p-3 rounded-2xl border border-slate-850">
-                  <span className="text-slate-500 text-[10px] uppercase font-bold">À sua frente</span>
-                  <div className="text-xl font-black text-slate-200 font-mono mt-0.5">
-                    {peopleAhead} {peopleAhead === 1 ? 'pessoa' : 'pessoas'}
-                  </div>
-                </div>
-
-                <div className="bg-slate-950 p-3 rounded-2xl border border-slate-850">
-                  <span className="text-slate-500 text-[10px] uppercase font-bold">Tempo Estimado</span>
-                  <div className="text-xl font-black text-amber-400 font-mono mt-0.5">
-                    ~{estimatedTime} min
-                  </div>
-                </div>
-              </div>
-
-              <div className="text-left text-xs bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-1.5">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Cliente:</span>
-                  <span className="font-bold text-white">{myQueueItem.customerName}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Serviço:</span>
-                  <span className="text-slate-200">{myQueueItem.serviceName}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Status:</span>
-                  <span className="font-bold text-emerald-400 uppercase">{myQueueItem.status}</span>
-                </div>
-              </div>
-
-              <p className="text-[11px] text-slate-500 italic">
-                *Estimativa aproximada calculada em tempo real com base na rotação das cadeiras.
-              </p>
-
+            <div className="flex items-center gap-2 pt-1">
               <button
-                onClick={handleLeaveQueue}
-                className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-950 hover:bg-slate-850 border border-slate-800 py-3 text-xs font-semibold text-rose-400 transition"
+                onClick={handleRequestNotificationPermission}
+                className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 py-2.5 px-3 text-xs font-bold text-slate-950 shadow-md shadow-amber-500/20 transition cursor-pointer"
               >
-                <LogOut className="h-4 w-4" />
-                <span>Desistir / Sair da Fila</span>
+                <Vibrate className="h-3.5 w-3.5" />
+                <span>Ativar Alerta no Celular</span>
+              </button>
+              <button
+                onClick={handleTestNotification}
+                className="rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 py-2.5 px-3 text-[11px] font-semibold text-slate-300 transition cursor-pointer"
+                title="Testar som e vibração"
+              >
+                Testar Som
               </button>
             </div>
           </div>
+        )}
+
+        {/* NOTIFICATION FEEDBACK TOAST */}
+        {testNotificationFeedback && (
+          <div className="p-3 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-semibold flex items-center gap-2 shadow-lg animate-fade-in">
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+            <span>{testNotificationFeedback}</span>
+          </div>
+        )}
+
+        {/* CASE 1: CLIENT IS ACTIVELY IN QUEUE (#Requirement 2, 3, 7) */}
+        {isCurrentlyInQueue && myQueueItem ? (
+          <div className="space-y-5">
+            {/* ALERT STATE 1: CALLED TO CHAIR ("CHEGOU SUA VEZ") */}
+            {(myQueueItem.status === 'CHAMADO' ||
+              myQueueItem.status === 'A_CAMINHO' ||
+              myQueueItem.status === 'PEDIU_TOLERANCIA') && (
+              <div className="rounded-3xl bg-gradient-to-b from-emerald-500 to-emerald-600 text-slate-950 p-6 text-center shadow-2xl space-y-4 border-2 border-emerald-300 animate-pulse">
+                <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-emerald-400 font-bold shadow-lg">
+                  <Scissors className="h-7 w-7 animate-bounce" />
+                </div>
+
+                <div>
+                  <span className="text-[11px] font-black uppercase tracking-wider bg-slate-950 text-emerald-300 px-3 py-1 rounded-full">
+                    Aviso do Barbeiro
+                  </span>
+                  <h2 className="mt-2 text-3xl font-black tracking-tight text-slate-950 leading-tight">
+                    ✂️ CHEGOU SUA VEZ!
+                  </h2>
+                  <p className="mt-1 text-xs font-bold text-slate-900 leading-relaxed">
+                    Seu barbeiro está pronto para atender você ({myQueueItem.serviceName}). Dirija-se à cadeira agora!
+                  </p>
+                </div>
+
+                {/* Tolerance Countdown Timer (#Requirement 7) */}
+                {secondsRemaining !== null && (
+                  <div className="p-3 rounded-2xl bg-slate-950/90 text-white border border-emerald-400/30">
+                    <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">
+                      Tempo de Tolerância para Comparecer:
+                    </span>
+                    <div className="text-2xl font-black font-mono text-emerald-400 mt-0.5">
+                      {Math.floor(secondsRemaining / 60)}:
+                      {(secondsRemaining % 60).toString().padStart(2, '0')} min
+                    </div>
+                    {secondsRemaining === 0 && (
+                      <span className="text-[10px] text-rose-400 font-semibold block mt-1">
+                        Prazo expirado. Aproxime-se imediatamente para não perder a vez!
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* CLIENT INTERACTIVE ACTIONS (#Requirement 7) */}
+                <div className="space-y-2 pt-1">
+                  {myQueueItem.clientResponse === 'A_CAMINHO' ? (
+                    <div className="p-3 rounded-xl bg-slate-950 text-emerald-300 text-xs font-bold flex items-center justify-center gap-2 border border-emerald-400">
+                      <CheckCircle2 className="h-4 w-4" />
+                      <span>Você confirmou: A caminho da cadeira!</span>
+                    </div>
+                  ) : myQueueItem.clientResponse === 'PEDIU_TOLERANCIA' ? (
+                    <div className="p-3 rounded-xl bg-slate-950 text-amber-300 text-xs font-bold flex items-center justify-center gap-2 border border-amber-400">
+                      <Clock className="h-4 w-4" />
+                      <span>Tolerância adicional solicitada (+3 minutos).</span>
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => handleRespondCalled('A_CAMINHO')}
+                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-950 hover:bg-slate-900 text-white font-bold py-3 text-xs shadow-lg transition cursor-pointer"
+                      >
+                        <UserCheck className="h-4 w-4 text-emerald-400" />
+                        <span>Estou indo para o atendimento</span>
+                      </button>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          onClick={() => handleRespondCalled('PEDIU_TOLERANCIA')}
+                          className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-900 text-slate-900 font-bold py-2.5 text-[11px] transition cursor-pointer border border-slate-900"
+                        >
+                          <Clock className="h-3.5 w-3.5" />
+                          <span>Preciso de +3 min</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleRespondCalled('NAO_PODE')}
+                          className="flex items-center justify-center gap-1.5 rounded-xl bg-rose-600/90 hover:bg-rose-700 text-white font-bold py-2.5 text-[11px] transition cursor-pointer"
+                        >
+                          <LogOut className="h-3.5 w-3.5" />
+                          <span>Não posso ir</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ALERT STATE 2: NEXT IN LINE ("VOCÊ É O PRÓXIMO") */}
+            {myQueueItem.status === 'PROXIMO' && (
+              <div className="rounded-3xl bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 p-6 text-center shadow-2xl space-y-2 border-2 border-amber-300">
+                <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-950 text-amber-400 font-bold shadow-md">
+                  <Clock className="h-5 w-5 animate-pulse" />
+                </div>
+                <h2 className="text-2xl font-black tracking-tight">Você é o próximo da fila! 💈</h2>
+                <p className="text-xs text-slate-900 font-bold leading-relaxed">
+                  Prepare-se para o atendimento! Aproxime-se da barbearia. Faltam cerca de 5 minutos para a chamada.
+                </p>
+              </div>
+            )}
+
+            {/* ALERT STATE 3: ON CHAIR */}
+            {myQueueItem.status === 'NA CADEIRA' && (
+              <div className="rounded-3xl bg-emerald-600 text-white p-6 text-center shadow-2xl space-y-2">
+                <Armchair className="h-8 w-8 mx-auto text-emerald-200" />
+                <h2 className="text-2xl font-black">Você está na cadeira!</h2>
+                <p className="text-xs text-emerald-100 font-medium">
+                  Atendimento em andamento com o barbeiro. Relaxe e aproveite o melhor estilo!
+                </p>
+              </div>
+            )}
+
+            {/* STATUS REASSURANCE WHEN WAITING (#Requirement 1) */}
+            {myQueueItem.status === 'AGUARDANDO' && (
+              <div className="rounded-2xl bg-amber-500/10 border border-amber-500/30 p-4 text-xs text-amber-200 leading-relaxed flex items-start gap-3">
+                <Sparkles className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="text-white block font-bold mb-0.5">Você está na Fila Virtual:</strong>
+                  Fique à vontade para aguardar onde quiser (em casa, no trabalho ou em um café). Seu celular vai vibrar e emitir um sinal sonoro assim que sua vaga se aproximar!
+                </div>
+              </div>
+            )}
+
+            {/* LIVE TICKET CARD (#Requirement 2) */}
+            <div className="rounded-3xl bg-slate-900 border border-slate-800 p-6 sm:p-8 text-center shadow-2xl space-y-6">
+              <div className="flex items-center justify-between border-b border-slate-800/80 pb-4">
+                <div className="text-left">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">
+                    Barbearia
+                  </span>
+                  <span className="text-sm font-bold text-white">{organization.name}</span>
+                </div>
+                <div className="inline-block px-3 py-1 rounded-full bg-slate-800 text-amber-300 font-mono text-xs font-bold border border-slate-700">
+                  Senha #{myQueueItem.ticketNumber}
+                </div>
+              </div>
+
+              {/* Position Counter */}
+              <div>
+                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
+                  Sua Posição Atual na Fila
+                </span>
+                <div className="mt-2 text-6xl sm:text-7xl font-black text-white font-mono tracking-tight text-shadow-lg">
+                  #{myPositionIndex + 1}º
+                </div>
+                <span className="text-[11px] text-emerald-400 font-bold block mt-1">
+                  {myPositionIndex === 0
+                    ? 'Você é o primeiro da fila!'
+                    : `${peopleAhead} ${peopleAhead === 1 ? 'pessoa' : 'pessoas'} à sua frente`}
+                </span>
+              </div>
+
+              {/* 3 Metric Cards */}
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800/80 text-left">
+                  <span className="text-slate-400 text-[10px] uppercase font-bold block">Tempo Estimado</span>
+                  <div className="text-xl font-black text-amber-400 font-mono mt-0.5">
+                    ~{estimatedTime} min
+                  </div>
+                  <span className="text-[10px] text-slate-500 mt-0.5 block">Previsão: {forecastTimeStr}</span>
+                </div>
+
+                <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800/80 text-left">
+                  <span className="text-slate-400 text-[10px] uppercase font-bold block">Status do Atendimento</span>
+                  <div className="text-sm font-black text-white uppercase mt-1 truncate">
+                    {myQueueItem.status === 'PROXIMO'
+                      ? 'É o Próximo'
+                      : myQueueItem.status === 'CHAMADO'
+                      ? 'Chamado!'
+                      : myQueueItem.status === 'NA CADEIRA'
+                      ? 'Na Cadeira'
+                      : 'Aguardando'}
+                  </div>
+                  <span className="text-[10px] text-emerald-400 font-medium block mt-0.5">Ao vivo</span>
+                </div>
+              </div>
+
+              {/* Ticket Details Summary */}
+              <div className="text-left text-xs bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Cliente:</span>
+                  <span className="font-bold text-white">{myQueueItem.customerName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Serviço:</span>
+                  <span className="text-slate-200 font-semibold">{myQueueItem.serviceName}</span>
+                </div>
+                {myQueueItem.preferredProfessionalId && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Profissional:</span>
+                    <span className="text-amber-300 font-medium">
+                      {professionals.find(p => p.id === myQueueItem.preferredProfessionalId)?.name || 'Qualquer'}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-between pt-1 border-t border-slate-800/80">
+                  <span className="text-slate-400">Notificações no Celular:</span>
+                  <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                    <Vibrate className="h-3 w-3" />
+                    <span>Som & Vibração Ativos</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="space-y-2 pt-2">
+                <button
+                  onClick={handleTestNotification}
+                  className="w-full flex items-center justify-center gap-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-750 py-2.5 text-xs font-semibold text-slate-300 transition cursor-pointer"
+                >
+                  <Bell className="h-3.5 w-3.5 text-amber-400" />
+                  <span>Testar Alerta Sonoro & Vibração no Celular</span>
+                </button>
+
+                <button
+                  onClick={handleLeaveQueue}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-950 hover:bg-slate-850 border border-slate-850 py-3 text-xs font-semibold text-rose-400 hover:text-rose-300 transition cursor-pointer"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span>Desistir e Sair da Fila</span>
+                </button>
+              </div>
+            </div>
+          </div>
         ) : (
-          /* CASE 2: CLIENT NOT IN QUEUE YET -> FORM TO JOIN (#13) */
-          <div className="space-y-6">
+          /* CASE 2: CLIENT NOT IN QUEUE YET -> FAST 1-CLICK JOIN FORM (#Requirement 9) */
+          <div className="space-y-5">
             <div className="text-center space-y-2">
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold">
                 <Scissors className="h-3.5 w-3.5" />
                 <span>{organization.name}</span>
               </div>
-              <h2 className="text-2xl font-black text-white">Fila Virtual Inteligente</h2>
-              <p className="text-xs text-amber-200/90 font-medium max-w-sm mx-auto leading-relaxed">
-                Você <strong>NÃO precisa ficar esperando na barbearia</strong>! Informe seu <strong>Nome e WhatsApp</strong> abaixo para garantir sua vaga. Quando for a sua vez de cortar o cabelo ou fazer a barba, o app enviará automaticamente uma mensagem no seu WhatsApp.
+              <h2 className="text-3xl font-black text-white tracking-tight">Fila Virtual Inteligente</h2>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
+                Entre na fila pelo seu celular e acompanhe sua posição ao vivo. Você não precisa esperar no local: o app apita e vibra seu aparelho quando for sua vez!
               </p>
             </div>
 
-            {/* Current Queue Status Snapshot */}
-            <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4 flex items-center justify-between text-xs">
+            {/* Queue Live Status Snapshot */}
+            <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4 flex items-center justify-between text-xs shadow-md">
               <div>
-                <span className="text-slate-400">Pessoas na fila agora:</span>
-                <div className="text-xl font-black text-amber-400 font-mono mt-0.5">
-                  {activeWaitingList.length} {activeWaitingList.length === 1 ? 'aguardando' : 'aguardando'}
+                <span className="text-slate-400 font-medium">Pessoas na fila agora:</span>
+                <div className="text-2xl font-black text-amber-400 font-mono mt-0.5">
+                  {activeWaitingList.length} {activeWaitingList.length === 1 ? 'pessoa' : 'pessoas'}
                 </div>
               </div>
               <div className="text-right">
-                <span className="text-slate-400">Tempo estimado:</span>
-                <div className="text-xl font-black text-slate-200 font-mono mt-0.5">
+                <span className="text-slate-400 font-medium">Espera aproximada:</span>
+                <div className="text-2xl font-black text-slate-200 font-mono mt-0.5">
                   ~{Math.max(10, activeWaitingList.length * 20)} min
                 </div>
               </div>
             </div>
 
-            <form onSubmit={handleJoinQueue} className="rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-4 shadow-xl">
-              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300">
-                ✨ <strong>Lugar Garantido:</strong> Só precisamos do seu nome e WhatsApp para te avisar automaticamente quando o barbeiro estiver pronto para te atender!
+            {/* Quick 1-Click Form */}
+            <form onSubmit={handleJoinQueue} className="rounded-3xl bg-slate-900 border border-slate-800 p-6 space-y-4 shadow-xl">
+              <div>
+                <label className="text-xs font-bold text-slate-200 block mb-1">
+                  Seu Nome *
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    required
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    placeholder="Ex: Pedro Ramos"
+                    className="w-full rounded-xl bg-slate-950 border border-slate-800 pl-10 pr-3.5 py-3 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500"
+                  />
+                  <User className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500" />
+                </div>
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-300">Seu Nome Completo *</label>
-                <input
-                  type="text"
-                  required
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Ex: Pedro Ramos"
-                  className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500"
-                />
+                <label className="text-xs font-bold text-slate-200 block mb-1">
+                  Seu Celular / WhatsApp <span className="text-slate-400 font-normal">(Opcional)</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    placeholder="(11) 98765-4321"
+                    className="w-full rounded-xl bg-slate-950 border border-slate-800 pl-10 pr-3.5 py-3 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500 font-mono"
+                  />
+                  <Smartphone className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500" />
+                </div>
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-300">Seu Número de WhatsApp *</label>
-                <input
-                  type="text"
-                  required
-                  value={customerPhone}
-                  onChange={(e) => setCustomerPhone(e.target.value)}
-                  placeholder="(11) 98765-4321"
-                  className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500 font-mono"
-                />
-                <span className="text-[10px] text-slate-500 mt-1 block">
-                  Enviaremos a mensagem automática neste WhatsApp quando chegar a sua vez.
-                </span>
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-300">Serviço Pretendido *</label>
+                <label className="text-xs font-bold text-slate-200 block mb-1">
+                  Serviço Desejado *
+                </label>
                 <select
                   required
                   value={selectedServiceId}
                   onChange={(e) => setSelectedServiceId(e.target.value)}
-                  className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-white focus:outline-hidden focus:border-amber-500"
+                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-3 text-xs text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
                 >
                   {services.map((s) => (
                     <option key={s.id} value={s.id}>
-                      {s.name} — R$ {s.price.toFixed(2)}
+                      {s.name} — R$ {s.price.toFixed(2)} ({s.durationMinutes} min)
                     </option>
                   ))}
                 </select>
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-300">
-                  Profissional de Preferência (Opcional)
+                <label className="text-xs font-bold text-slate-200 block mb-1">
+                  Profissional de Preferência
                 </label>
                 <select
                   value={preferredProfId}
                   onChange={(e) => setPreferredProfId(e.target.value)}
-                  className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-white focus:outline-hidden focus:border-amber-500"
+                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-3 text-xs text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
                 >
-                  <option value="">Qualquer profissional disponível (Mais rápido)</option>
+                  <option value="">Qualquer profissional disponível (Mais Rápido)</option>
                   {professionals.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
@@ -391,21 +675,23 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-300">Observação (Opcional)</label>
+                <label className="text-xs font-bold text-slate-200 block mb-1">
+                  Observação <span className="text-slate-400 font-normal">(Opcional)</span>
+                </label>
                 <input
                   type="text"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Ex: Estou no café da esquina, aguardando mensagem"
-                  className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500"
+                  placeholder="Ex: Estou no café em frente aguardando"
+                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500"
                 />
               </div>
 
               <button
                 type="submit"
-                className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 py-3.5 text-xs font-black text-slate-950 shadow-lg shadow-amber-500/25 transition cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 rounded-2xl bg-amber-500 hover:bg-amber-400 py-4 text-xs font-black text-slate-950 shadow-xl shadow-amber-500/25 transition cursor-pointer"
               >
-                <span>ENTRAR NA FILA VIRTUAL (GARANTIR LUGAR)</span>
+                <span>ENTRAR NA FILA VIRTUAL AGORA</span>
                 <ArrowRight className="h-4 w-4" />
               </button>
             </form>
@@ -417,8 +703,8 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
       <QRCodeModal
         isOpen={showQR}
         onClose={() => setShowQR(false)}
-        title="Fila de Espera Digital"
-        subtitle="Aponte a câmera para entrar na fila"
+        title="Fila Virtual Inteligente"
+        subtitle="Aponte a câmera para entrar na fila pelo celular"
         url={queueUrl}
         establishmentName={organization.name}
       />

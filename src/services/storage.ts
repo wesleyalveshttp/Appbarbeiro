@@ -15,6 +15,7 @@ import {
   PaymentMethod,
   AuthSession
 } from '../types';
+import { NotificationService } from './notificationService';
 
 const STORAGE_KEY = 'barberos_saas_data_v7_real';
 const CURRENT_ORG_KEY = 'barberos_current_org_id';
@@ -60,6 +61,42 @@ export const subscribeToRealtimeEvents = (callback: (event: { type: string; payl
     window.removeEventListener('barberos_local_event', handleLocal);
   };
 };
+
+// CROSS-DEVICE REAL-TIME SYNCHRONIZATION VIA SSE (Server-Sent Events) & POLLING
+if (typeof window !== 'undefined') {
+  let sseSource: EventSource | null = null;
+  const initSSE = () => {
+    try {
+      if (sseSource) sseSource.close();
+      sseSource = new EventSource('/api/events');
+      sseSource.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.type === 'QUEUE_UPDATED' || data.type === 'DB_SYNCED') {
+            StorageService.syncWithServer().then(() => {
+              broadcastEvent('QUEUE_UPDATED', data.payload);
+            });
+          }
+        } catch {}
+      };
+      sseSource.onerror = () => {
+        // EventSource will auto-reconnect
+      };
+    } catch {}
+  };
+
+  initSSE();
+
+  // Multi-device fallback polling every 3 seconds to ensure cross-device consistency
+  setInterval(() => {
+    StorageService.syncWithServer();
+  }, 3000);
+
+  // Initial sync immediately
+  setTimeout(() => {
+    StorageService.syncWithServer();
+  }, 100);
+}
 
 export interface AppDatabase {
   organizations: Organization[];
@@ -159,10 +196,12 @@ const getSeedData = (): AppDatabase => {
       maxLateMinutes: 15,
       cancellationHoursLimit: 2,
       queueMode: 'SINGLE',
-      autoNotifyAheadCount: 2,
+      autoNotifyAheadCount: 3,
+      callToleranceMinutes: 3,
+      allowToleranceRequest: true,
       primaryColor: '#f59e0b',
       secondaryColor: '#0f172a',
-      welcomeMessage: 'Bem-vindo! Agende seu horário ou acompanhe a fila ao vivo.',
+      welcomeMessage: 'Bem-vindo! Entre na nossa fila virtual pelo celular ou agende seu horário.',
       isOpenNow: true,
       whatsappApiConfigured: false
     },
@@ -286,6 +325,21 @@ const getSeedData = (): AppDatabase => {
 export class StorageService {
   static subscribeToRealtimeEvents = subscribeToRealtimeEvents;
   static broadcastEvent = broadcastEvent;
+
+  static async syncWithServer(): Promise<AppDatabase | null> {
+    if (typeof window === 'undefined') return null;
+    try {
+      const res = await fetch('/api/db');
+      if (res.ok) {
+        const serverDb: AppDatabase = await res.json();
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(serverDb));
+        return serverDb;
+      }
+    } catch {
+      // offline / local fallback
+    }
+    return null;
+  }
 
   private static getDB(): AppDatabase {
     if (typeof window === 'undefined') return getSeedData();
@@ -861,8 +915,31 @@ export class StorageService {
   static getQueue(orgId: string): WaitingQueueItem[] {
     const db = this.getDB();
     return db.queue
-      .filter(q => q.organizationId === orgId && (q.status === 'AGUARDANDO' || q.status === 'PROXIMO' || q.status === 'CHAMADO' || q.status === 'NA CADEIRA'))
+      .filter(q =>
+        q.organizationId === orgId &&
+        (q.status === 'AGUARDANDO' ||
+          q.status === 'PROXIMO' ||
+          q.status === 'CHAMADO' ||
+          q.status === 'A_CAMINHO' ||
+          q.status === 'PEDIU_TOLERANCIA' ||
+          q.status === 'NA CADEIRA')
+      )
       .sort((a, b) => a.ticketNumber - b.ticketNumber);
+  }
+
+  static getQueueByCategories(orgId: string) {
+    const db = this.getDB();
+    const all = db.queue.filter(q => q.organizationId === orgId);
+    return {
+      waiting: all.filter(q => q.status === 'AGUARDANDO').sort((a, b) => a.ticketNumber - b.ticketNumber),
+      next: all.filter(q => q.status === 'PROXIMO'),
+      called: all.filter(q => q.status === 'CHAMADO' || q.status === 'A_CAMINHO' || q.status === 'PEDIU_TOLERANCIA'),
+      onChair: all.filter(q => q.status === 'NA CADEIRA'),
+      finished: all.filter(q => q.status === 'FINALIZADO'),
+      cancelled: all.filter(q => q.status === 'CANCELADO' || q.status === 'DESISTIU'),
+      noShow: all.filter(q => q.status === 'NAO_COMPARECEU'),
+      all
+    };
   }
 
   static getAllQueueHistory(orgId: string): WaitingQueueItem[] {
@@ -870,33 +947,59 @@ export class StorageService {
     return db.queue.filter(q => q.organizationId === orgId);
   }
 
-  static joinQueue(data: {
+  static async joinQueue(data: {
     organizationId: string;
     customerName: string;
     customerPhone: string;
     serviceId: string;
     preferredProfessionalId?: string;
     notes?: string;
+    notificationToken?: string;
+    subscription?: any;
+  }): Promise<WaitingQueueItem> {
+    try {
+      const res = await fetch('/api/queue/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      const json = await res.json();
+      if (json.success && json.item) {
+        await this.syncWithServer();
+        broadcastEvent('QUEUE_UPDATED', { orgId: data.organizationId, queueItemId: json.item.id });
+        return json.item;
+      }
+    } catch (e) {
+      console.warn('API join error, using local fallback:', e);
+    }
+    return this.joinQueueLocal(data);
+  }
+
+  static joinQueueLocal(data: {
+    organizationId: string;
+    customerName: string;
+    customerPhone: string;
+    serviceId: string;
+    preferredProfessionalId?: string;
+    notes?: string;
+    notificationToken?: string;
   }): WaitingQueueItem {
     const db = this.getDB();
     const service = db.services.find(s => s.id === data.serviceId);
     if (!service) throw new Error('Serviço não encontrado');
 
-    // Find latest ticket number for today
     const maxTicket = db.queue
       .filter(q => q.organizationId === data.organizationId)
       .reduce((max, item) => Math.max(max, item.ticketNumber), 100);
-
     const ticketNumber = maxTicket + 1;
 
-    // Calculate position
     const activeWaiting = db.queue.filter(
       q => q.organizationId === data.organizationId && (q.status === 'AGUARDANDO' || q.status === 'PROXIMO')
     );
-    const estimatedWaitMinutes = Math.max(10, activeWaiting.length * 20);
+    const isInitialNext = activeWaiting.length === 0;
 
     const newQueueItem: WaitingQueueItem = {
-      id: `q-${Date.now()}`,
+      id: `q-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       ticketNumber,
       organizationId: data.organizationId,
       customerName: data.customerName,
@@ -904,70 +1007,202 @@ export class StorageService {
       serviceId: service.id,
       serviceName: service.name,
       preferredProfessionalId: data.preferredProfessionalId,
-      status: activeWaiting.length === 0 ? 'PROXIMO' : 'AGUARDANDO',
+      status: isInitialNext ? 'PROXIMO' : 'AGUARDANDO',
       joinedAt: new Date().toISOString(),
       notes: data.notes,
-      estimatedWaitMinutes
+      estimatedWaitMinutes: isInitialNext ? 5 : (activeWaiting.length + 1) * 20,
+      notificationToken: data.notificationToken,
+      deviceRegisteredAt: new Date().toISOString(),
+      pushDeliveryStatus: 'NOT_ATTEMPTED',
     };
 
     db.queue.push(newQueueItem);
     this.saveDB(db);
-
-    this.createNotification({
-      organizationId: data.organizationId,
-      type: 'QUEUE_JOIN',
-      title: 'Cliente entrou na fila!',
-      message: `${data.customerName} entrou na fila para ${service.name} (Senha #${ticketNumber}).`
-    });
-
-    this.logAudit(data.organizationId, data.customerName, `Entrou na fila - Senha #${ticketNumber}`);
     broadcastEvent('QUEUE_UPDATED', { orgId: data.organizationId, queueItemId: newQueueItem.id });
     return newQueueItem;
   }
 
-  static callQueueCustomer(
+  // Atomic "CHAMAR PRÓXIMO CLIENTE" via backend server with real push delivery
+  static async callNextCustomer(
+    orgId: string,
+    assignedProfId?: string
+  ): Promise<{ success: boolean; item?: WaitingQueueItem; error?: string; pushResult?: any }> {
+    try {
+      const res = await fetch('/api/queue/call-next', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ organizationId: orgId, assignedProfId }),
+      });
+      const data = await res.json();
+      if (data.success && data.item) {
+        await this.syncWithServer();
+        broadcastEvent('QUEUE_UPDATED', { orgId, queueItemId: data.item.id, pushResult: data.pushResult });
+      }
+      return data;
+    } catch (e: any) {
+      console.warn('API call-next error, using local fallback:', e);
+      return this.callNextCustomerLocal(orgId, assignedProfId);
+    }
+  }
+
+  static callNextCustomerLocal(orgId: string, assignedProfId?: string): { success: boolean; item?: WaitingQueueItem; error?: string } {
+    const db = this.getDB();
+    const eligibleItem = db.queue
+      .filter(q => q.organizationId === orgId && (q.status === 'PROXIMO' || q.status === 'AGUARDANDO'))
+      .sort((a, b) => a.ticketNumber - b.ticketNumber)[0];
+
+    if (!eligibleItem) {
+      return { success: false, error: 'Não há clientes aguardando na fila no momento.' };
+    }
+
+    const profId =
+      assignedProfId ||
+      eligibleItem.preferredProfessionalId ||
+      db.professionals.find(p => p.organizationId === orgId && p.isActive)?.id ||
+      db.professionals[0]?.id;
+
+    if (!profId) {
+      return { success: false, error: 'Nenhum profissional disponível para atender.' };
+    }
+
+    try {
+      const called = this.callQueueCustomerLocal(eligibleItem.id, profId);
+      return { success: true, item: called };
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'Erro ao chamar cliente' };
+    }
+  }
+
+  static async callQueueCustomer(
     queueId: string,
     assignedProfessionalId: string
+  ): Promise<{ success: boolean; item: WaitingQueueItem; pushResult?: any }> {
+    try {
+      const res = await fetch('/api/queue/call-specific', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ queueId, assignedProfessionalId }),
+      });
+      const data = await res.json();
+      if (data.success && data.item) {
+        await this.syncWithServer();
+        broadcastEvent('QUEUE_UPDATED', { queueItemId: data.item.id, pushResult: data.pushResult });
+        return data;
+      }
+      throw new Error(data.error || 'Erro ao chamar cliente');
+    } catch (e: any) {
+      return { success: true, item: this.callQueueCustomerLocal(queueId, assignedProfessionalId) };
+    }
+  }
+
+  static callQueueCustomerLocal(queueId: string, assignedProfessionalId: string): WaitingQueueItem {
+    const db = this.getDB();
+    const item = db.queue.find(q => q.id === queueId);
+    if (!item) throw new Error('Item da fila não encontrado');
+
+    const toleranceMinutes = db.organizations.find(o => o.id === item.organizationId)?.settings?.callToleranceMinutes || 3;
+    const now = new Date();
+    item.status = 'CHAMADO';
+    item.calledAt = now.toISOString();
+    item.calledToleranceExpiresAt = new Date(now.getTime() + toleranceMinutes * 60000).toISOString();
+    item.assignedProfessionalId = assignedProfessionalId;
+    item.notifiedCalled = true;
+
+    this.recalculateQueueAlerts(db, item.organizationId, item.id);
+    this.saveDB(db);
+
+    broadcastEvent('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id });
+    return item;
+  }
+
+  private static recalculateQueueAlerts(db: AppDatabase, orgId: string, excludeId?: string) {
+    const waiting = db.queue
+      .filter(q => q.organizationId === orgId && (q.status === 'AGUARDANDO' || q.status === 'PROXIMO') && q.id !== excludeId)
+      .sort((a, b) => a.ticketNumber - b.ticketNumber);
+
+    waiting.forEach((item, index) => {
+      const position = index + 1;
+      if (position === 1) {
+        item.status = 'PROXIMO';
+        item.estimatedWaitMinutes = 5;
+      } else {
+        item.status = 'AGUARDANDO';
+        item.estimatedWaitMinutes = position * 15;
+      }
+    });
+  }
+
+  static async respondCalledQueueItem(
+    queueId: string,
+    response: 'A_CAMINHO' | 'PEDIU_TOLERANCIA' | 'NAO_PODE'
+  ): Promise<WaitingQueueItem> {
+    try {
+      const res = await fetch('/api/queue/respond', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ queueId, response }),
+      });
+      const data = await res.json();
+      if (data.success && data.item) {
+        await this.syncWithServer();
+        broadcastEvent('QUEUE_UPDATED', { queueItemId: queueId, response });
+        return data.item;
+      }
+    } catch {}
+    return this.respondCalledQueueItemLocal(queueId, response);
+  }
+
+  static respondCalledQueueItemLocal(
+    queueId: string,
+    response: 'A_CAMINHO' | 'PEDIU_TOLERANCIA' | 'NAO_PODE'
   ): WaitingQueueItem {
     const db = this.getDB();
     const item = db.queue.find(q => q.id === queueId);
     if (!item) throw new Error('Item da fila não encontrado');
 
-    const prof = db.professionals.find(p => p.id === assignedProfessionalId);
-    const org = db.organizations.find(o => o.id === item.organizationId);
-    const orgName = org?.name || 'Barbearia';
-    const profName = prof?.name || 'Barbeiro da Cadeira';
+    const now = new Date();
+    item.clientResponse = response;
+    item.clientResponseTime = now.toISOString();
 
-    item.status = 'CHAMADO';
-    item.calledAt = new Date().toISOString();
-    item.assignedProfessionalId = assignedProfessionalId;
-
-    // Build the automatic WhatsApp notification message for the customer
-    const whatsappMsg = `💈 *${orgName}*\n\n🎉 *Olá, ${item.customerName}! Chegou a sua vez!*\nSua cadeira com o barbeiro *${profName}* (${item.serviceName}) está pronta agora mesmo para cortar seu cabelo ou fazer sua barba.\n\nPor favor, dirija-se à barbearia agora. Seu lugar está garantido!`;
-    item.whatsappNotificationSent = true;
-    item.whatsappNotificationTime = new Date().toISOString();
-    item.whatsappMessageText = whatsappMsg;
-
-    // Promote next waiting item to PROXIMO
-    const nextItem = db.queue.find(
-      q => q.organizationId === item.organizationId && q.status === 'AGUARDANDO' && q.id !== queueId
-    );
-    if (nextItem) {
-      nextItem.status = 'PROXIMO';
-      nextItem.estimatedWaitMinutes = 5;
+    if (response === 'A_CAMINHO') {
+      item.status = 'A_CAMINHO';
+    } else if (response === 'PEDIU_TOLERANCIA') {
+      item.status = 'PEDIU_TOLERANCIA';
+      const curExpiry = item.calledToleranceExpiresAt ? new Date(item.calledToleranceExpiresAt) : now;
+      item.calledToleranceExpiresAt = new Date(curExpiry.getTime() + 3 * 60000).toISOString();
+      item.toleranceExtraMinutes = (item.toleranceExtraMinutes || 0) + 3;
+    } else if (response === 'NAO_PODE') {
+      item.status = 'DESISTIU';
+      item.notes = `${item.notes || ''} [Cliente não pode comparecer]`;
+      this.recalculateQueueAlerts(db, item.organizationId, item.id);
     }
 
+    this.saveDB(db);
+    broadcastEvent('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id, response });
+    return item;
+  }
+
+  // Mark customer as no-show when tolerance window expires
+  static markCalledCustomerNoShow(queueId: string): WaitingQueueItem {
+    const db = this.getDB();
+    const item = db.queue.find(q => q.id === queueId);
+    if (!item) throw new Error('Item da fila não encontrado');
+
+    item.status = 'NAO_COMPARECEU';
+    item.notes = `${item.notes || ''} [Não compareceu após o tempo de tolerância]`;
+
+    this.recalculateQueueAlerts(db, item.organizationId, item.id);
     this.saveDB(db);
 
     this.createNotification({
       organizationId: item.organizationId,
       type: 'QUEUE_CALLED',
-      title: 'Cliente Chamado!',
-      message: `${item.customerName} foi chamado para a cadeira de ${profName}. Mensagem WhatsApp gerada.`
+      title: 'Cliente Não Compareceu',
+      message: `${item.customerName} não compareceu dentro do prazo de tolerância. Próximo liberado.`
     });
 
-    this.logAudit(item.organizationId, profName, `Chamou cliente ${item.customerName} da fila e disparou aviso WhatsApp`);
-    broadcastEvent('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id, called: true });
+    this.logAudit(item.organizationId, 'Sistema', `Cliente ${item.customerName} marcado como Não Compareceu`);
+    broadcastEvent('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id, noShow: true });
     return item;
   }
 

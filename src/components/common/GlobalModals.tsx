@@ -80,11 +80,11 @@ export const GlobalModals: React.FC<GlobalModalsProps> = ({
     }
   };
 
-  const handleCreateQueue = (e: React.FormEvent) => {
+  const handleCreateQueue = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!qCustomerName.trim() || !qCustomerPhone.trim()) return;
 
-    StorageService.joinQueue({
+    await StorageService.joinQueue({
       organizationId: organization.id,
       customerName: qCustomerName.trim(),
       customerPhone: qCustomerPhone.trim(),
