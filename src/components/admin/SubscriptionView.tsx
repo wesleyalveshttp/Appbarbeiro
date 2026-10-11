@@ -188,56 +188,24 @@ export const SubscriptionView: React.FC<SubscriptionViewProps> = ({ organization
         </div>
       </div>
 
-      {/* Simulator bar for testing states */}
-      <div className="p-4 rounded-2xl bg-slate-950 border border-slate-850 flex flex-wrap items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-2 text-slate-400">
-          <RefreshCw className="h-4 w-4 text-amber-400" />
-          <span>Simulador de Teste da Assinatura:</span>
+      {/* Mercado Pago Integration Status & Real-time Verification */}
+      <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2 text-slate-300">
+          <ShieldCheck className="h-4 w-4 text-emerald-400" />
+          <span>Gateway de Pagamento: <strong>Mercado Pago Oficial (PIX & Cartão)</strong></span>
         </div>
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => handleSimulateStatus('ATIVA')}
-            className={`px-3 py-1.5 rounded-lg font-semibold transition ${
-              sub.status === 'ATIVA'
-                ? 'bg-emerald-500 text-slate-950 shadow-sm'
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
+            onClick={async () => {
+              await StorageService.syncWithServer();
+              const updated = StorageService.getOrganizationById(org.id);
+              if (updated) setOrg({ ...updated });
+            }}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold transition cursor-pointer"
           >
-            ✓ Simular Ativa (R$ 79,90 Pago)
-          </button>
-
-          <button
-            onClick={() => handleSimulateStatus('AGUARDANDO_APROVACAO')}
-            className={`px-3 py-1.5 rounded-lg font-semibold transition ${
-              sub.status === 'AGUARDANDO_APROVACAO'
-                ? 'bg-amber-500 text-slate-950 shadow-sm'
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            ⏳ Simular Aguardando Aprovação
-          </button>
-
-          <button
-            onClick={() => handleSimulateStatus('PENDENTE')}
-            className={`px-3 py-1.5 rounded-lg font-semibold transition ${
-              sub.status === 'PENDENTE'
-                ? 'bg-rose-500 text-white shadow-sm'
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            ✕ Simular Pendente / Bloqueada
-          </button>
-
-          <button
-            onClick={() => handleSimulateStatus('TESTE_GRATIS')}
-            className={`px-3 py-1.5 rounded-lg font-semibold transition ${
-              sub.status === 'TESTE_GRATIS'
-                ? 'bg-amber-500 text-slate-950 shadow-sm'
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            ⏱ Período de Testes
+            <RefreshCw className="h-3.5 w-3.5 text-amber-400" />
+            <span>Sincronizar Status com Servidor</span>
           </button>
         </div>
       </div>

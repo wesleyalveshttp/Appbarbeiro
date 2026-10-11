@@ -51,10 +51,18 @@ export interface SubscriptionInvoice {
   id: string;
   date: string;
   amount: number;
-  status: 'PAGO' | 'PENDENTE';
-  paymentMethod: 'PIX' | 'CARTAO_CREDITO';
+  status: 'PAGO' | 'PENDENTE' | 'CANCELADO' | 'REJEITADO';
+  paymentMethod: 'PIX' | 'CARTAO_CREDITO' | 'MERCADO_PAGO';
   receiptUrl?: string;
   description: string;
+  // Mercado Pago integration metadata
+  mpPaymentId?: string;
+  mpPreferenceId?: string;
+  mpStatus?: string;
+  mpStatusDetail?: string;
+  mpInitPoint?: string;
+  mpQrCode?: string;
+  mpQrCodeBase64?: string;
 }
 
 export interface OrgSubscription {
@@ -64,10 +72,12 @@ export interface OrgSubscription {
   trialDaysRemaining?: number;
   nextBillingDate?: string;
   lastPaymentDate?: string;
-  paymentMethod?: 'PIX' | 'CARTAO_CREDITO';
+  paymentMethod?: 'PIX' | 'CARTAO_CREDITO' | 'MERCADO_PAGO';
   isPaid: boolean;
   paymentProofSentAt?: string;
   paymentProofNote?: string;
+  currentPaymentId?: string;
+  currentPreferenceId?: string;
   invoices: SubscriptionInvoice[];
 }
 

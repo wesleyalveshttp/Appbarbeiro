@@ -410,6 +410,30 @@ export class StorageService {
     return this.getDB().organizations.find(o => o.slug.toLowerCase() === slug.toLowerCase());
   }
 
+  static async fetchOrganizationBySlug(slug: string): Promise<Organization | null> {
+    try {
+      const res = await fetch(`/api/organizations/slug/${encodeURIComponent(slug)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.organization) {
+          // Merge into local cache
+          const db = this.getDB();
+          const existingIdx = db.organizations.findIndex(o => o.id === data.organization.id);
+          if (existingIdx >= 0) {
+            db.organizations[existingIdx] = data.organization;
+          } else {
+            db.organizations.push(data.organization);
+          }
+          this.saveDB(db);
+          return data.organization;
+        }
+      }
+    } catch {
+      // network fallback
+    }
+    return this.getOrganizationBySlug(slug) || null;
+  }
+
   static createOrganization(
     data: Omit<Organization, 'id' | 'createdAt' | 'isActive' | 'subscription'> & {
       subscription?: Organization['subscription'];

@@ -1,8 +1,11 @@
 import express, { Request, Response } from 'express';
+import http from 'http';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import webpush from 'web-push';
+import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -51,8 +54,26 @@ webpush.setVapidDetails(
 console.log('🔑 Web Push VAPID initialized.');
 
 // ---------------------------------------------------------------------------
-// 3. DATABASE INITIALIZATION & DEFAULT SEED
+// 2.1 MERCADO PAGO SDK INITIALIZATION
 // ---------------------------------------------------------------------------
+const MP_ACCESS_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN || '';
+const MP_WEBHOOK_SECRET = process.env.MERCADOPAGO_WEBHOOK_SECRET || '';
+const APP_URL = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+
+let mpClient: MercadoPagoConfig | null = null;
+if (MP_ACCESS_TOKEN) {
+  try {
+    mpClient = new MercadoPagoConfig({
+      accessToken: MP_ACCESS_TOKEN,
+      options: { timeout: 10000 },
+    });
+    console.log('💳 Mercado Pago SDK initialized successfully.');
+  } catch (err) {
+    console.warn('⚠️ Erro ao inicializar Mercado Pago SDK:', err);
+  }
+} else {
+  console.log('ℹ️ MERCADOPAGO_ACCESS_TOKEN não configurado no ambiente. Endpoints informarão configuração pendente.');
+}
 function getInitialSeed() {
   return {
     organizations: [
@@ -521,6 +542,34 @@ app.post('/api/db/sync', (req: Request, res: Response) => {
   writeDB(merged);
   broadcastSSE('DB_SYNCED', { timestamp: Date.now() });
   res.json({ success: true, updated: new Date().toISOString() });
+});
+
+// Organization resolution endpoints (Public & Admin)
+app.get('/api/organizations', (req: Request, res: Response) => {
+  const db = readDB();
+  res.json({ organizations: db.organizations || [] });
+});
+
+app.get('/api/organizations/slug/:slug', (req: Request, res: Response) => {
+  const { slug } = req.params;
+  const db = readDB();
+  const org = (db.organizations || []).find(
+    (o: any) => o.slug.toLowerCase() === slug.toLowerCase()
+  );
+  if (!org) {
+    return res.status(404).json({ error: 'Estabelecimento não encontrado para este link.' });
+  }
+  res.json({ organization: org });
+});
+
+app.get('/api/organizations/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const db = readDB();
+  const org = (db.organizations || []).find((o: any) => o.id === id);
+  if (!org) {
+    return res.status(404).json({ error: 'Organização não encontrada.' });
+  }
+  res.json({ organization: org });
 });
 
 // Organization Queue
@@ -1044,6 +1093,495 @@ app.post('/api/queue/reorder', (req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
+// 6.2 MERCADO PAGO INTEGRATION ENDPOINTS (Official SDK & Real Webhook)
+// ---------------------------------------------------------------------------
+
+// Check Mercado Pago configuration status
+app.get('/api/mercadopago/config-status', (req: Request, res: Response) => {
+  res.json({
+    isConfigured: !!MP_ACCESS_TOKEN,
+    hasWebhookSecret: !!MP_WEBHOOK_SECRET,
+    appUrl: APP_URL,
+    configuredMessage: MP_ACCESS_TOKEN
+      ? 'Mercado Pago pronto para pagamentos reais.'
+      : 'Credenciais do Mercado Pago não configuradas. Adicione MERCADOPAGO_ACCESS_TOKEN na seção Secrets do Google AI Studio.',
+  });
+});
+
+// Helper to determine pricing
+function getPlanDetails(planType: 'MONTHLY' | 'ANNUAL') {
+  if (planType === 'ANNUAL') {
+    return {
+      title: 'Plano BarberOS Pro Anual (12x R$ 69,90)',
+      amount: 838.80,
+      description: 'Acesso completo a todas as ferramentas por 12 meses',
+      frequencyMonths: 12,
+    };
+  }
+  return {
+    title: 'Plano BarberOS Pro Mensal (R$ 79,90/mês)',
+    amount: 79.90,
+    description: 'Acesso completo a todas as ferramentas por 30 dias',
+    frequencyMonths: 1,
+  };
+}
+
+// Helper to sanitize payer data for Mercado Pago requirements (valid email, first/last name)
+function sanitizePayer(rawEmail?: string, rawName?: string) {
+  let email = (rawEmail || '').trim();
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!email || !emailRegex.test(email)) {
+    email = 'suporte@barberos.app';
+  }
+
+  const cleanName = (rawName || 'Assinante BarberOS').replace(/[^\p{L}\s]/gu, '').trim() || 'Assinante BarberOS';
+  const nameParts = cleanName.split(/\s+/).filter(Boolean);
+  const firstName = nameParts[0] || 'Assinante';
+  const lastName = nameParts.slice(1).join(' ') || 'BarberOS';
+
+  return { email, firstName, lastName, fullName: `${firstName} ${lastName}` };
+}
+
+// Helper to parse Mercado Pago API error safely without leaking credentials
+function parseMercadoPagoError(err: any): { status: number; message: string; details: string } {
+  const status = typeof err?.status === 'number' ? err.status : 500;
+  let message = err?.message || 'Falha na comunicação com o Mercado Pago';
+  let details = '';
+
+  if (Array.isArray(err?.causes) && err.causes.length > 0) {
+    details = err.causes.map((c: any) => c.description || c.code || JSON.stringify(c)).join('; ');
+  } else if (err?.error && typeof err.error === 'string') {
+    details = err.error;
+  }
+
+  // Friendly messages for known HTTP error codes
+  if (status === 401) {
+    message = 'Credenciais inválidas ou não autorizadas no Mercado Pago (HTTP 401). Verifique o MERCADOPAGO_ACCESS_TOKEN.';
+  } else if (status === 403) {
+    message = 'Acesso não permitido pela conta do Mercado Pago (HTTP 403). Verifique as permissões da chave.';
+  } else if (status === 400 || status === 422) {
+    message = `Dados da cobrança rejeitados pelo Mercado Pago (HTTP ${status}): ${details || message}`;
+  } else if (status === 404) {
+    message = 'Recurso não encontrado no Mercado Pago (HTTP 404).';
+  } else if (status >= 500) {
+    message = `Erro nos servidores do Mercado Pago (HTTP ${status}). Tente novamente em instantes.`;
+  }
+
+  return { status, message, details };
+}
+
+// 1. Create Checkout (Checkout Pro preference or PIX Payment)
+app.post('/api/mercadopago/create-checkout', async (req: Request, res: Response) => {
+  const { organizationId, planType = 'ANNUAL', paymentMethodType = 'CHECKOUT_PRO', payerEmail, payerName } = req.body;
+
+  if (!organizationId) {
+    return res.status(400).json({ error: 'organizationId é obrigatório' });
+  }
+
+  const db = readDB();
+  const org = (db.organizations || []).find((o: any) => o.id === organizationId);
+  if (!org) {
+    return res.status(404).json({ error: 'Organização não encontrada no sistema' });
+  }
+
+  if (!MP_ACCESS_TOKEN || !mpClient) {
+    return res.status(503).json({
+      error: 'MERCADOPAGO_NOT_CONFIGURED',
+      message: 'MERCADOPAGO_ACCESS_TOKEN não configurado no ambiente. Configure a variável no Google AI Studio (Settings → Secrets).',
+      isConfigured: false,
+    });
+  }
+
+  const plan = getPlanDetails(planType);
+  const externalReference = `sub_${org.id}_${planType}_${Date.now()}`;
+
+  try {
+    const payer = sanitizePayer(payerEmail || org.ownerEmail, payerName || org.ownerName || org.name);
+
+    if (paymentMethodType === 'PIX') {
+      // Create transparent PIX Payment via Payments API
+      const payment = new Payment(mpClient);
+
+      const paymentResponse = await payment.create({
+        body: {
+          transaction_amount: plan.amount,
+          description: plan.title,
+          payment_method_id: 'pix',
+          external_reference: externalReference,
+          notification_url: `${APP_URL}/api/mercadopago/webhook`,
+          payer: {
+            email: payer.email,
+            first_name: payer.firstName,
+            last_name: payer.lastName,
+          },
+        },
+      });
+
+      const pointOfInteraction = paymentResponse.point_of_interaction?.transaction_data;
+      const qrCode = pointOfInteraction?.qr_code;
+      const qrCodeBase64 = pointOfInteraction?.qr_code_base64;
+      const ticketUrl = pointOfInteraction?.ticket_url;
+
+      // Register invoice pending in organization
+      if (!org.subscription) {
+        org.subscription = {
+          status: 'PENDENTE',
+          planName: plan.title,
+          priceMonthly: planType === 'ANNUAL' ? 69.90 : 79.90,
+          isPaid: false,
+          invoices: [],
+        };
+      }
+      org.subscription.currentPaymentId = String(paymentResponse.id);
+
+      const invoice = {
+        id: `inv_mp_${paymentResponse.id}`,
+        date: new Date().toISOString().split('T')[0],
+        amount: plan.amount,
+        status: (paymentResponse.status === 'approved' ? 'PAGO' : 'PENDENTE') as any,
+        paymentMethod: 'PIX' as const,
+        description: `${plan.title} (Mercado Pago ID #${paymentResponse.id})`,
+        mpPaymentId: String(paymentResponse.id),
+        mpStatus: paymentResponse.status,
+        mpStatusDetail: paymentResponse.status_detail,
+        mpQrCode: qrCode,
+        mpQrCodeBase64: qrCodeBase64,
+        receiptUrl: ticketUrl,
+      };
+
+      org.subscription.invoices = org.subscription.invoices || [];
+      org.subscription.invoices.unshift(invoice);
+
+      writeDB(db);
+      broadcastSSE('SUBSCRIPTION_UPDATED', { orgId: org.id, status: org.subscription.status });
+
+      return res.json({
+        success: true,
+        type: 'PIX',
+        paymentId: paymentResponse.id,
+        status: paymentResponse.status,
+        statusDetail: paymentResponse.status_detail,
+        qrCode,
+        qrCodeBase64,
+        ticketUrl,
+        externalReference,
+        amount: plan.amount,
+        planTitle: plan.title,
+      });
+    }
+
+    // Default: Checkout Pro Preference (supports credit card, installments, PIX, boleto)
+    const preference = new Preference(mpClient);
+    const prefResponse = await preference.create({
+      body: {
+        items: [
+          {
+            id: `plan_${planType.toLowerCase()}`,
+            title: plan.title,
+            description: plan.description,
+            quantity: 1,
+            unit_price: plan.amount,
+            currency_id: 'BRL',
+          },
+        ],
+        payer: {
+          name: payer.fullName,
+          email: payer.email,
+          phone: {
+            area_code: '11',
+            number: (org.phone || '999990000').replace(/\D/g, '').slice(-8) || '99990000',
+          },
+        },
+        back_urls: {
+          success: `${APP_URL}/?mp_status=success&org_id=${org.id}`,
+          pending: `${APP_URL}/?mp_status=pending&org_id=${org.id}`,
+          failure: `${APP_URL}/?mp_status=failure&org_id=${org.id}`,
+        },
+        auto_return: 'approved',
+        notification_url: `${APP_URL}/api/mercadopago/webhook`,
+        external_reference: externalReference,
+        statement_descriptor: 'BARBEROS PRO',
+      },
+    });
+
+    if (!org.subscription) {
+      org.subscription = {
+        status: 'PENDENTE',
+        planName: plan.title,
+        priceMonthly: planType === 'ANNUAL' ? 69.90 : 79.90,
+        isPaid: false,
+        invoices: [],
+      };
+    }
+    org.subscription.currentPreferenceId = prefResponse.id;
+
+    writeDB(db);
+
+    res.json({
+      success: true,
+      type: 'CHECKOUT_PRO',
+      preferenceId: prefResponse.id,
+      initPoint: prefResponse.init_point,
+      sandboxInitPoint: prefResponse.sandbox_init_point,
+      externalReference,
+      amount: plan.amount,
+      planTitle: plan.title,
+    });
+  } catch (err: any) {
+    const parsed = parseMercadoPagoError(err);
+    console.error(`❌ [Mercado Pago API] Status ${parsed.status} - Mensagem: ${parsed.message} ${parsed.details ? `(Detalhes: ${parsed.details})` : ''}`);
+    res.status(parsed.status >= 400 && parsed.status < 600 ? parsed.status : 500).json({
+      error: 'MERCADOPAGO_API_ERROR',
+      statusCode: parsed.status,
+      message: parsed.message,
+      details: parsed.details || undefined,
+    });
+  }
+});
+
+// 2. Consult Payment Status by Payment ID
+app.get('/api/mercadopago/payment-status/:paymentId', async (req: Request, res: Response) => {
+  const { paymentId } = req.params;
+
+  if (!MP_ACCESS_TOKEN || !mpClient) {
+    return res.status(503).json({
+      error: 'MERCADOPAGO_NOT_CONFIGURED',
+      message: 'MERCADOPAGO_ACCESS_TOKEN não configurado.',
+    });
+  }
+
+  try {
+    const payment = new Payment(mpClient);
+    const paymentData = await payment.get({ id: paymentId });
+
+    // If payment is approved, activate subscription automatically
+    let subscriptionUpdated = false;
+    if (paymentData.status === 'approved') {
+      const extRef = paymentData.external_reference || '';
+      // format: sub_{orgId}_{planType}_{timestamp}
+      const parts = extRef.split('_');
+      const orgId = parts[1];
+      const planType = parts[2] as 'MONTHLY' | 'ANNUAL';
+
+      if (orgId) {
+        const db = readDB();
+        const org = (db.organizations || []).find((o: any) => o.id === orgId);
+        if (org) {
+          const plan = getPlanDetails(planType === 'ANNUAL' ? 'ANNUAL' : 'MONTHLY');
+          const todayIso = new Date().toISOString().split('T')[0];
+          const nextDate = new Date();
+          nextDate.setDate(nextDate.getDate() + (planType === 'ANNUAL' ? 365 : 30));
+          const nextBillingDate = nextDate.toISOString().split('T')[0];
+
+          if (!org.subscription) {
+            org.subscription = {
+              status: 'ATIVA',
+              planName: plan.title,
+              priceMonthly: planType === 'ANNUAL' ? 69.90 : 79.90,
+              isPaid: true,
+              invoices: [],
+            };
+          }
+
+          org.subscription.status = 'ATIVA';
+          org.subscription.isPaid = true;
+          org.subscription.lastPaymentDate = todayIso;
+          org.subscription.nextBillingDate = nextBillingDate;
+          org.subscription.paymentMethod = paymentData.payment_method_id === 'pix' ? 'PIX' : 'CARTAO_CREDITO';
+
+          // Update or add invoice
+          const existingInv = (org.subscription.invoices || []).find(
+            (inv: any) => inv.mpPaymentId === String(paymentId)
+          );
+          if (existingInv) {
+            existingInv.status = 'PAGO';
+            existingInv.mpStatus = 'approved';
+          } else {
+            org.subscription.invoices = org.subscription.invoices || [];
+            org.subscription.invoices.unshift({
+              id: `inv_mp_${paymentId}`,
+              date: todayIso,
+              amount: paymentData.transaction_amount || plan.amount,
+              status: 'PAGO',
+              paymentMethod: paymentData.payment_method_id === 'pix' ? 'PIX' : 'CARTAO_CREDITO',
+              description: `${plan.title} - Aprovado via Mercado Pago (#${paymentId})`,
+              mpPaymentId: String(paymentId),
+              mpStatus: 'approved',
+              receiptUrl: paymentData.point_of_interaction?.transaction_data?.ticket_url,
+            });
+          }
+
+          writeDB(db);
+          broadcastSSE('SUBSCRIPTION_UPDATED', { orgId: org.id, status: 'ATIVA' });
+          subscriptionUpdated = true;
+          console.log(`✅ Assinatura ativada com sucesso para org ${org.name} via consulta #${paymentId}`);
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      paymentId: paymentData.id,
+      status: paymentData.status,
+      statusDetail: paymentData.status_detail,
+      amount: paymentData.transaction_amount,
+      paymentMethod: paymentData.payment_method_id,
+      dateApproved: paymentData.date_approved,
+      subscriptionUpdated,
+    });
+  } catch (err: any) {
+    const parsed = parseMercadoPagoError(err);
+    console.error(`❌ [Mercado Pago Status #${paymentId}] Status ${parsed.status} - ${parsed.message}`);
+    res.status(parsed.status >= 400 && parsed.status < 600 ? parsed.status : 500).json({
+      error: 'MERCADOPAGO_STATUS_ERROR',
+      statusCode: parsed.status,
+      message: parsed.message,
+      details: parsed.details || undefined,
+    });
+  }
+});
+
+// 3. Webhook from Mercado Pago (IPN / Webhooks)
+app.post('/api/mercadopago/webhook', async (req: Request, res: Response) => {
+  console.log('🔔 Webhook Mercado Pago recebido:', req.query, req.body);
+
+  // Validate webhook signature if secret configured
+  if (MP_WEBHOOK_SECRET) {
+    const xSignature = req.headers['x-signature'] as string;
+    const xRequestId = req.headers['x-request-id'] as string;
+    if (xSignature) {
+      // Signature verification according to Mercado Pago docs: ts, v1
+      try {
+        const parts = xSignature.split(',');
+        let ts = '';
+        let v1 = '';
+        for (const p of parts) {
+          const [k, v] = p.split('=');
+          if (k.trim() === 'ts') ts = v.trim();
+          if (k.trim() === 'v1') v1 = v.trim();
+        }
+        if (ts && v1) {
+          const dataId = req.query['data.id'] || req.body?.data?.id || '';
+          const manifest = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
+          const hmac = crypto.createHmac('sha256', MP_WEBHOOK_SECRET).update(manifest).digest('hex');
+          if (hmac !== v1) {
+            console.warn('⚠️ Webhook Mercado Pago signature mismatch');
+          } else {
+            console.log('🛡️ Webhook Mercado Pago assinatura verificada com sucesso');
+          }
+        }
+      } catch (signErr) {
+        console.warn('Erro ao validar assinatura do webhook:', signErr);
+      }
+    }
+  }
+
+  // Answer 200 immediately to Mercado Pago
+  res.status(200).send('OK');
+
+  if (!MP_ACCESS_TOKEN || !mpClient) {
+    console.warn('Webhook recebido, mas MERCADOPAGO_ACCESS_TOKEN não está configurado.');
+    return;
+  }
+
+  // Process event asynchronously
+  try {
+    const topic = req.query.topic || req.body.type || req.query.type;
+    const dataId = req.query['data.id'] || req.body?.data?.id || req.query.id;
+
+    if (topic === 'payment' && dataId) {
+      const payment = new Payment(mpClient);
+      const paymentData = await payment.get({ id: String(dataId) });
+
+      console.log(`💳 Webhook processando pagamento #${dataId} com status: ${paymentData.status}`);
+
+      if (paymentData.status === 'approved') {
+        const extRef = paymentData.external_reference || '';
+        const parts = extRef.split('_');
+        const orgId = parts[1];
+        const planType = parts[2] as 'MONTHLY' | 'ANNUAL';
+
+        if (orgId) {
+          const db = readDB();
+          const org = (db.organizations || []).find((o: any) => o.id === orgId);
+          if (org) {
+            const plan = getPlanDetails(planType === 'ANNUAL' ? 'ANNUAL' : 'MONTHLY');
+            const todayIso = new Date().toISOString().split('T')[0];
+            const nextDate = new Date();
+            nextDate.setDate(nextDate.getDate() + (planType === 'ANNUAL' ? 365 : 30));
+            const nextBillingDate = nextDate.toISOString().split('T')[0];
+
+            if (!org.subscription) {
+              org.subscription = {
+                status: 'ATIVA',
+                planName: plan.title,
+                priceMonthly: planType === 'ANNUAL' ? 69.90 : 79.90,
+                isPaid: true,
+                invoices: [],
+              };
+            }
+
+            org.subscription.status = 'ATIVA';
+            org.subscription.isPaid = true;
+            org.subscription.lastPaymentDate = todayIso;
+            org.subscription.nextBillingDate = nextBillingDate;
+            org.subscription.paymentMethod = paymentData.payment_method_id === 'pix' ? 'PIX' : 'CARTAO_CREDITO';
+
+            const existingInv = (org.subscription.invoices || []).find(
+              (inv: any) => inv.mpPaymentId === String(dataId)
+            );
+            if (existingInv) {
+              existingInv.status = 'PAGO';
+              existingInv.mpStatus = 'approved';
+            } else {
+              org.subscription.invoices = org.subscription.invoices || [];
+              org.subscription.invoices.unshift({
+                id: `inv_mp_${dataId}`,
+                date: todayIso,
+                amount: paymentData.transaction_amount || plan.amount,
+                status: 'PAGO',
+                paymentMethod: paymentData.payment_method_id === 'pix' ? 'PIX' : 'CARTAO_CREDITO',
+                description: `${plan.title} - Aprovado via Mercado Pago Webhook (#${dataId})`,
+                mpPaymentId: String(dataId),
+                mpStatus: 'approved',
+                receiptUrl: paymentData.point_of_interaction?.transaction_data?.ticket_url,
+              });
+            }
+
+            writeDB(db);
+            broadcastSSE('SUBSCRIPTION_UPDATED', { orgId: org.id, status: 'ATIVA' });
+            console.log(`🎉 [Webhook] Assinatura da barbearia ${org.name} ativada com sucesso!`);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Erro ao processar payload do webhook do Mercado Pago:', err);
+  }
+});
+
+// 4. Authenticated Subscription Status Endpoint
+app.get('/api/subscription/status/:orgId', (req: Request, res: Response) => {
+  const { orgId } = req.params;
+  const db = readDB();
+  const org = (db.organizations || []).find((o: any) => o.id === orgId);
+  if (!org) return res.status(404).json({ error: 'Organização não encontrada' });
+
+  res.json({
+    organizationId: org.id,
+    organizationName: org.name,
+    subscription: org.subscription || {
+      status: 'PENDENTE',
+      planName: 'Plano Pro BarberOS',
+      priceMonthly: 79.9,
+      isPaid: false,
+      invoices: [],
+    },
+    mercadopagoConfigured: !!MP_ACCESS_TOKEN,
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 7. VITE DEV SERVER OR STATIC PROD SERVING
 // ---------------------------------------------------------------------------
 async function startServer() {
@@ -1054,17 +1592,27 @@ async function startServer() {
     app.get('*', (req: Request, res: Response) => {
       res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
     });
+    app.listen(Number(PORT), '0.0.0.0', () => {
+      console.log(`💈 BarberOS Fila Virtual Server (Production) running on http://0.0.0.0:${PORT}`);
+    });
   } else {
+    const isHmrDisabled = process.env.DISABLE_HMR === 'true';
+    const httpServer = http.createServer(app);
+
     const vite = await createViteServer({
-      server: { middlewareMode: true, host: '0.0.0.0' },
+      server: {
+        middlewareMode: true,
+        host: '0.0.0.0',
+        hmr: isHmrDisabled ? false : { server: httpServer },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
-  }
 
-  app.listen(Number(PORT), '0.0.0.0', () => {
-    console.log(`💈 BarberOS Fila Virtual Server running on http://0.0.0.0:${PORT}`);
-  });
+    httpServer.listen(Number(PORT), '0.0.0.0', () => {
+      console.log(`💈 BarberOS Fila Virtual Server (Dev Mode) running on http://0.0.0.0:${PORT}`);
+    });
+  }
 }
 
 startServer().catch((err) => {

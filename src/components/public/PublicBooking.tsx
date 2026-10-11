@@ -44,26 +44,62 @@ export const PublicBooking: React.FC<PublicBookingProps> = ({
   const [errorMessage, setErrorMessage] = useState('');
   const [createdAppointment, setCreatedAppointment] = useState<Appointment | null>(null);
 
+  const [isLoading, setIsLoading] = useState(true);
+  const [orgNotFound, setOrgNotFound] = useState(false);
+
   useEffect(() => {
-    const org = StorageService.getOrganizationBySlug(slug) || StorageService.getAllOrganizations()[0];
-    if (org) {
-      setOrganization(org);
-      const srvs = StorageService.getServices(org.id).filter(s => s.isActive);
-      const profs = StorageService.getProfessionals(org.id).filter(p => p.isActive);
-      setServices(srvs);
-      setProfessionals(profs);
-      if (srvs.length > 0) setSelectedService(srvs[0]);
-      if (profs.length > 0) setSelectedProfessional(profs[0]);
-    }
+    const fetchOrg = async () => {
+      try {
+        let org = await StorageService.fetchOrganizationBySlug(slug);
+        if (!org) {
+          org = StorageService.getOrganizationBySlug(slug) || null;
+        }
+        if (org) {
+          setOrganization(org);
+          setOrgNotFound(false);
+          const srvs = StorageService.getServices(org.id).filter(s => s.isActive);
+          const profs = StorageService.getProfessionals(org.id).filter(p => p.isActive);
+          setServices(srvs);
+          setProfessionals(profs);
+          if (srvs.length > 0) setSelectedService(srvs[0]);
+          if (profs.length > 0) setSelectedProfessional(profs[0]);
+        } else {
+          setOrgNotFound(true);
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchOrg();
   }, [slug]);
 
-  if (!organization) {
+  if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-4">
-        <div className="text-center">
-          <p className="text-slate-400">Estabelecimento não encontrado.</p>
-          <button onClick={onBackToHome} className="mt-4 text-xs text-amber-400 underline">
-            Voltar para o início
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4 gap-3">
+        <div className="h-9 w-9 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
+        <p className="text-xs text-slate-400">Carregando agendamento...</p>
+      </div>
+    );
+  }
+
+  if (orgNotFound || !organization) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center">
+        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 space-y-4 shadow-2xl">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-400 border border-amber-500/30 mx-auto">
+            <AlertCircle className="h-7 w-7" />
+          </div>
+          <div>
+            <h2 className="text-xl font-black text-white">Barbearia Não Encontrada</h2>
+            <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+              O link de agendamento <code className="bg-slate-950 px-2 py-0.5 rounded text-amber-400 font-mono">/agendar/{slug}</code> não corresponde a nenhum estabelecimento.
+            </p>
+          </div>
+          <button
+            onClick={onBackToHome}
+            className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 py-3 text-xs font-bold text-slate-950 transition cursor-pointer"
+          >
+            Voltar para a Página Inicial
           </button>
         </div>
       </div>

@@ -11,10 +11,12 @@ import {
   X,
   Sparkles,
   AlertCircle,
-  MessageCircle,
   Clock,
   ArrowRight,
-  ExternalLink
+  ExternalLink,
+  RefreshCw,
+  AlertTriangle,
+  Send
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization } from '../../types';
@@ -33,35 +35,69 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
   onSuccess,
 }) => {
   const [selectedPlan, setSelectedPlan] = useState<'MONTHLY' | 'ANNUAL'>('ANNUAL');
-  const [paymentTab, setPaymentTab] = useState<'PIX' | 'CARTAO'>('PIX');
+  const [paymentTab, setPaymentTab] = useState<'PIX' | 'CHECKOUT_PRO'>('PIX');
   const [copiedPix, setCopiedPix] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [proofSent, setProofSent] = useState(organization.subscription?.status === 'AGUARDANDO_APROVACAO');
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const planAmount = selectedPlan === 'ANNUAL' ? 838.8 : 79.9;
-  const planLabel = selectedPlan === 'ANNUAL' ? 'Plano Pro Anual (12x R$ 69,90)' : 'Plano Pro Mensal (R$ 79,90/mês)';
+  // Mercado Pago config status
+  const [mpConfigStatus, setMpConfigStatus] = useState<{
+    isConfigured: boolean;
+    hasWebhookSecret: boolean;
+    appUrl: string;
+    configuredMessage: string;
+  } | null>(null);
 
-  // Card form
-  const [cardNumber, setCardNumber] = useState('');
-  const [cardName, setCardName] = useState('');
-  const [cardExpiry, setCardExpiry] = useState('');
-  const [cardCvv, setCardCvv] = useState('');
-  const [cardCpf, setCardCpf] = useState('');
+  // Active created payment state (Real Mercado Pago)
+  const [pixPaymentData, setPixPaymentData] = useState<{
+    paymentId: number | string;
+    status: string;
+    statusDetail?: string;
+    qrCode?: string;
+    qrCodeBase64?: string;
+    ticketUrl?: string;
+    amount: number;
+    planTitle: string;
+  } | null>(null);
+
+  const [checkoutProData, setCheckoutProData] = useState<{
+    preferenceId: string;
+    initPoint: string;
+    sandboxInitPoint?: string;
+    amount: number;
+    planTitle: string;
+  } | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Realistic PIX Copia e Cola String
-  const pixCode = `00020126580014BR.GOV.BCB.PIX0136barberos-pagamentos@saas.com.br5204000053039865405${planAmount.toFixed(2)}5802BR5920BARBEROS TECNOLOGIA6009SAO PAULO62140510AS_${organization.slug.toUpperCase()}_${selectedPlan === 'ANNUAL' ? 'ANUAL' : 'MENSAL'}6304E7A2`;
+  const planAmount = selectedPlan === 'ANNUAL' ? 838.80 : 79.90;
+  const planLabel = selectedPlan === 'ANNUAL' ? 'Plano Pro Anual (12x R$ 69,90)' : 'Plano Pro Mensal (R$ 79,90/mês)';
 
-  const ownerWhatsAppNumber = '5511999998888';
-  const ownerWhatsAppUrl = `https://wa.me/${ownerWhatsAppNumber}?text=${encodeURIComponent(
-    `Olá! Sou o dono da ${organization.name}. Acabei de realizar o pagamento via PIX no valor de R$ ${planAmount.toFixed(2).replace('.', ',')} do ${planLabel}. Segue o comprovante para confirmação e liberação do acesso 100%!`
-  )}`;
-
+  // Check Mercado Pago configuration on mount
   useEffect(() => {
-    if (isOpen && paymentTab === 'PIX' && canvasRef.current) {
-      QRCode.toCanvas(canvasRef.current, pixCode, {
-        width: 220,
+    if (isOpen) {
+      fetch('/api/mercadopago/config-status')
+        .then((r) => r.json())
+        .then((data) => {
+          setMpConfigStatus(data);
+        })
+        .catch(() => {
+          setMpConfigStatus({
+            isConfigured: false,
+            hasWebhookSecret: false,
+            appUrl: window.location.origin,
+            configuredMessage: 'Erro ao verificar configuração do Mercado Pago.',
+          });
+        });
+    }
+  }, [isOpen]);
+
+  // Render QR Code onto canvas if PIX qrCode string is available
+  useEffect(() => {
+    if (pixPaymentData?.qrCode && canvasRef.current) {
+      QRCode.toCanvas(canvasRef.current, pixPaymentData.qrCode, {
+        width: 230,
         margin: 2,
         color: {
           dark: '#0f172a',
@@ -69,58 +105,145 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
         },
       });
     }
-  }, [isOpen, paymentTab, pixCode]);
+  }, [pixPaymentData?.qrCode]);
+
+  // Polling for payment status if a real payment is active
+  useEffect(() => {
+    if (!isOpen || !pixPaymentData?.paymentId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/mercadopago/payment-status/${pixPaymentData.paymentId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'approved') {
+            await StorageService.syncWithServer();
+            onSuccess();
+            onClose();
+          }
+        }
+      } catch {}
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [isOpen, pixPaymentData?.paymentId]);
 
   if (!isOpen) return null;
 
+  // 1. Create Real PIX Payment via Backend
+  const handleGenerateRealPix = async () => {
+    setIsProcessing(true);
+    setErrorMessage(null);
+
+    try {
+      const res = await fetch('/api/mercadopago/create-checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          organizationId: organization.id,
+          planType: selectedPlan,
+          paymentMethodType: 'PIX',
+          payerEmail: organization.ownerEmail,
+          payerName: organization.ownerName || organization.name,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        const errorText = data.details
+          ? `${data.message} (${data.details})`
+          : data.message || 'Erro ao comunicar com a API do Mercado Pago.';
+        setErrorMessage(errorText);
+        setIsProcessing(false);
+        return;
+      }
+
+      if (data.success && data.type === 'PIX') {
+        setPixPaymentData(data);
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Falha na requisição de pagamento ao servidor.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // 2. Create Real Checkout Pro (Cartão de Crédito / Parcelado / Checkout Oficial)
+  const handleGenerateCheckoutPro = async () => {
+    setIsProcessing(true);
+    setErrorMessage(null);
+
+    try {
+      const res = await fetch('/api/mercadopago/create-checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          organizationId: organization.id,
+          planType: selectedPlan,
+          paymentMethodType: 'CHECKOUT_PRO',
+          payerEmail: organization.ownerEmail,
+          payerName: organization.ownerName || organization.name,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        const errorText = data.details
+          ? `${data.message} (${data.details})`
+          : data.message || 'Erro ao gerar checkout do Mercado Pago.';
+        setErrorMessage(errorText);
+        setIsProcessing(false);
+        return;
+      }
+
+      if (data.success && data.type === 'CHECKOUT_PRO') {
+        setCheckoutProData(data);
+        // Open Mercado Pago official checkout in new tab or redirect
+        if (data.initPoint) {
+          window.open(data.initPoint, '_blank', 'noopener,noreferrer');
+        }
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Falha ao conectar com o servidor.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // 3. User clicks "Já realizei o pagamento — Verificar Status"
+  const handleCheckCurrentStatus = async () => {
+    if (!pixPaymentData?.paymentId) return;
+    setIsCheckingStatus(true);
+    setErrorMessage(null);
+
+    try {
+      const res = await fetch(`/api/mercadopago/payment-status/${pixPaymentData.paymentId}`);
+      const data = await res.json();
+
+      if (data.status === 'approved') {
+        await StorageService.syncWithServer();
+        onSuccess();
+        onClose();
+      } else {
+        setErrorMessage(
+          `Status atual no Mercado Pago: ${data.status || 'pendente'} (${data.statusDetail || 'aguardando compensação'}). Se você já pagou, aguarde alguns instantes pela confirmação do banco.`
+        );
+      }
+    } catch (err: any) {
+      setErrorMessage('Não foi possível consultar o status da cobrança no momento.');
+    } finally {
+      setIsCheckingStatus(false);
+    }
+  };
+
   const handleCopyPix = () => {
-    navigator.clipboard.writeText(pixCode);
-    setCopiedPix(true);
-    setTimeout(() => setCopiedPix(false), 3000);
-  };
-
-  const handleSendProofToOwner = () => {
-    setIsProcessing(true);
-    setTimeout(() => {
-      StorageService.requestSubscriptionApproval(
-        organization.id,
-        `Comprovante de pagamento PIX de R$ ${planAmount.toFixed(2).replace('.', ',')} (${planLabel}) enviado pelo dono da barbearia`
-      );
-      setIsProcessing(false);
-      setProofSent(true);
-      onSuccess();
-    }, 500);
-  };
-
-  const handleConfirmPixPaymentInstant = () => {
-    setIsProcessing(true);
-    setTimeout(() => {
-      StorageService.activateSubscription(
-        organization.id,
-        'PIX',
-        `${planLabel} - Aprovado Instantaneamente (Modo Teste)`
-      );
-      setIsProcessing(false);
-      onSuccess();
-      onClose();
-    }, 600);
-  };
-
-  const handleCardSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!cardNumber || !cardName || !cardExpiry || !cardCvv) return;
-
-    setIsProcessing(true);
-    setTimeout(() => {
-      StorageService.activateSubscription(
-        organization.id,
-        'CARTAO_CREDITO',
-        `${planLabel} - Cartão final ${cardNumber.slice(-4) || '4242'}`
-      );
-      setIsProcessing(false);
-      onSuccess();
-      onClose();
-    }, 800);
+    if (pixPaymentData?.qrCode) {
+      navigator.clipboard.writeText(pixPaymentData.qrCode);
+      setCopiedPix(true);
+      setTimeout(() => setCopiedPix(false), 3000);
+    }
   };
 
   return (
@@ -128,7 +251,7 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
       <div className="w-full max-w-lg rounded-3xl bg-slate-900 border border-slate-800 p-6 text-slate-100 shadow-2xl relative max-h-[95vh] overflow-y-auto">
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition"
+          className="absolute right-4 top-4 p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition cursor-pointer"
         >
           <X className="h-5 w-5" />
         </button>
@@ -139,16 +262,42 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
             <Sparkles className="h-6 w-6" />
           </div>
           <div>
-            <h2 className="text-xl font-black text-white">Plano BarberOS Pro</h2>
-            <p className="text-xs text-slate-400">Desbloqueie 100% dos recursos do seu estabelecimento</p>
+            <h2 className="text-xl font-black text-white">Assinatura BarberOS Pro</h2>
+            <p className="text-xs text-slate-400">Checkout Oficial integrado via Mercado Pago</p>
           </div>
         </div>
+
+        {/* Credentials Warning if not configured in Google AI Studio */}
+        {mpConfigStatus && !mpConfigStatus.isConfigured && (
+          <div className="mt-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 p-3.5 text-xs text-amber-200 space-y-1.5">
+            <div className="flex items-center gap-2 font-bold text-amber-300">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <span>Configuração Pendente: Mercado Pago</span>
+            </div>
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              Para processar cobranças reais, configure a credencial <code className="bg-slate-950 px-1.5 py-0.5 rounded text-amber-400 font-mono">MERCADOPAGO_ACCESS_TOKEN</code> na aba <strong>Settings → Secrets</strong> do Google AI Studio.
+            </p>
+          </div>
+        )}
+
+        {/* Error message banner */}
+        {errorMessage && (
+          <div className="mt-3 rounded-xl bg-rose-500/15 border border-rose-500/30 p-3 text-xs text-rose-300 flex items-start gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-rose-400" />
+            <span className="leading-relaxed">{errorMessage}</span>
+          </div>
+        )}
 
         {/* Plan Selector Toggle (12x 69,90 vs 79,90/mês) */}
         <div className="mt-4 grid grid-cols-2 gap-2 p-1.5 bg-slate-950 rounded-2xl border border-slate-800">
           <button
             type="button"
-            onClick={() => setSelectedPlan('ANNUAL')}
+            onClick={() => {
+              setSelectedPlan('ANNUAL');
+              setPixPaymentData(null);
+              setCheckoutProData(null);
+              setErrorMessage(null);
+            }}
             className={`p-3 rounded-xl text-left transition relative cursor-pointer ${
               selectedPlan === 'ANNUAL'
                 ? 'bg-gradient-to-r from-amber-500/20 to-amber-500/10 border-2 border-amber-500 text-white'
@@ -164,12 +313,17 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
               </span>
             </div>
             <div className="text-sm font-black text-white">Plano Anual Pro</div>
-            <div className="text-[10px] text-slate-400 mt-0.5">R$ 838,80/ano parcelado</div>
+            <div className="text-[10px] text-slate-400 mt-0.5">R$ 838,80 / ano parcelável</div>
           </button>
 
           <button
             type="button"
-            onClick={() => setSelectedPlan('MONTHLY')}
+            onClick={() => {
+              setSelectedPlan('MONTHLY');
+              setPixPaymentData(null);
+              setCheckoutProData(null);
+              setErrorMessage(null);
+            }}
             className={`p-3 rounded-xl text-left transition cursor-pointer ${
               selectedPlan === 'MONTHLY'
                 ? 'bg-slate-800 border-2 border-slate-600 text-white'
@@ -200,8 +354,8 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
               </span>
             </div>
             <div className="text-right text-[11px] text-slate-400">
-              <span className="text-emerald-400 font-semibold block">✓ Acesso Imediato</span>
-              <span>100% Liberado</span>
+              <span className="text-emerald-400 font-semibold block">✓ Mercado Pago Seguro</span>
+              <span>Ativação Automática</span>
             </div>
           </div>
 
@@ -212,7 +366,7 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
             </div>
             <div className="flex items-center gap-1.5">
               <CheckCircle2 className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-              <span>Alertas com som & vibração</span>
+              <span>Notificações som & vibração</span>
             </div>
             <div className="flex items-center gap-1.5">
               <CheckCircle2 className="h-3.5 w-3.5 text-amber-400 shrink-0" />
@@ -220,219 +374,231 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
             </div>
             <div className="flex items-center gap-1.5">
               <CheckCircle2 className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-              <span>Financeiro & Comissões</span>
+              <span>Agendamento online 24/7</span>
             </div>
           </div>
         </div>
 
-        {/* Payment Tabs: PIX vs Cartão */}
+        {/* Payment Tabs: PIX vs Checkout Pro (Cartão de Crédito) */}
         <div className="mt-5 grid grid-cols-2 gap-2 p-1 bg-slate-950 rounded-2xl border border-slate-800">
           <button
             type="button"
             onClick={() => setPaymentTab('PIX')}
-            className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition ${
+            className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
               paymentTab === 'PIX'
                 ? 'bg-amber-500 text-slate-950 shadow-md'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
             <QrCode className="h-4 w-4" />
-            <span>Pagar via PIX (Instantâneo)</span>
+            <span>PIX Mercado Pago</span>
           </button>
 
           <button
             type="button"
-            onClick={() => setPaymentTab('CARTAO')}
-            className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition ${
-              paymentTab === 'CARTAO'
+            onClick={() => setPaymentTab('CHECKOUT_PRO')}
+            className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+              paymentTab === 'CHECKOUT_PRO'
                 ? 'bg-amber-500 text-slate-950 shadow-md'
                 : 'text-slate-400 hover:text-white'
             }`}
           >
             <CreditCard className="h-4 w-4" />
-            <span>Cartão de Crédito</span>
+            <span>Cartão / Checkout Pro</span>
           </button>
         </div>
 
-        {/* TAB CONTENT: PIX */}
+        {/* TAB 1: PIX REAL MERCADO PAGO */}
         {paymentTab === 'PIX' && (
-          <div className="mt-5 space-y-4 text-center">
-            <div className="flex flex-col items-center justify-center rounded-2xl bg-white p-4 shadow-inner max-w-xs mx-auto">
-              <canvas ref={canvasRef} className="rounded-lg" />
-              <span className="text-[11px] font-bold text-slate-800 mt-1">
-                Valor: R$ {planAmount.toFixed(2).replace('.', ',')} · {selectedPlan === 'ANNUAL' ? '12x R$ 69,90 (Anual)' : 'Mensal'}
-              </span>
-            </div>
-
-            <div className="space-y-2 text-left">
-              <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
-                <span>Código PIX Copia e Cola:</span>
-                <span className="text-[10px] text-amber-400">Ativação Automática</span>
-              </label>
-              <div className="flex items-center gap-2 rounded-xl bg-slate-950 p-2.5 border border-slate-800">
-                <span className="truncate text-xs font-mono text-slate-400 flex-1">{pixCode}</span>
-                <button
-                  type="button"
-                  onClick={handleCopyPix}
-                  className="flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 transition"
-                >
-                  {copiedPix ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                  <span>{copiedPix ? 'Copiado!' : 'Copiar'}</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Status box if proof was sent */}
-            {proofSent ? (
-              <div className="rounded-2xl bg-amber-500/15 border border-amber-500/30 p-4 text-left space-y-2">
-                <div className="flex items-center gap-2 text-amber-300 font-bold text-xs">
-                  <Clock className="h-4 w-4 shrink-0" />
-                  <span>Comprovante Enviado para o Dono da SaaS!</span>
+          <div className="mt-5 space-y-4">
+            {!pixPaymentData ? (
+              <div className="text-center py-4 space-y-3">
+                <div className="h-12 w-12 rounded-2xl bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center justify-center mx-auto">
+                  <QrCode className="h-6 w-6" />
                 </div>
-                <p className="text-[11px] text-slate-300 leading-relaxed">
-                  O dono da plataforma recebeu sua notificação e está conferindo a transferência de R$ 79,90. O acesso 100% será liberado assim que confirmado.
-                </p>
-                <a
-                  href={ownerWhatsAppUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 py-2.5 text-xs font-bold text-slate-950 transition shadow-md"
-                >
-                  <MessageCircle className="h-4 w-4" />
-                  <span>Falar com o Dono no WhatsApp</span>
-                </a>
-              </div>
-            ) : (
-              <div className="space-y-2 pt-1">
-                {/* Send via WhatsApp to SaaS owner */}
-                <a
-                  href={ownerWhatsAppUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => handleSendProofToOwner()}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 py-3 text-xs font-bold text-white shadow-lg shadow-emerald-600/20 transition cursor-pointer"
-                >
-                  <MessageCircle className="h-4 w-4" />
-                  <span>Enviar Comprovante via WhatsApp para o Dono da SaaS</span>
-                </a>
-
-                {/* Mark as paid / send for approval */}
+                <div>
+                  <h3 className="text-sm font-bold text-white">Gerar Cobrança PIX Oficial</h3>
+                  <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                    O servidor irá gerar um QR Code e código Copia e Cola oficiais do Mercado Pago no valor de R$ {planAmount.toFixed(2).replace('.', ',')}.
+                  </p>
+                </div>
                 <button
                   type="button"
                   disabled={isProcessing}
-                  onClick={handleSendProofToOwner}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 py-3 text-xs font-black text-slate-950 shadow-lg shadow-amber-500/20 transition disabled:opacity-50 cursor-pointer"
+                  onClick={handleGenerateRealPix}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 py-3.5 text-xs font-black text-slate-950 shadow-lg shadow-amber-500/20 transition disabled:opacity-50 cursor-pointer"
                 >
-                  <CheckCircle2 className="h-4 w-4" />
-                  <span>{isProcessing ? 'Enviando...' : 'Já Fiz o PIX — Solicitar Liberação ao Dono'}</span>
+                  {isProcessing ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      <span>Gerando PIX no Mercado Pago...</span>
+                    </>
+                  ) : (
+                    <>
+                      <QrCode className="h-4 w-4" />
+                      <span>Gerar PIX Oficial — R$ {planAmount.toFixed(2).replace('.', ',')}</span>
+                    </>
+                  )}
                 </button>
               </div>
-            )}
+            ) : (
+              <div className="space-y-4 text-center">
+                <div className="flex flex-col items-center justify-center rounded-2xl bg-white p-4 shadow-inner max-w-xs mx-auto">
+                  {pixPaymentData.qrCodeBase64 ? (
+                    <img
+                      src={`data:image/png;base64,${pixPaymentData.qrCodeBase64}`}
+                      alt="QR Code PIX Mercado Pago"
+                      className="w-48 h-48 object-contain"
+                    />
+                  ) : (
+                    <canvas ref={canvasRef} className="rounded-lg" />
+                  )}
+                  <div className="text-[11px] font-bold text-slate-900 mt-2">
+                    ID da Cobrança: #{pixPaymentData.paymentId}
+                  </div>
+                  <div className="text-[10px] text-slate-600">
+                    Valor: R$ {pixPaymentData.amount.toFixed(2).replace('.', ',')}
+                  </div>
+                </div>
 
-            {/* Test Simulation Button */}
-            <div className="pt-2 border-t border-slate-800/80">
-              <button
-                type="button"
-                onClick={handleConfirmPixPaymentInstant}
-                className="text-[11px] text-slate-400 hover:text-amber-400 transition flex items-center justify-center gap-1.5 mx-auto cursor-pointer"
-                title="Aprovação imediata para testes sem aguardar"
-              >
-                <Sparkles className="h-3 w-3 text-amber-400" />
-                <span>Simular Aprovação Imediata (Modo Teste)</span>
-              </button>
-            </div>
+                {pixPaymentData.qrCode && (
+                  <div className="space-y-2 text-left">
+                    <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                      <span>Código PIX Copia e Cola:</span>
+                      <span className="text-[10px] text-emerald-400">Verificação Automática Ativa</span>
+                    </label>
+                    <div className="flex items-center gap-2 rounded-xl bg-slate-950 p-2.5 border border-slate-800">
+                      <span className="truncate text-xs font-mono text-slate-400 flex-1">
+                        {pixPaymentData.qrCode}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleCopyPix}
+                        className="flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 transition cursor-pointer"
+                      >
+                        {copiedPix ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span>{copiedPix ? 'Copiado!' : 'Copiar'}</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2 pt-2">
+                  <button
+                    type="button"
+                    disabled={isCheckingStatus}
+                    onClick={handleCheckCurrentStatus}
+                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 py-3 text-xs font-black text-slate-950 shadow-lg shadow-emerald-500/20 transition disabled:opacity-50 cursor-pointer"
+                  >
+                    {isCheckingStatus ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                        <span>Consultando Mercado Pago...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span>Já Paguei — Confirmar Liberação Agora</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPixPaymentData(null)}
+                    className="text-xs text-slate-400 hover:text-white underline cursor-pointer"
+                  >
+                    Gerar nova cobrança ou alterar plano
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {/* TAB CONTENT: CARTÃO */}
-        {paymentTab === 'CARTAO' && (
-          <form onSubmit={handleCardSubmit} className="mt-5 space-y-3">
-            <div>
-              <label className="text-xs font-semibold text-slate-300">Número do Cartão *</label>
-              <input
-                type="text"
-                required
-                maxLength={19}
-                value={cardNumber}
-                onChange={(e) => setCardNumber(e.target.value)}
-                placeholder="4532 •••• •••• 4242"
-                className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-white placeholder-slate-500 font-mono focus:outline-hidden focus:border-amber-500"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold text-slate-300">Nome Impresso no Cartão *</label>
-              <input
-                type="text"
-                required
-                value={cardName}
-                onChange={(e) => setCardName(e.target.value)}
-                placeholder="EX: JOAO S ALVES"
-                className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-semibold text-slate-300">Validade (MM/AA) *</label>
-                <input
-                  type="text"
-                  required
-                  maxLength={5}
-                  value={cardExpiry}
-                  onChange={(e) => setCardExpiry(e.target.value)}
-                  placeholder="12/28"
-                  className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-white font-mono focus:outline-hidden focus:border-amber-500"
-                />
+        {/* TAB 2: CHECKOUT PRO (CARTÃO DE CRÉDITO / PARCELAMENTO) */}
+        {paymentTab === 'CHECKOUT_PRO' && (
+          <div className="mt-5 space-y-4">
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-xs text-slate-300 space-y-2">
+              <div className="flex items-center gap-2 font-bold text-white">
+                <CreditCard className="h-4 w-4 text-amber-400" />
+                <span>Checkout Pro Oficial do Mercado Pago</span>
               </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-300">CVV (3 dígitos) *</label>
-                <input
-                  type="password"
-                  required
-                  maxLength={4}
-                  value={cardCvv}
-                  onChange={(e) => setCardCvv(e.target.value)}
-                  placeholder="123"
-                  className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-white font-mono focus:outline-hidden focus:border-amber-500"
-                />
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Pague com Cartão de Crédito em até 12x com proteção do comprador, ou utilize saldo do Mercado Pago.
+              </p>
+              <div className="text-[11px] text-emerald-400 font-semibold pt-1">
+                ✓ Seus dados de cartão são processados exclusivamente pelo ambiente seguro do Mercado Pago.
               </div>
             </div>
 
-            <div>
-              <label className="text-xs font-semibold text-slate-300">CPF do Titular *</label>
-              <input
-                type="text"
-                required
-                value={cardCpf}
-                onChange={(e) => setCardCpf(e.target.value)}
-                placeholder="000.000.000-00"
-                className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-white font-mono focus:outline-hidden focus:border-amber-500"
-              />
-            </div>
+            {checkoutProData?.initPoint ? (
+              <div className="space-y-3 text-center">
+                <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs text-left space-y-1">
+                  <div className="font-bold text-amber-300">Checkout Gerado com Sucesso!</div>
+                  <p className="text-[11px] text-slate-300">
+                    A página de pagamento do Mercado Pago foi aberta. Se a janela não abriu automaticamente, clique no botão abaixo.
+                  </p>
+                </div>
 
-            <div className="pt-2">
+                <a
+                  href={checkoutProData.initPoint}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 py-3.5 text-xs font-black text-slate-950 shadow-lg shadow-amber-500/20 transition cursor-pointer"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  <span>Abrir Tela Segura do Mercado Pago</span>
+                </a>
+
+                <button
+                  type="button"
+                  disabled={isCheckingStatus}
+                  onClick={async () => {
+                    setIsCheckingStatus(true);
+                    await StorageService.syncWithServer();
+                    const updated = StorageService.getOrganizationById(organization.id);
+                    if (updated?.subscription?.status === 'ATIVA') {
+                      onSuccess();
+                      onClose();
+                    } else {
+                      setErrorMessage('Pagamento ainda não confirmado pelo Mercado Pago. Assim que concluir no checkout, a ativação ocorrerá automaticamente.');
+                    }
+                    setIsCheckingStatus(false);
+                  }}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-800 hover:bg-slate-700 py-2.5 text-xs font-bold text-slate-200 transition cursor-pointer"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${isCheckingStatus ? 'animate-spin' : ''}`} />
+                  <span>Verificar Atualização da Assinatura</span>
+                </button>
+              </div>
+            ) : (
               <button
-                type="submit"
+                type="button"
                 disabled={isProcessing}
-                className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 py-3.5 text-xs font-black text-slate-950 shadow-lg shadow-emerald-500/20 transition disabled:opacity-50 cursor-pointer"
+                onClick={handleGenerateCheckoutPro}
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 py-4 text-xs font-black text-slate-950 shadow-lg shadow-amber-500/20 transition disabled:opacity-50 cursor-pointer"
               >
-                <Lock className="h-4 w-4" />
-                <span>
-                  {isProcessing
-                    ? 'Processando...'
-                    : `Pagar R$ ${planAmount.toFixed(2).replace('.', ',')} e Desbloquear`}
-                </span>
+                {isProcessing ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    <span>Iniciando Checkout Seguro...</span>
+                  </>
+                ) : (
+                  <>
+                    <ExternalLink className="h-4 w-4" />
+                    <span>Prosseguir para Checkout do Mercado Pago</span>
+                  </>
+                )}
               </button>
-            </div>
-          </form>
+            )}
+          </div>
         )}
 
-        <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-center gap-2 text-[10px] text-slate-500">
+        <div className="mt-5 pt-3 border-t border-slate-800 flex items-center justify-center gap-2 text-[10px] text-slate-500">
           <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
           <span>
-            Pagamento Seguro SSL · {selectedPlan === 'ANNUAL' ? '12x R$ 69,90 (R$ 838,80/ano)' : 'R$ 79,90 / mês'}
+            Integração Oficial Mercado Pago · SSL Criptografado · {selectedPlan === 'ANNUAL' ? '12x R$ 69,90' : 'R$ 79,90/mês'}
           </span>
         </div>
       </div>

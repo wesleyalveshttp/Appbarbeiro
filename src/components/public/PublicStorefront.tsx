@@ -36,20 +36,56 @@ export const PublicStorefront: React.FC<PublicStorefrontProps> = ({
   const [reviews, setReviews] = useState<Review[]>([]);
   const [showQR, setShowQR] = useState(false);
 
+  const [isLoading, setIsLoading] = useState(true);
+  const [orgNotFound, setOrgNotFound] = useState(false);
+
   useEffect(() => {
-    const org = StorageService.getOrganizationBySlug(slug) || StorageService.getAllOrganizations()[0];
-    if (org) {
-      setOrganization(org);
-      setServices(StorageService.getServices(org.id).filter(s => s.isActive));
-      setProfessionals(StorageService.getProfessionals(org.id).filter(p => p.isActive));
-      setReviews(StorageService.getReviews(org.id));
-    }
+    const fetchOrg = async () => {
+      try {
+        let org = await StorageService.fetchOrganizationBySlug(slug);
+        if (!org) {
+          org = StorageService.getOrganizationBySlug(slug) || null;
+        }
+        if (org) {
+          setOrganization(org);
+          setOrgNotFound(false);
+          setServices(StorageService.getServices(org.id).filter(s => s.isActive));
+          setProfessionals(StorageService.getProfessionals(org.id).filter(p => p.isActive));
+          setReviews(StorageService.getReviews(org.id));
+        } else {
+          setOrgNotFound(true);
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchOrg();
   }, [slug]);
 
-  if (!organization) {
+  if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-4">
-        <p className="text-slate-400">Estabelecimento não encontrado.</p>
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4 gap-3">
+        <div className="h-9 w-9 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
+        <p className="text-xs text-slate-400">Carregando vitrine...</p>
+      </div>
+    );
+  }
+
+  if (orgNotFound || !organization) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center">
+        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 space-y-4 shadow-2xl">
+          <h2 className="text-xl font-black text-white">Barbearia Não Encontrada</h2>
+          <p className="text-xs text-slate-400">
+            A vitrine pública <code className="bg-slate-950 px-2 py-0.5 rounded text-amber-400 font-mono">/b/{slug}</code> não existe.
+          </p>
+          <button
+            onClick={onBackToHome}
+            className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 py-3 text-xs font-bold text-slate-950 transition cursor-pointer"
+          >
+            Voltar para a Página Inicial
+          </button>
+        </div>
       </div>
     );
   }

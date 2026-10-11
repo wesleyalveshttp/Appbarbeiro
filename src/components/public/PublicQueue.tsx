@@ -60,13 +60,30 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
 
   // Tolerance countdown for called client
   const [secondsRemaining, setSecondsRemaining] = useState<number | null>(null);
-
   const [showQR, setShowQR] = useState(false);
 
-  const loadData = () => {
-    const org = StorageService.getOrganizationBySlug(slug) || StorageService.getAllOrganizations()[0];
-    if (org) {
+  const [isLoading, setIsLoading] = useState(true);
+  const [orgNotFound, setOrgNotFound] = useState(false);
+
+  const loadData = async () => {
+    try {
+      // 1. Fetch Organization accurately by slug from server or local
+      let org = await StorageService.fetchOrganizationBySlug(slug);
+      if (!org) {
+        org = StorageService.getOrganizationBySlug(slug) || null;
+      }
+
+      if (!org) {
+        setOrgNotFound(true);
+        setIsLoading(false);
+        return;
+      }
+
       setOrganization(org);
+      setOrgNotFound(false);
+
+      // Sync latest queue from server for this organization
+      await StorageService.syncWithServer();
       const q = StorageService.getQueue(org.id);
       const srvs = StorageService.getServices(org.id).filter(s => s.isActive);
       const profs = StorageService.getProfessionals(org.id).filter(p => p.isActive);
@@ -74,6 +91,10 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
       setServices(srvs);
       setProfessionals(profs);
       if (!selectedServiceId && srvs.length > 0) setSelectedServiceId(srvs[0].id);
+    } catch (err) {
+      console.warn('Erro ao carregar dados da fila pública:', err);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -81,9 +102,14 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
     // Check permission state
     setPermissionState(NotificationService.getPermissionStatus());
 
-    // Restore my ticket if active
-    const savedTicket = localStorage.getItem(`barberos_queue_ticket_${slug}`);
-    if (savedTicket) setMyTicketId(savedTicket);
+    // Restore my ticket if active in localStorage or via URL param (?ticket=id)
+    const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+    const urlTicket = urlParams?.get('ticket') || urlParams?.get('token');
+    const savedTicket = urlTicket || localStorage.getItem(`barberos_queue_ticket_${slug}`);
+    if (savedTicket) {
+      setMyTicketId(savedTicket);
+      localStorage.setItem(`barberos_queue_ticket_${slug}`, savedTicket);
+    }
 
     loadData();
     const unsub = StorageService.subscribeToRealtimeEvents(() => {
@@ -256,10 +282,38 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
     loadData();
   };
 
-  if (!organization) {
+  if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-4">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-4 gap-3">
+        <div className="h-9 w-9 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
+        <p className="text-xs text-slate-400 font-medium">Carregando fila virtual...</p>
+      </div>
+    );
+  }
+
+  if (orgNotFound || !organization) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center">
+        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 space-y-4 shadow-2xl">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-400 border border-amber-500/30 mx-auto">
+            <AlertCircle className="h-7 w-7" />
+          </div>
+          <div>
+            <h2 className="text-xl font-black text-white">Barbearia Não Encontrada</h2>
+            <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+              O link <code className="bg-slate-950 px-2 py-0.5 rounded text-amber-400 font-mono">/fila/{slug}</code> não corresponde a nenhum estabelecimento cadastrado.
+            </p>
+            <p className="text-[11px] text-slate-500 mt-1">
+              Verifique se o link ou QR Code foi compartilhado corretamente pelo responsável.
+            </p>
+          </div>
+          <button
+            onClick={onBackToHome}
+            className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 py-3 text-xs font-bold text-slate-950 transition cursor-pointer shadow-lg shadow-amber-500/20"
+          >
+            <span>Voltar para a Página Inicial</span>
+          </button>
+        </div>
       </div>
     );
   }
@@ -553,8 +607,45 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
                 </div>
               </div>
 
-              {/* Action Buttons */}
+              {/* Action Buttons & Individual Tracking Link */}
               <div className="space-y-2 pt-2">
+                {/* Individual Tracking Link Box */}
+                <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-left space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold text-slate-400">Seu Link Individual de Acompanhamento:</span>
+                    <span className="text-[9px] text-amber-400 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded">Exclusivo</span>
+                  </div>
+                  <div className="text-[11px] font-mono text-slate-300 bg-slate-900 p-2 rounded-xl border border-slate-800 truncate">
+                    {`${typeof window !== 'undefined' ? window.location.origin : ''}/fila/${slug}?ticket=${myQueueItem.id}`}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const url = `${window.location.origin}/fila/${slug}?ticket=${myQueueItem.id}`;
+                        navigator.clipboard.writeText(url);
+                        setTestNotificationFeedback('✅ Link individual copiado! Você pode abri-lo em outro aparelho ou navegador.');
+                        setTimeout(() => setTestNotificationFeedback(null), 4000);
+                      }}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition cursor-pointer"
+                    >
+                      <Share2 className="h-3.5 w-3.5 text-amber-400" />
+                      <span>Copiar Link</span>
+                    </button>
+                    <a
+                      href={`https://api.whatsapp.com/send?text=${encodeURIComponent(
+                        `Acompanhe minha posição na fila da ${organization.name}: ${window.location.origin}/fila/${slug}?ticket=${myQueueItem.id}`
+                      )}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white transition cursor-pointer"
+                    >
+                      <Send className="h-3.5 w-3.5" />
+                      <span>WhatsApp</span>
+                    </a>
+                  </div>
+                </div>
+
                 <button
                   onClick={handleTestNotification}
                   className="w-full flex items-center justify-center gap-1.5 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-750 py-2.5 text-xs font-semibold text-slate-300 transition cursor-pointer"
