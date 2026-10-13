@@ -10,7 +10,11 @@ import {
   MapPin,
   Phone,
   CheckCircle2,
-  X
+  X,
+  Eye,
+  EyeOff,
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { EstablishmentType, Organization, WorkingHours } from '../../types';
@@ -49,7 +53,8 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
   const [phone, setPhone] = useState('');
   const [instagram, setInstagram] = useState('');
   const [ownerEmail, setOwnerEmail] = useState('');
-  const [ownerPassword, setOwnerPassword] = useState('123');
+  const [ownerPassword, setOwnerPassword] = useState('');
+  const [showOwnerPassword, setShowOwnerPassword] = useState(false);
 
   // Step 5: Hours
   const [openTime, setOpenTime] = useState('09:00');
@@ -68,95 +73,128 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
   const [servicePrice, setServicePrice] = useState(45);
   const [serviceDuration, setServiceDuration] = useState(30);
 
+  // Submission & Error
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+
   if (!isOpen) return null;
 
-  const handleFinish = () => {
-    const slug = name
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)+/g, '');
+  const handleFinish = async () => {
+    setErrorMsg('');
+    if (!name.trim()) {
+      setStep(1);
+      setErrorMsg('Por favor, informe o nome do seu estabelecimento.');
+      return;
+    }
 
-    const defaultHours: WorkingHours[] = [
-      { dayOfWeek: 0, dayName: 'Domingo', isOpen: false, openTime: '09:00', closeTime: '15:00' },
-      { dayOfWeek: 1, dayName: 'Segunda-feira', isOpen: true, openTime, closeTime, hasLunchBreak, lunchStart, lunchEnd },
-      { dayOfWeek: 2, dayName: 'Terça-feira', isOpen: true, openTime, closeTime, hasLunchBreak, lunchStart, lunchEnd },
-      { dayOfWeek: 3, dayName: 'Quarta-feira', isOpen: true, openTime, closeTime, hasLunchBreak, lunchStart, lunchEnd },
-      { dayOfWeek: 4, dayName: 'Quinta-feira', isOpen: true, openTime, closeTime, hasLunchBreak, lunchStart, lunchEnd },
-      { dayOfWeek: 5, dayName: 'Sexta-feira', isOpen: true, openTime, closeTime, hasLunchBreak, lunchStart, lunchEnd },
-      { dayOfWeek: 6, dayName: 'Sábado', isOpen: true, openTime: '08:30', closeTime: '19:00', hasLunchBreak: false },
-    ];
+    if (!ownerEmail.trim() || !ownerPassword.trim()) {
+      setStep(4);
+      setErrorMsg('Por favor, informe seu e-mail de login e crie sua senha na Etapa 4.');
+      return;
+    }
 
-    const newOrg = StorageService.createOrganization({
-      name,
-      slug: slug || `salao-${Date.now()}`,
-      type,
-      description: `O melhor em ${type.toLowerCase()} e atendimento personalizado.`,
-      phone: phone || whatsapp,
-      whatsapp: whatsapp.replace(/\D/g, ''),
-      instagram,
-      ownerEmail: ownerEmail || `dono@${slug || 'barbearia'}.com.br`,
-      ownerPassword: ownerPassword || '123',
-      ownerName: name,
-      address: {
-        cep,
-        street,
-        number,
-        neighborhood,
-        city,
-        state,
-      },
-      workingHours: defaultHours,
-      settings: {
-        maxLateMinutes: 15,
-        cancellationHoursLimit: 2,
-        queueMode: 'SINGLE',
-        autoNotifyAheadCount: 3,
-        callToleranceMinutes: 3,
-        allowToleranceRequest: true,
-        primaryColor: '#f59e0b',
-        secondaryColor: '#0f172a',
-        welcomeMessage: `Bem-vindo à ${name}! Entre na nossa fila virtual pelo celular ou agende online.`,
-        isOpenNow: true,
-        whatsappApiConfigured: false,
-      },
-      planId: 'premium',
-    });
+    if (ownerPassword.trim().length < 3) {
+      setStep(4);
+      setErrorMsg('A senha de acesso deve ter pelo menos 3 caracteres.');
+      return;
+    }
 
-    // Create Initial Professional
-    const newProf = StorageService.createProfessional({
-      organizationId: newOrg.id,
-      name: profName || 'Profissional Principal',
-      phone: profPhone || whatsapp,
-      whatsapp: (profPhone || whatsapp).replace(/\D/g, ''),
-      email: `${(profName || 'contato').toLowerCase().replace(/\s+/g, '')}@salao.com`,
-      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-      specialties: ['Corte', 'Atendimento'],
-      serviceIds: [],
-      commissionPercent: Number(profCommission) || 40,
-      isActive: true,
-      isAvailableToday: true,
-      workingDays: [1, 2, 3, 4, 5, 6],
-    });
+    setIsSubmitting(true);
+    try {
+      const slug = name
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)+/g, '');
 
-    // Create Initial Service
-    const newSrv = StorageService.createService({
-      organizationId: newOrg.id,
-      name: serviceName || 'Corte Padrão',
-      description: 'Atendimento completo com lavagem e finalização.',
-      price: Number(servicePrice) || 45,
-      durationMinutes: Number(serviceDuration) || 30,
-      category: 'Cabelo',
-      professionalIds: [newProf.id],
-      isActive: true,
-    });
+      const defaultHours: WorkingHours[] = [
+        { dayOfWeek: 0, dayName: 'Domingo', isOpen: false, openTime: '09:00', closeTime: '15:00' },
+        { dayOfWeek: 1, dayName: 'Segunda-feira', isOpen: true, openTime, closeTime, hasLunchBreak, lunchStart, lunchEnd },
+        { dayOfWeek: 2, dayName: 'Terça-feira', isOpen: true, openTime, closeTime, hasLunchBreak, lunchStart, lunchEnd },
+        { dayOfWeek: 3, dayName: 'Quarta-feira', isOpen: true, openTime, closeTime, hasLunchBreak, lunchStart, lunchEnd },
+        { dayOfWeek: 4, dayName: 'Quinta-feira', isOpen: true, openTime, closeTime, hasLunchBreak, lunchStart, lunchEnd },
+        { dayOfWeek: 5, dayName: 'Sexta-feira', isOpen: true, openTime, closeTime, hasLunchBreak, lunchStart, lunchEnd },
+        { dayOfWeek: 6, dayName: 'Sábado', isOpen: true, openTime: '08:30', closeTime: '19:00', hasLunchBreak: false },
+      ];
 
-    StorageService.updateProfessional(newProf.id, {
-      serviceIds: [newSrv.id],
-    });
+      const orgPayload = {
+        name: name.trim(),
+        slug: slug || `salao-${Date.now()}`,
+        type,
+        description: `O melhor em ${type.toLowerCase()} e atendimento personalizado.`,
+        phone: phone || whatsapp,
+        whatsapp: whatsapp.replace(/\D/g, ''),
+        instagram,
+        ownerEmail: ownerEmail.trim().toLowerCase(),
+        ownerPassword: ownerPassword.trim(),
+        ownerName: name.trim(),
+        address: {
+          cep,
+          street,
+          number,
+          neighborhood,
+          city,
+          state,
+        },
+        workingHours: defaultHours,
+        settings: {
+          maxLateMinutes: 15,
+          cancellationHoursLimit: 2,
+          queueMode: 'SINGLE' as const,
+          autoNotifyAheadCount: 3,
+          callToleranceMinutes: 3,
+          allowToleranceRequest: true,
+          primaryColor: '#f59e0b',
+          secondaryColor: '#0f172a',
+          welcomeMessage: `Bem-vindo à ${name}! Entre na nossa fila virtual pelo celular ou agende online.`,
+          isOpenNow: true,
+          whatsappApiConfigured: false,
+        },
+        planId: 'premium',
+      };
 
-    onSuccess(newOrg);
+      const profPayload = {
+        name: profName || 'Profissional Principal',
+        phone: profPhone || whatsapp,
+        whatsapp: (profPhone || whatsapp).replace(/\D/g, ''),
+        email: `${(profName || 'contato').toLowerCase().replace(/\s+/g, '')}@salao.com`,
+        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+        specialties: ['Corte', 'Atendimento'],
+        serviceIds: [],
+        commissionPercent: Number(profCommission) || 40,
+        isActive: true,
+        isAvailableToday: true,
+        workingDays: [1, 2, 3, 4, 5, 6],
+      };
+
+      const srvPayload = {
+        name: serviceName || 'Corte Padrão',
+        description: 'Atendimento completo com lavagem e finalização.',
+        price: Number(servicePrice) || 45,
+        durationMinutes: Number(serviceDuration) || 30,
+        category: 'Cabelo',
+        isActive: true,
+      };
+
+      const result = await StorageService.registerOrganizationOnServer({
+        organization: orgPayload,
+        initialProfessional: profPayload,
+        initialService: srvPayload,
+      });
+
+      setIsSubmitting(false);
+
+      if (!result.success || !result.organization) {
+        setErrorMsg(result.error || 'Erro ao registrar estabelecimento no servidor.');
+        return;
+      }
+
+      onSuccess(result.organization);
+    } catch {
+      setIsSubmitting(false);
+      setErrorMsg('Erro de conexão ao salvar a conta. Tente novamente.');
+    }
   };
 
   return (
@@ -164,7 +202,7 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
       <div className="w-full max-w-xl rounded-2xl bg-slate-900 border border-slate-800 p-6 text-slate-100 shadow-2xl relative">
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
+          className="absolute right-4 top-4 p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
         >
           <X className="h-5 w-5" />
         </button>
@@ -219,6 +257,13 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
             />
           </div>
         </div>
+
+        {errorMsg && (
+          <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2 animate-shake">
+            <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
 
         {/* STEP 1: NOME */}
         {step === 1 && (
@@ -367,15 +412,24 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-amber-300">Senha de Acesso *</label>
-                <input
-                  type="text"
-                  required
-                  value={ownerPassword}
-                  onChange={(e) => setOwnerPassword(e.target.value)}
-                  placeholder="Ex: 123456"
-                  className="w-full rounded-lg bg-slate-950 border border-slate-800 p-2.5 text-xs text-white font-mono"
-                />
+                <label className="text-xs font-semibold text-amber-300">Senha de Acesso do Dono *</label>
+                <div className="relative">
+                  <input
+                    type={showOwnerPassword ? 'text' : 'password'}
+                    required
+                    value={ownerPassword}
+                    onChange={(e) => setOwnerPassword(e.target.value)}
+                    placeholder="Crie sua senha de acesso"
+                    className="w-full rounded-lg bg-slate-950 border border-slate-800 p-2.5 pr-9 text-xs text-white font-mono focus:outline-hidden focus:border-amber-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowOwnerPassword(!showOwnerPassword)}
+                    className="absolute right-2.5 top-2.5 text-slate-400 hover:text-white p-0.5 cursor-pointer"
+                  >
+                    {showOwnerPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -544,9 +598,15 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
           {step < 7 ? (
             <button
               type="button"
-              disabled={step === 1 && !name.trim()}
-              onClick={() => setStep(step + 1)}
-              className="flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 px-5 py-2.5 text-xs font-bold text-slate-950 shadow-md transition disabled:opacity-50"
+              disabled={
+                (step === 1 && !name.trim()) ||
+                (step === 4 && (!ownerEmail.trim() || !ownerPassword.trim()))
+              }
+              onClick={() => {
+                setErrorMsg('');
+                setStep(step + 1);
+              }}
+              className="flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 px-5 py-2.5 text-xs font-bold text-slate-950 shadow-md transition disabled:opacity-50 cursor-pointer"
             >
               <span>Avançar</span>
               <ChevronRight className="h-4 w-4" />
@@ -554,11 +614,21 @@ export const OnboardingWizard: React.FC<OnboardingWizardProps> = ({
           ) : (
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={handleFinish}
-              className="flex items-center gap-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 px-6 py-2.5 text-xs font-black text-slate-950 shadow-md transition"
+              className="flex items-center gap-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 px-6 py-2.5 text-xs font-black text-slate-950 shadow-md transition disabled:opacity-50 cursor-pointer"
             >
-              <CheckCircle2 className="h-4 w-4" />
-              <span>Concluir e Abrir Estabelecimento!</span>
+              {isSubmitting ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  <span>Salvando no Servidor...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>Concluir e Abrir Estabelecimento!</span>
+                </>
+              )}
             </button>
           )}
         </div>

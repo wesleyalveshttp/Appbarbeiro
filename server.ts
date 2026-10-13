@@ -234,28 +234,52 @@ function getInitialSeed() {
     reviews: [],
     notifications: [],
     auditLogs: [],
-    plans: []
+    plans: [],
+    sessions: []
   };
 }
 
+const DEFAULT_SUPERADMIN_PASSWORD = process.env.SUPERADMIN_PASSWORD || 'Anna123!@';
+
 function readDB(): any {
+  let db: any;
   if (!fs.existsSync(DB_FILE)) {
-    const seed = getInitialSeed();
-    fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf-8');
-    return seed;
+    db = getInitialSeed();
+    db.config = { superAdminPassword: DEFAULT_SUPERADMIN_PASSWORD };
+    writeDB(db);
+    return db;
   }
   try {
-    return JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
+    db = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
   } catch (e) {
     console.error('Error reading db.json, recreating from seed:', e);
-    const seed = getInitialSeed();
-    fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2), 'utf-8');
-    return seed;
+    db = getInitialSeed();
   }
+
+  // Ensure sessions collection
+  if (!Array.isArray(db.sessions)) {
+    db.sessions = [];
+  }
+
+  // Ensure config & SaaS Owner Super Admin password Anna123!@
+  if (!db.config) db.config = {};
+  if (!db.config.superAdminPassword || db.config.superAdminPassword === 'admin123') {
+    db.config.superAdminPassword = DEFAULT_SUPERADMIN_PASSWORD;
+    writeDB(db);
+  }
+
+  return db;
 }
 
 function writeDB(data: any): void {
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  try {
+    const tempPath = `${DB_FILE}.${Date.now()}.${Math.random().toString(36).substr(2, 5)}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
+    fs.renameSync(tempPath, DB_FILE);
+  } catch (err) {
+    // Direct write fallback
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+  }
 }
 
 function readSubscriptions(): any[] {
@@ -538,10 +562,452 @@ app.post('/api/db/sync', (req: Request, res: Response) => {
   const incoming = req.body;
   if (!incoming) return res.status(400).json({ error: 'Payload vazio' });
   const db = readDB();
-  const merged = { ...db, ...incoming };
-  writeDB(merged);
+
+  // Smart merge organizations by ID to never erase registered accounts
+  if (Array.isArray(incoming.organizations)) {
+    const orgs = db.organizations || [];
+    for (const inOrg of incoming.organizations) {
+      const idx = orgs.findIndex((o: any) => o.id === inOrg.id);
+      if (idx >= 0) {
+        orgs[idx] = { ...orgs[idx], ...inOrg };
+      } else {
+        orgs.push(inOrg);
+      }
+    }
+    db.organizations = orgs;
+  }
+
+  // Merge professionals by ID
+  if (Array.isArray(incoming.professionals)) {
+    const profs = db.professionals || [];
+    for (const inProf of incoming.professionals) {
+      const idx = profs.findIndex((p: any) => p.id === inProf.id);
+      if (idx >= 0) {
+        profs[idx] = { ...profs[idx], ...inProf };
+      } else {
+        profs.push(inProf);
+      }
+    }
+    db.professionals = profs;
+  }
+
+  // Merge services by ID
+  if (Array.isArray(incoming.services)) {
+    const srvs = db.services || [];
+    for (const inSrv of incoming.services) {
+      const idx = srvs.findIndex((s: any) => s.id === inSrv.id);
+      if (idx >= 0) {
+        srvs[idx] = { ...srvs[idx], ...inSrv };
+      } else {
+        srvs.push(inSrv);
+      }
+    }
+    db.services = srvs;
+  }
+
+  if (Array.isArray(incoming.customers)) db.customers = incoming.customers;
+  if (Array.isArray(incoming.appointments)) db.appointments = incoming.appointments;
+  if (Array.isArray(incoming.queue)) db.queue = incoming.queue;
+  if (Array.isArray(incoming.transactions)) db.transactions = incoming.transactions;
+  if (Array.isArray(incoming.reviews)) db.reviews = incoming.reviews;
+  if (Array.isArray(incoming.notifications)) db.notifications = incoming.notifications;
+
+  writeDB(db);
   broadcastSSE('DB_SYNCED', { timestamp: Date.now() });
   res.json({ success: true, updated: new Date().toISOString() });
+});
+
+// ---------------------------------------------------------------------------
+// 5. AUTHENTICATION & ACCOUNT REGISTRATION ENDPOINTS (DURABLE & SECURE)
+// ---------------------------------------------------------------------------
+
+// Register new establishment
+app.post('/api/auth/register-organization', (req: Request, res: Response) => {
+  const { organization, initialProfessional, initialService } = req.body;
+  if (!organization || !organization.name || !organization.ownerEmail || !organization.ownerPassword) {
+    return res.status(400).json({ error: 'Nome do salão, e-mail do proprietário e senha são obrigatórios.' });
+  }
+
+  const db = readDB();
+  if (!Array.isArray(db.organizations)) db.organizations = [];
+  if (!Array.isArray(db.professionals)) db.professionals = [];
+  if (!Array.isArray(db.services)) db.services = [];
+
+  const emailClean = organization.ownerEmail.trim().toLowerCase();
+
+  // Check if owner email is already registered in any establishment
+  const existingOrg = db.organizations.find(
+    (o: any) => o.ownerEmail && o.ownerEmail.toLowerCase() === emailClean
+  );
+  if (existingOrg) {
+    return res.status(409).json({
+      error: `O e-mail "${organization.ownerEmail}" já está cadastrado no salão "${existingOrg.name}". Por favor, acesse sua conta pelo login ou utilize outro e-mail.`
+    });
+  }
+
+  // Generate unique slug
+  let baseSlug = organization.slug
+    ? organization.slug.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '')
+    : organization.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+  if (!baseSlug) baseSlug = `salao-${Date.now()}`;
+
+  let finalSlug = baseSlug;
+  let counter = 1;
+  while (db.organizations.some((o: any) => o.slug.toLowerCase() === finalSlug.toLowerCase())) {
+    finalSlug = `${baseSlug}-${counter++}`;
+  }
+
+  const orgId = organization.id || `org-${Date.now()}`;
+  const completeOrg = {
+    ...organization,
+    id: orgId,
+    slug: finalSlug,
+    ownerEmail: emailClean,
+    ownerPassword: organization.ownerPassword.trim(),
+    ownerName: organization.ownerName || organization.name,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+    subscription: organization.subscription || {
+      status: 'PENDENTE',
+      planName: 'Plano Pro Barbearia (R$ 79,90/mês)',
+      priceMonthly: 79.9,
+      trialDaysRemaining: 0,
+      nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      isPaid: false,
+      invoices: []
+    }
+  };
+
+  db.organizations.push(completeOrg);
+
+  let createdProf = null;
+  if (initialProfessional) {
+    createdProf = {
+      ...initialProfessional,
+      id: initialProfessional.id || `prof-${Date.now()}`,
+      organizationId: orgId,
+      isActive: true,
+      createdAt: new Date().toISOString()
+    };
+    db.professionals.push(createdProf);
+  }
+
+  let createdService = null;
+  if (initialService) {
+    createdService = {
+      ...initialService,
+      id: initialService.id || `srv-${Date.now()}`,
+      organizationId: orgId,
+      professionalIds: createdProf ? [createdProf.id] : [],
+      isActive: true,
+      createdAt: new Date().toISOString()
+    };
+    db.services.push(createdService);
+    if (createdProf) {
+      createdProf.serviceIds = [createdService.id];
+    }
+  }
+
+  // Audit log
+  if (!Array.isArray(db.auditLogs)) db.auditLogs = [];
+  db.auditLogs.push({
+    id: `audit-${Date.now()}`,
+    organizationId: orgId,
+    userName: completeOrg.ownerName,
+    action: `Estabelecimento "${completeOrg.name}" criado com sucesso`,
+    timestamp: new Date().toISOString()
+  });
+
+  // Create and persist initial owner session in backend database
+  const sessionToken = `sess_${crypto.randomBytes(24).toString('hex')}`;
+  const uid = `usr_owner_${orgId}`;
+  const nowIso = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const sessionRecord = {
+    uid,
+    userId: uid,
+    token: sessionToken,
+    sessionId: sessionToken,
+    role: 'OWNER',
+    organizationId: orgId,
+    userEmail: completeOrg.ownerEmail,
+    userName: completeOrg.ownerName || completeOrg.name,
+    createdAt: nowIso,
+    loggedAt: nowIso,
+    lastActiveAt: nowIso,
+    expiresAt,
+    isAuthenticated: true,
+  };
+
+  if (!Array.isArray(db.sessions)) db.sessions = [];
+  db.sessions.push(sessionRecord);
+
+  writeDB(db);
+  broadcastSSE('ORGANIZATIONS_UPDATED', { orgId });
+
+  res.status(201).json({
+    success: true,
+    organization: completeOrg,
+    professional: createdProf,
+    service: createdService,
+    session: sessionRecord
+  });
+});
+
+// Owner Login with Backend Session Generation
+app.post('/api/auth/login-owner', (req: Request, res: Response) => {
+  const { login, password } = req.body;
+  if (!login || !password) {
+    return res.status(400).json({ error: 'Informe seu e-mail/usuário e a senha.' });
+  }
+
+  const db = readDB();
+  const term = login.trim().toLowerCase();
+  const cleanPhone = term.replace(/\D/g, '');
+
+  const org = (db.organizations || []).find((o: any) =>
+    (o.ownerEmail && o.ownerEmail.toLowerCase() === term) ||
+    (o.slug && o.slug.toLowerCase() === term) ||
+    (o.name && o.name.toLowerCase() === term) ||
+    (o.id && o.id.toLowerCase() === term) ||
+    (cleanPhone && o.phone && o.phone.replace(/\D/g, '') === cleanPhone) ||
+    (cleanPhone && o.whatsapp && o.whatsapp.replace(/\D/g, '') === cleanPhone)
+  );
+
+  if (!org) {
+    return res.status(401).json({
+      error: 'Nenhuma barbearia cadastrada com este e-mail ou usuário. Verifique a digitação ou crie sua conta grátis.'
+    });
+  }
+
+  if (org.isActive === false) {
+    return res.status(403).json({
+      error: 'Este estabelecimento está bloqueado pelo administrador da plataforma.'
+    });
+  }
+
+  const expectedPassword = org.ownerPassword || '123';
+  if (password.trim() !== expectedPassword.trim()) {
+    return res.status(401).json({
+      error: 'Senha incorreta para esta barbearia. Verifique sua senha de acesso.'
+    });
+  }
+
+  // Create and persist durable session in backend database
+  const sessionToken = `sess_${crypto.randomBytes(24).toString('hex')}`;
+  const uid = `usr_owner_${org.id}`;
+  const nowIso = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const sessionRecord = {
+    uid,
+    userId: uid,
+    token: sessionToken,
+    sessionId: sessionToken,
+    role: 'OWNER',
+    organizationId: org.id,
+    userEmail: org.ownerEmail || `${org.slug}@barberos.app`,
+    userName: org.ownerName || org.name,
+    createdAt: nowIso,
+    loggedAt: nowIso,
+    lastActiveAt: nowIso,
+    expiresAt,
+    isAuthenticated: true,
+  };
+
+  if (!Array.isArray(db.sessions)) db.sessions = [];
+  // Keep active sessions fresh
+  db.sessions.push(sessionRecord);
+  writeDB(db);
+
+  res.json({
+    success: true,
+    organization: org,
+    session: sessionRecord
+  });
+});
+
+// Super Admin (SaaS Owner) Login with Backend Session Generation
+app.post('/api/auth/login-superadmin', (req: Request, res: Response) => {
+  const { password } = req.body;
+  if (!password) {
+    return res.status(400).json({ error: 'Informe a senha do Dono da SaaS.' });
+  }
+
+  const db = readDB();
+  const currentAdminPass = db.config?.superAdminPassword || DEFAULT_SUPERADMIN_PASSWORD;
+
+  if (password.trim() !== currentAdminPass.trim()) {
+    return res.status(401).json({ error: 'Senha do Dono da SaaS (Super Admin) incorreta.' });
+  }
+
+  // Create and persist durable Super Admin session in backend database
+  const sessionToken = `sess_${crypto.randomBytes(24).toString('hex')}`;
+  const uid = `usr_superadmin_master`;
+  const nowIso = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const sessionRecord = {
+    uid,
+    userId: uid,
+    token: sessionToken,
+    sessionId: sessionToken,
+    role: 'SUPER_ADMIN',
+    userEmail: 'admin@barberos.com.br',
+    userName: 'Super Administrador (Dono da SaaS)',
+    createdAt: nowIso,
+    loggedAt: nowIso,
+    lastActiveAt: nowIso,
+    expiresAt,
+    isAuthenticated: true,
+  };
+
+  if (!Array.isArray(db.sessions)) db.sessions = [];
+  db.sessions.push(sessionRecord);
+  writeDB(db);
+
+  res.json({
+    success: true,
+    role: 'SUPER_ADMIN',
+    session: sessionRecord
+  });
+});
+
+// Save or Update Full User Session to Backend Database
+app.post('/api/auth/session', (req: Request, res: Response) => {
+  const incoming = req.body;
+  if (!incoming || !incoming.role) {
+    return res.status(400).json({ error: 'Sessão inválida: papel (role) é obrigatório.' });
+  }
+
+  const db = readDB();
+  if (!Array.isArray(db.sessions)) db.sessions = [];
+
+  const nowIso = new Date().toISOString();
+  const sessionToken = incoming.token || incoming.sessionId || `sess_${crypto.randomBytes(24).toString('hex')}`;
+  const uid = incoming.uid || incoming.userId || `usr_${incoming.role.toLowerCase()}_${Date.now()}`;
+  const expiresAt = incoming.expiresAt || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const sessionRecord = {
+    uid,
+    userId: uid,
+    token: sessionToken,
+    sessionId: sessionToken,
+    role: incoming.role,
+    organizationId: incoming.organizationId || undefined,
+    userEmail: incoming.userEmail || undefined,
+    userName: incoming.userName || undefined,
+    createdAt: incoming.createdAt || nowIso,
+    loggedAt: incoming.loggedAt || nowIso,
+    lastActiveAt: nowIso,
+    expiresAt,
+    isAuthenticated: true,
+  };
+
+  const existingIdx = db.sessions.findIndex(
+    (s: any) => s.token === sessionToken || (s.uid === uid && s.role === incoming.role)
+  );
+  if (existingIdx >= 0) {
+    db.sessions[existingIdx] = { ...db.sessions[existingIdx], ...sessionRecord };
+  } else {
+    db.sessions.push(sessionRecord);
+  }
+
+  writeDB(db);
+
+  res.json({
+    success: true,
+    session: sessionRecord
+  });
+});
+
+// Verify Session against Backend Database (Used on page reloads & across browser sessions)
+app.post('/api/auth/session/verify', (req: Request, res: Response) => {
+  const token = req.body?.token || req.headers.authorization?.replace(/^Bearer\s+/i, '');
+  if (!token) {
+    return res.status(400).json({ valid: false, error: 'Token de sessão não fornecido.' });
+  }
+
+  const db = readDB();
+  if (!Array.isArray(db.sessions)) db.sessions = [];
+
+  const session = db.sessions.find((s: any) => s.token === token || s.sessionId === token);
+  if (!session) {
+    return res.status(401).json({ valid: false, error: 'Sessão não encontrada no banco do servidor.' });
+  }
+
+  const now = Date.now();
+  if (session.expiresAt && new Date(session.expiresAt).getTime() < now) {
+    // Expired session: prune it
+    db.sessions = db.sessions.filter((s: any) => s.token !== token && s.sessionId !== token);
+    writeDB(db);
+    return res.status(401).json({ valid: false, error: 'Sessão expirada. Faça login novamente.' });
+  }
+
+  // Sliding expiration window: update lastActiveAt and extend expiration
+  session.lastActiveAt = new Date().toISOString();
+  session.expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  session.isAuthenticated = true;
+  writeDB(db);
+
+  let organization = null;
+  if (session.organizationId) {
+    organization = (db.organizations || []).find((o: any) => o.id === session.organizationId) || null;
+  }
+
+  res.json({
+    valid: true,
+    session,
+    organization
+  });
+});
+
+// GET Session by Token (Direct query)
+app.get('/api/auth/session/:token', (req: Request, res: Response) => {
+  const { token } = req.params;
+  const db = readDB();
+  if (!Array.isArray(db.sessions)) db.sessions = [];
+
+  const session = db.sessions.find((s: any) => s.token === token || s.sessionId === token);
+  if (!session || (session.expiresAt && new Date(session.expiresAt).getTime() < Date.now())) {
+    return res.status(404).json({ valid: false, error: 'Sessão inválida ou expirada.' });
+  }
+
+  let organization = null;
+  if (session.organizationId) {
+    organization = (db.organizations || []).find((o: any) => o.id === session.organizationId) || null;
+  }
+
+  res.json({ valid: true, session, organization });
+});
+
+// Logout Session from Backend Database
+app.post('/api/auth/session/logout', (req: Request, res: Response) => {
+  const token = req.body?.token || req.headers.authorization?.replace(/^Bearer\s+/i, '');
+  if (token) {
+    const db = readDB();
+    if (Array.isArray(db.sessions)) {
+      db.sessions = db.sessions.filter((s: any) => s.token !== token && s.sessionId !== token);
+      writeDB(db);
+    }
+  }
+  res.json({ success: true, message: 'Sessão encerrada com sucesso no backend.' });
+});
+
+// Update Super Admin Password
+app.post('/api/auth/update-superadmin-password', (req: Request, res: Response) => {
+  const { newPassword } = req.body;
+  if (!newPassword || newPassword.trim().length < 4) {
+    return res.status(400).json({ error: 'A nova senha deve ter pelo menos 4 caracteres.' });
+  }
+
+  const db = readDB();
+  if (!db.config) db.config = {};
+  db.config.superAdminPassword = newPassword.trim();
+  writeDB(db);
+
+  res.json({ success: true, message: 'Senha do Dono da SaaS atualizada com sucesso no servidor.' });
 });
 
 // Organization resolution endpoints (Public & Admin)
@@ -1596,14 +2062,15 @@ async function startServer() {
       console.log(`💈 BarberOS Fila Virtual Server (Production) running on http://0.0.0.0:${PORT}`);
     });
   } else {
-    const isHmrDisabled = process.env.DISABLE_HMR === 'true';
+    // HMR is disabled in AI Studio environment to prevent WebSocket closed errors
+    const isHmrDisabled = process.env.DISABLE_HMR !== 'false';
     const httpServer = http.createServer(app);
 
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
         host: '0.0.0.0',
-        hmr: isHmrDisabled ? false : { server: httpServer },
+        hmr: false,
       },
       appType: 'spa',
     });

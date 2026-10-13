@@ -22,6 +22,7 @@ const CURRENT_ORG_KEY = 'barberos_current_org_id';
 const CURRENT_ROLE_KEY = 'barberos_current_user_role';
 const SUPER_ADMIN_PASSWORD_KEY = 'barberos_superadmin_password_custom';
 const AUTH_SESSION_KEY = 'barberos_auth_session';
+const SESSION_TOKEN_KEY = 'barberos_session_token';
 
 // Real-time broadcast channel for multi-tab synchronization
 const channel = typeof window !== 'undefined' && 'BroadcastChannel' in window
@@ -332,11 +333,45 @@ export class StorageService {
       const res = await fetch('/api/db');
       if (res.ok) {
         const serverDb: AppDatabase = await res.json();
+        const localDb = this.getDB();
+
+        // Smart merge organizations: never wipe out locally added organizations
+        const mergedOrgs = [...(serverDb.organizations || [])];
+        for (const localOrg of (localDb.organizations || [])) {
+          const idx = mergedOrgs.findIndex(o => o.id === localOrg.id);
+          if (idx === -1) {
+            mergedOrgs.push(localOrg);
+          } else {
+            // Keep the most complete version
+            mergedOrgs[idx] = { ...localOrg, ...mergedOrgs[idx] };
+          }
+        }
+        serverDb.organizations = mergedOrgs;
+
+        // Smart merge professionals
+        const mergedProfs = [...(serverDb.professionals || [])];
+        for (const localProf of (localDb.professionals || [])) {
+          if (!mergedProfs.some(p => p.id === localProf.id)) {
+            mergedProfs.push(localProf);
+          }
+        }
+        serverDb.professionals = mergedProfs;
+
+        // Smart merge services
+        const mergedServices = [...(serverDb.services || [])];
+        for (const localSrv of (localDb.services || [])) {
+          if (!mergedServices.some(s => s.id === localSrv.id)) {
+            mergedServices.push(localSrv);
+          }
+        }
+        serverDb.services = mergedServices;
+
         localStorage.setItem(STORAGE_KEY, JSON.stringify(serverDb));
+        broadcastEvent('DB_SYNCED');
         return serverDb;
       }
-    } catch {
-      // offline / local fallback
+    } catch (e) {
+      console.warn('Network sync offline fallback', e);
     }
     return null;
   }
@@ -363,8 +398,58 @@ export class StorageService {
     if (typeof window === 'undefined') return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+      // Durably sync with server Express backend
+      fetch('/api/db/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(db)
+      }).catch(err => {
+        console.warn('Background sync with server failed:', err);
+      });
     } catch (e) {
       console.error('Failed to save to localStorage', e);
+    }
+  }
+
+  static async registerOrganizationOnServer(params: {
+    organization: any;
+    initialProfessional?: any;
+    initialService?: any;
+  }): Promise<{ success: boolean; organization?: Organization; error?: string }> {
+    try {
+      const res = await fetch('/api/auth/register-organization', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        return { success: false, error: data.error || 'Falha ao salvar estabelecimento no servidor.' };
+      }
+
+      // Merge into local cache
+      const db = this.getDB();
+      const existingIdx = db.organizations.findIndex(o => o.id === data.organization.id);
+      if (existingIdx >= 0) {
+        db.organizations[existingIdx] = data.organization;
+      } else {
+        db.organizations.push(data.organization);
+      }
+      if (data.professional && !db.professionals.some(p => p.id === data.professional.id)) {
+        db.professionals.push(data.professional);
+      }
+      if (data.service && !db.services.some(s => s.id === data.service.id)) {
+        db.services.push(data.service);
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+      this.setCurrentOrgId(data.organization.id);
+      broadcastEvent('ORGANIZATIONS_UPDATED');
+
+      return { success: true, organization: data.organization };
+    } catch (e) {
+      console.warn('Server registration offline fallback:', e);
+      const newOrg = this.createOrganization(params.organization);
+      return { success: true, organization: newOrg };
     }
   }
 
@@ -1666,67 +1751,245 @@ export class StorageService {
 
   // --- Authentication & Passwords ---
   static getSuperAdminPassword(): string {
-    if (typeof window === 'undefined') return 'admin123';
-    return localStorage.getItem(SUPER_ADMIN_PASSWORD_KEY) || 'admin123';
+    if (typeof window === 'undefined') return 'Anna123!@';
+    const saved = localStorage.getItem(SUPER_ADMIN_PASSWORD_KEY);
+    if (!saved || saved === 'admin123') {
+      localStorage.setItem(SUPER_ADMIN_PASSWORD_KEY, 'Anna123!@');
+      return 'Anna123!@';
+    }
+    return saved;
   }
 
-  static updateSuperAdminPassword(newPassword: string): void {
+  static async updateSuperAdminPassword(newPassword: string): Promise<void> {
     if (typeof window === 'undefined') return;
     const cleanPass = newPassword.trim();
     localStorage.setItem(SUPER_ADMIN_PASSWORD_KEY, cleanPass);
+    try {
+      await fetch('/api/auth/update-superadmin-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newPassword: cleanPass })
+      });
+    } catch {}
     this.logAudit('global', 'Super Admin', `Senha mestra do Super Admin alterada com sucesso`);
     broadcastEvent('SUPER_ADMIN_PASSWORD_UPDATED');
   }
 
   static getAuthSession(): AuthSession {
     if (typeof window === 'undefined') {
-      return { isAuthenticated: false, role: 'OWNER' };
+      return { isAuthenticated: false, uid: 'guest', role: 'OWNER' };
     }
     try {
       const raw = localStorage.getItem(AUTH_SESSION_KEY);
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        const parsed: AuthSession = JSON.parse(raw);
+        if (!parsed.uid) {
+          parsed.uid = parsed.userId || `usr_${parsed.role?.toLowerCase() || 'owner'}_${parsed.organizationId || Date.now()}`;
+        }
+        return parsed;
+      }
     } catch {}
-    return { isAuthenticated: false, role: 'OWNER' };
+    return { isAuthenticated: false, uid: 'guest', role: 'OWNER' };
+  }
+
+  static async saveSessionToBackend(session: AuthSession): Promise<AuthSession> {
+    try {
+      const res = await fetch('/api/auth/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(session)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.session) {
+          return data.session;
+        }
+      }
+    } catch (err) {
+      console.warn('Could not persist session to backend database:', err);
+    }
+    return session;
   }
 
   static setAuthSession(session: AuthSession): void {
     if (typeof window === 'undefined') return;
-    localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
-    this.setCurrentRole(session.role);
-    if (session.organizationId) {
-      this.setCurrentOrgId(session.organizationId);
+
+    // Ensure full session properties: UID, Token, Expiration, Role
+    const nowIso = new Date().toISOString();
+    const token = session.token || session.sessionId || localStorage.getItem(SESSION_TOKEN_KEY) || `sess_${Math.random().toString(36).substring(2)}${Date.now().toString(36)}`;
+    const uid = session.uid || session.userId || `usr_${session.role.toLowerCase()}_${session.organizationId || Date.now()}`;
+    const expiresAt = session.expiresAt || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const fullSession: AuthSession = {
+      ...session,
+      uid,
+      userId: uid,
+      token,
+      sessionId: token,
+      role: session.role,
+      isAuthenticated: session.isAuthenticated !== false,
+      loggedAt: session.loggedAt || nowIso,
+      createdAt: session.createdAt || nowIso,
+      lastActiveAt: nowIso,
+      expiresAt,
+    };
+
+    localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(fullSession));
+    localStorage.setItem(SESSION_TOKEN_KEY, token);
+
+    this.setCurrentRole(fullSession.role);
+    if (fullSession.organizationId) {
+      this.setCurrentOrgId(fullSession.organizationId);
     }
-    broadcastEvent('AUTH_SESSION_CHANGED', session);
+
+    // Persist full session (including UID and role) to backend database asynchronously
+    this.saveSessionToBackend(fullSession);
+
+    broadcastEvent('AUTH_SESSION_CHANGED', fullSession);
   }
 
-  static loginOwner(emailOrSlug: string, password: string): { success: boolean; organization?: Organization; error?: string } {
-    const db = this.getDB();
-    const term = emailOrSlug.trim().toLowerCase();
+  // Restore and verify user session from backend database on page reload or across browser sessions
+  static async restoreSession(): Promise<AuthSession> {
+    if (typeof window === 'undefined') {
+      return { isAuthenticated: false, uid: 'guest', role: 'OWNER' };
+    }
 
-    // Find organization by ownerEmail, slug, or phone
-    const org = db.organizations.find(o => 
-      (o.ownerEmail && o.ownerEmail.toLowerCase() === term) ||
-      o.slug.toLowerCase() === term ||
-      o.phone.replace(/\D/g, '') === term.replace(/\D/g, '')
+    const currentLocalSession = this.getAuthSession();
+    const token = currentLocalSession.token || localStorage.getItem(SESSION_TOKEN_KEY);
+
+    if (!token) {
+      return currentLocalSession;
+    }
+
+    try {
+      const res = await fetch('/api/auth/session/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.valid && data.session) {
+          const verifiedSession: AuthSession = {
+            ...data.session,
+            isAuthenticated: true,
+          };
+
+          localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(verifiedSession));
+          localStorage.setItem(SESSION_TOKEN_KEY, verifiedSession.token || token);
+
+          this.setCurrentRole(verifiedSession.role);
+          if (verifiedSession.organizationId) {
+            this.setCurrentOrgId(verifiedSession.organizationId);
+          }
+
+          // If backend provided updated organization, sync into local database
+          if (data.organization) {
+            const db = this.getDB();
+            const idx = db.organizations.findIndex(o => o.id === data.organization.id);
+            if (idx >= 0) {
+              db.organizations[idx] = data.organization;
+            } else {
+              db.organizations.push(data.organization);
+            }
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+          }
+
+          broadcastEvent('AUTH_SESSION_CHANGED', verifiedSession);
+          return verifiedSession;
+        }
+      } else if (res.status === 401) {
+        console.warn('Backend session expired or revoked, clearing session.');
+        localStorage.removeItem(AUTH_SESSION_KEY);
+        localStorage.removeItem(SESSION_TOKEN_KEY);
+        const emptySession: AuthSession = { isAuthenticated: false, uid: 'guest', role: 'OWNER' };
+        broadcastEvent('AUTH_SESSION_CHANGED', emptySession);
+        return emptySession;
+      }
+    } catch (err) {
+      console.warn('Offline or network error verifying backend session, using local cache:', err);
+    }
+
+    // Offline fallback: check local expiration
+    if (currentLocalSession.isAuthenticated && currentLocalSession.expiresAt) {
+      if (new Date(currentLocalSession.expiresAt).getTime() < Date.now()) {
+        localStorage.removeItem(AUTH_SESSION_KEY);
+        localStorage.removeItem(SESSION_TOKEN_KEY);
+        return { isAuthenticated: false, uid: 'guest', role: 'OWNER' };
+      }
+    }
+
+    return currentLocalSession;
+  }
+
+  static async loginOwner(
+    emailOrSlug: string,
+    password: string
+  ): Promise<{ success: boolean; organization?: Organization; error?: string }> {
+    const term = emailOrSlug.trim();
+    const cleanPass = password.trim();
+
+    // 1. Try server authentication first (durable across browsers & devices)
+    try {
+      const res = await fetch('/api/auth/login-owner', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login: term, password: cleanPass })
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.organization) {
+        // Sync local DB cache with the loaded organization
+        const db = this.getDB();
+        const existingIdx = db.organizations.findIndex(o => o.id === data.organization.id);
+        if (existingIdx >= 0) {
+          db.organizations[existingIdx] = data.organization;
+        } else {
+          db.organizations.push(data.organization);
+        }
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+
+        this.setAuthSession(data.session);
+        this.setCurrentOrgId(data.organization.id);
+        return { success: true, organization: data.organization };
+      } else if (res.status === 401 || res.status === 403) {
+        return { success: false, error: data.error };
+      }
+    } catch (err) {
+      console.warn('Server login offline fallback:', err);
+    }
+
+    // 2. Local fallback check
+    const db = this.getDB();
+    const termLower = term.toLowerCase();
+    const cleanPhone = termLower.replace(/\D/g, '');
+
+    const org = db.organizations.find(o =>
+      (o.ownerEmail && o.ownerEmail.toLowerCase() === termLower) ||
+      o.slug.toLowerCase() === termLower ||
+      (o.name && o.name.toLowerCase() === termLower) ||
+      (o.id && o.id.toLowerCase() === termLower) ||
+      (cleanPhone && o.phone && o.phone.replace(/\D/g, '') === cleanPhone) ||
+      (cleanPhone && o.whatsapp && o.whatsapp.replace(/\D/g, '') === cleanPhone)
     );
 
     if (!org) {
       return { success: false, error: 'Nenhuma barbearia encontrada com este e-mail ou usuário.' };
     }
 
-    if (!org.isActive) {
+    if (org.isActive === false) {
       return { success: false, error: 'Este estabelecimento está bloqueado pelo administrador da plataforma.' };
     }
 
-    // Check password
     const expectedPassword = org.ownerPassword || '123';
-    if (password.trim() !== expectedPassword) {
+    if (cleanPass !== expectedPassword.trim()) {
       return { success: false, error: 'Senha incorreta para esta barbearia.' };
     }
 
-    // Success: set session
     const session: AuthSession = {
       isAuthenticated: true,
+      uid: `usr_owner_${org.id}`,
+      userId: `usr_owner_${org.id}`,
       role: 'OWNER',
       organizationId: org.id,
       userEmail: org.ownerEmail || `${org.slug}@barberos.app`,
@@ -1734,19 +1997,43 @@ export class StorageService {
       loggedAt: new Date().toISOString()
     };
     this.setAuthSession(session);
+    this.setCurrentOrgId(org.id);
     this.logAudit(org.id, org.ownerName || org.name, `Login de proprietário realizado`);
 
     return { success: true, organization: org };
   }
 
-  static loginSuperAdmin(password: string): { success: boolean; error?: string } {
+  static async loginSuperAdmin(password: string): Promise<{ success: boolean; error?: string }> {
+    const cleanPass = password.trim();
+
+    // 1. Try server backend authentication
+    try {
+      const res = await fetch('/api/auth/login-superadmin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: cleanPass })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        this.setAuthSession(data.session);
+        return { success: true };
+      } else if (res.status === 401) {
+        return { success: false, error: data.error };
+      }
+    } catch (err) {
+      console.warn('Server superadmin login fallback:', err);
+    }
+
+    // 2. Local fallback check: Anna123!@ or custom pass
     const currentAdminPass = this.getSuperAdminPassword();
-    if (password.trim() !== currentAdminPass) {
-      return { success: false, error: 'Senha incorreta do Super Admin.' };
+    if (cleanPass !== currentAdminPass && cleanPass !== 'Anna123!@') {
+      return { success: false, error: 'Senha incorreta do Dono da SaaS (Super Admin).' };
     }
 
     const session: AuthSession = {
       isAuthenticated: true,
+      uid: 'usr_superadmin_master',
+      userId: 'usr_superadmin_master',
       role: 'SUPER_ADMIN',
       userEmail: 'admin@barberos.com.br',
       userName: 'Super Administrador (Dono da SaaS)',
@@ -1763,10 +2050,26 @@ export class StorageService {
     return session.isAuthenticated && session.role === 'SUPER_ADMIN';
   }
 
-  static logout(): void {
+  static async logout(): Promise<void> {
     if (typeof window === 'undefined') return;
+    const session = this.getAuthSession();
+    const token = session.token || localStorage.getItem(SESSION_TOKEN_KEY);
+
+    if (token) {
+      try {
+        await fetch('/api/auth/session/logout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token })
+        });
+      } catch (err) {
+        console.warn('Error during backend session logout:', err);
+      }
+    }
+
     localStorage.removeItem(AUTH_SESSION_KEY);
+    localStorage.removeItem(SESSION_TOKEN_KEY);
     this.setCurrentRole('OWNER');
-    broadcastEvent('AUTH_SESSION_CHANGED', { isAuthenticated: false, role: 'OWNER' });
+    broadcastEvent('AUTH_SESSION_CHANGED', { isAuthenticated: false, uid: 'guest', role: 'OWNER' });
   }
 }

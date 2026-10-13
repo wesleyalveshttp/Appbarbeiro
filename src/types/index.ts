@@ -272,11 +272,18 @@ export interface PushDispatchLog {
 
 export interface AuthSession {
   isAuthenticated: boolean;
+  uid?: string;
+  userId?: string;
   role: UserRole;
   organizationId?: string;
   userEmail?: string;
   userName?: string;
+  token?: string;
+  sessionId?: string;
   loggedAt?: string;
+  createdAt?: string;
+  lastActiveAt?: string;
+  expiresAt?: string;
 }
 
 export interface Transaction {

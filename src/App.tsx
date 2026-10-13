@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { StorageService } from './services/storage';
-import { Organization, Professional, UserRole } from './types';
+import { Organization, Professional, UserRole, AuthSession } from './types';
 import { CreditCard, Sparkles } from 'lucide-react';
 
 // Common Layout Components
@@ -43,6 +43,7 @@ import { LoginModal } from './components/auth/LoginModal';
 export default function App() {
   const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
   const [currentRole, setCurrentRole] = useState<UserRole>('OWNER');
+  const [authSession, setAuthSession] = useState<AuthSession>(() => StorageService.getAuthSession());
   const [selectedProfessionalId, setSelectedProfessionalId] = useState<string | undefined>();
   const [currentRoute, setCurrentRoute] = useState<string>(() => {
     if (typeof window !== 'undefined') {
@@ -97,6 +98,7 @@ export default function App() {
 
       // Default initial view: ALWAYS show landing page first, unless user already has an active authenticated session
       const session = StorageService.getAuthSession();
+      setAuthSession(session);
       if (session.isAuthenticated) {
         if (session.role === 'SUPER_ADMIN') {
           setCurrentRoute('superadmin');
@@ -112,6 +114,32 @@ export default function App() {
 
     parseUrl();
 
+    // Restore & verify full user session (UID, role, token) from backend database
+    StorageService.restoreSession().then((session) => {
+      if (session?.isAuthenticated) {
+        setAuthSession(session);
+        setCurrentRole(session.role);
+        if (session.role === 'SUPER_ADMIN') {
+          setCurrentRoute((prev) => (prev === 'landing' ? 'superadmin' : prev));
+        } else {
+          if (session.organizationId) {
+            const org = StorageService.getOrganizationById(session.organizationId);
+            if (org) setCurrentOrg(org);
+          }
+          setCurrentRoute((prev) => (prev === 'landing' ? 'dashboard' : prev));
+        }
+      }
+    });
+
+    // Initial sync with server backend to load all registered accounts
+    StorageService.syncWithServer().then((serverDb) => {
+      if (serverDb?.organizations?.length) {
+        const activeOrgId = StorageService.getCurrentOrgId();
+        const found = serverDb.organizations.find(o => o.id === activeOrgId) || serverDb.organizations[0];
+        if (found) setCurrentOrg(found);
+      }
+    });
+
     // Load active org and role
     const orgId = StorageService.getCurrentOrgId();
     const org = StorageService.getOrganizationById(orgId) || StorageService.getAllOrganizations()[0];
@@ -122,10 +150,26 @@ export default function App() {
     setSelectedProfessionalId(roleInfo.professionalId);
 
     const unsub = StorageService.subscribeToRealtimeEvents((event) => {
+      if (event.type === 'AUTH_SESSION_CHANGED') {
+        const session = event.payload;
+        if (session) {
+          setAuthSession(session);
+        }
+        if (session?.isAuthenticated) {
+          setCurrentRole(session.role);
+          if (session.organizationId) {
+            const updatedOrg = StorageService.getOrganizationById(session.organizationId);
+            if (updatedOrg) setCurrentOrg(updatedOrg);
+          }
+        }
+      }
+
       if (
         event.type === 'SUBSCRIPTION_UPDATED' ||
         event.type === 'ORG_CHANGED' ||
         event.type === 'ORGANIZATION_UPDATED' ||
+        event.type === 'ORGANIZATIONS_UPDATED' ||
+        event.type === 'DB_SYNCED' ||
         event.type === 'METRICS_RESET'
       ) {
         const activeOrgId = StorageService.getCurrentOrgId();
@@ -162,6 +206,8 @@ export default function App() {
   };
 
   const handleLoginSuccess = (role: UserRole, org?: Organization) => {
+    const session = StorageService.getAuthSession();
+    setAuthSession(session);
     if (role === 'SUPER_ADMIN') {
       handleChangeRole('SUPER_ADMIN');
       handleNavigate('superadmin');
@@ -179,21 +225,26 @@ export default function App() {
   const handleOnboardingSuccess = (newOrg: Organization) => {
     setCurrentOrg(newOrg);
     StorageService.setCurrentOrgId(newOrg.id);
-    StorageService.setAuthSession({
+    const session: AuthSession = {
       isAuthenticated: true,
+      uid: `usr_owner_${newOrg.id}`,
+      userId: `usr_owner_${newOrg.id}`,
       role: 'OWNER',
       organizationId: newOrg.id,
       userEmail: newOrg.ownerEmail || `${newOrg.slug}@barberos.app`,
       userName: newOrg.ownerName || newOrg.name,
       loggedAt: new Date().toISOString()
-    });
+    };
+    StorageService.setAuthSession(session);
+    setAuthSession(session);
     setIsOnboardingOpen(false);
     setCurrentRoute('dashboard');
     setCurrentRole('OWNER');
   };
 
-  const handleLogout = () => {
-    StorageService.logout();
+  const handleLogout = async () => {
+    await StorageService.logout();
+    setAuthSession({ isAuthenticated: false, uid: 'guest', role: 'OWNER' });
     setCurrentRoute('landing');
     setCurrentRole('OWNER');
   };
@@ -268,7 +319,7 @@ export default function App() {
   }
 
   // Check authentication session
-  const authSession = StorageService.getAuthSession();
+  const activeSession = authSession.isAuthenticated ? authSession : StorageService.getAuthSession();
   const isPublicRoute =
     currentRoute === 'landing' ||
     currentRoute === 'public-booking' ||
@@ -278,7 +329,7 @@ export default function App() {
     currentRoute === 'client-portal';
 
   // Render Marketing Landing Page or Protect Internal Routes if not authenticated
-  if (currentRoute === 'landing' || (!isPublicRoute && !authSession.isAuthenticated)) {
+  if (currentRoute === 'landing' || (!isPublicRoute && !activeSession.isAuthenticated)) {
     return (
       <>
         <LandingPage
@@ -299,10 +350,7 @@ export default function App() {
         {/* 7-Step Onboarding Wizard */}
         <OnboardingWizard
           isOpen={isOnboardingOpen}
-          onClose={() => {
-            setIsOnboardingOpen(false);
-            setCurrentRoute('landing');
-          }}
+          onClose={() => setIsOnboardingOpen(false)}
           onSuccess={handleOnboardingSuccess}
           onOpenLogin={() => {
             setIsOnboardingOpen(false);
@@ -313,10 +361,7 @@ export default function App() {
         {/* Global Login Modal */}
         <LoginModal
           isOpen={isLoginModalOpen}
-          onClose={() => {
-            setIsLoginModalOpen(false);
-            setCurrentRoute('landing');
-          }}
+          onClose={() => setIsLoginModalOpen(false)}
           initialTab={loginInitialTab}
           onSuccess={handleLoginSuccess}
           onOpenRegister={() => {
@@ -560,12 +605,7 @@ export default function App() {
       {/* 7-Step Onboarding Wizard */}
       <OnboardingWizard
         isOpen={isOnboardingOpen}
-        onClose={() => {
-          setIsOnboardingOpen(false);
-          if (!StorageService.getAuthSession().isAuthenticated) {
-            setCurrentRoute('landing');
-          }
-        }}
+        onClose={() => setIsOnboardingOpen(false)}
         onSuccess={handleOnboardingSuccess}
         onOpenLogin={() => {
           setIsOnboardingOpen(false);
@@ -588,12 +628,7 @@ export default function App() {
       {/* Global Login Modal */}
       <LoginModal
         isOpen={isLoginModalOpen}
-        onClose={() => {
-          setIsLoginModalOpen(false);
-          if (!StorageService.getAuthSession().isAuthenticated) {
-            setCurrentRoute('landing');
-          }
-        }}
+        onClose={() => setIsLoginModalOpen(false)}
         initialTab={loginInitialTab}
         onSuccess={handleLoginSuccess}
         onOpenRegister={() => {

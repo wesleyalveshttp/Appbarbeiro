@@ -51,7 +51,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleOwnerLogin = (e: React.FormEvent) => {
+  const handleOwnerLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     if (!ownerEmailOrSlug.trim() || !ownerPassword.trim()) {
@@ -60,37 +60,41 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      const result = StorageService.loginOwner(ownerEmailOrSlug, ownerPassword);
+    try {
+      const result = await StorageService.loginOwner(ownerEmailOrSlug, ownerPassword);
       setIsLoading(false);
       if (result.success && result.organization) {
         onSuccess('OWNER', result.organization);
-        onClose();
       } else {
         setErrorMsg(result.error || 'Credenciais inválidas. Verifique seu login e senha.');
       }
-    }, 400);
+    } catch {
+      setIsLoading(false);
+      setErrorMsg('Erro de comunicação. Verifique sua conexão e tente novamente.');
+    }
   };
 
-  const handleAdminLogin = (e: React.FormEvent) => {
+  const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     if (!adminPassword.trim()) {
-      setErrorMsg('Por favor, informe a senha do Super Admin.');
+      setErrorMsg('Por favor, informe a senha do Dono da SaaS.');
       return;
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      const result = StorageService.loginSuperAdmin(adminPassword);
+    try {
+      const result = await StorageService.loginSuperAdmin(adminPassword);
       setIsLoading(false);
       if (result.success) {
         onSuccess('SUPER_ADMIN');
-        onClose();
       } else {
-        setErrorMsg(result.error || 'Senha do Super Admin incorreta.');
+        setErrorMsg(result.error || 'Senha do Dono da SaaS incorreta.');
       }
-    }, 400);
+    } catch {
+      setIsLoading(false);
+      setErrorMsg('Erro ao validar senha. Tente novamente.');
+    }
   };
 
   return (
@@ -169,7 +173,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                   required
                   value={ownerEmailOrSlug}
                   onChange={(e) => setOwnerEmailOrSlug(e.target.value)}
-                  placeholder="Ex: dono@barbearia.com ou barbearia"
+                  placeholder="Ex: seuemail@barbearia.com ou nomedabarbearia"
                   className="w-full rounded-xl bg-slate-950 border border-slate-800 pl-10 pr-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500"
                 />
                 <Mail className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
@@ -178,8 +182,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
             <div>
               <div className="flex items-center justify-between mb-1">
-                <label className="text-xs font-semibold text-slate-300">Senha *</label>
-                <span className="text-[10px] text-slate-500">Padrão inicial: 123</span>
+                <label className="text-xs font-semibold text-slate-300">Senha de Acesso *</label>
               </div>
               <div className="relative">
                 <input
@@ -209,13 +212,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               <span>{isLoading ? 'Entrando...' : 'Entrar no Painel da Barbearia'}</span>
               <ArrowRight className="h-4 w-4" />
             </button>
-
-            {/* Quick Helper */}
-            <div className="rounded-xl bg-slate-950/70 border border-slate-800/80 p-3 text-center">
-              <p className="text-[11px] text-slate-400">
-                Conta padrão: <strong className="text-amber-300">dono@barbearia.com</strong> | Senha: <strong className="text-amber-300">123</strong>
-              </p>
-            </div>
 
             {onOpenRegister && (
               <div className="text-center pt-2 border-t border-slate-800/80">
@@ -256,8 +252,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               <form onSubmit={handleAdminLogin} className="space-y-4">
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-semibold text-slate-300">Sua Senha de Super Admin *</label>
-                    <span className="text-[10px] text-slate-500">Padrão: admin123</span>
+                    <label className="text-xs font-semibold text-slate-300">Senha do Dono da SaaS *</label>
                   </div>
                   <div className="relative">
                     <input
@@ -265,7 +260,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                       required
                       value={adminPassword}
                       onChange={(e) => setAdminPassword(e.target.value)}
-                      placeholder="Digite a senha criada por você"
+                      placeholder="Digite sua senha de acesso"
                       className="w-full rounded-xl bg-slate-950 border border-slate-800 pl-10 pr-10 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-purple-500 font-mono"
                     />
                     <Key className="absolute left-3.5 top-3 h-4 w-4 text-purple-400" />
@@ -289,7 +284,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 </button>
 
                 <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-800/80">
-                  <span className="text-slate-400 text-[11px]">Deseja criar uma nova senha?</span>
+                  <span className="text-slate-400 text-[11px]">Deseja alterar a senha mestra?</span>
                   <button
                     type="button"
                     onClick={() => {
@@ -298,38 +293,37 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                     }}
                     className="text-purple-400 hover:text-purple-300 font-bold underline cursor-pointer"
                   >
-                    Definir Nova Senha Criada por Mim
+                    Alterar Senha do Dono da SaaS
                   </button>
                 </div>
               </form>
             ) : (
               <form
-                onSubmit={(e) => {
+                onSubmit={async (e) => {
                   e.preventDefault();
                   if (!newCustomPass.trim()) return;
-                  StorageService.updateSuperAdminPassword(newCustomPass.trim());
-                  setPassSavedNotice(`Nova senha criada com sucesso! Você já está autenticado.`);
+                  await StorageService.updateSuperAdminPassword(newCustomPass.trim());
+                  setPassSavedNotice(`Nova senha salva com sucesso! Você já está autenticado.`);
                   setTimeout(() => {
                     onSuccess('SUPER_ADMIN');
-                    onClose();
-                  }, 1200);
+                  }, 1000);
                 }}
                 className="space-y-4"
               >
                 <div>
                   <label className="text-xs font-semibold text-slate-300 block mb-1">
-                    Nova Senha Criada por Você *
+                    Nova Senha do Dono da SaaS *
                   </label>
                   <input
                     type="text"
                     required
                     value={newCustomPass}
                     onChange={(e) => setNewCustomPass(e.target.value)}
-                    placeholder="Digite sua senha desejada para o Super Admin"
+                    placeholder="Digite a nova senha desejada"
                     className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-purple-300 font-mono focus:outline-hidden focus:border-purple-500"
                   />
                   <span className="text-[10px] text-slate-500 mt-1 block">
-                    Esta senha será gravada e exigida para acessar o painel global do Dono da SaaS.
+                    Esta senha será gravada no servidor e exigida para acessar o painel global do Dono da SaaS.
                   </span>
                 </div>
 
@@ -337,13 +331,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsConfiguringNewPass(false)}
-                    className="flex-1 rounded-xl bg-slate-800 hover:bg-slate-750 py-2.5 text-xs font-semibold text-slate-300"
+                    className="flex-1 rounded-xl bg-slate-800 hover:bg-slate-750 py-2.5 text-xs font-semibold text-slate-300 cursor-pointer"
                   >
                     Voltar ao Login
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 rounded-xl bg-purple-600 hover:bg-purple-500 py-2.5 text-xs font-bold text-white shadow-md shadow-purple-600/30"
+                    className="flex-1 rounded-xl bg-purple-600 hover:bg-purple-500 py-2.5 text-xs font-bold text-white shadow-md shadow-purple-600/30 cursor-pointer"
                   >
                     Salvar e Entrar
                   </button>

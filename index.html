@@ -3,6 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <script>
+      // Ignore benign Vite HMR WebSocket closed errors in cloud proxy / iframe environments
+      window.addEventListener('error', function(event) {
+        if (
+          event.message &&
+          (event.message.includes('WebSocket') ||
+            event.message.includes('ws://') ||
+            event.message.includes('wss://'))
+        ) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+      }, true);
+      window.addEventListener('unhandledrejection', function(event) {
+        var reasonStr = String(event.reason || '');
+        if (reasonStr.includes('WebSocket') || (event.reason && String(event.reason.message || '').includes('WebSocket'))) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+      }, true);
+    </script>
     <title>BarberOS - Fila Virtual Inteligente para Barbearias e Salões</title>
     <meta name="description" content="Plataforma de Fila Virtual Inteligente para barbearias e salões: entre na fila pelo celular, acompanhe a posição ao vivo e receba notificação com som e vibração no aparelho." />
     <meta property="og:title" content="BarberOS - Fila Virtual Inteligente para Barbearias e Salões" />

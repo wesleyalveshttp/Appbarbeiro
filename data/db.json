@@ -157,6 +157,149 @@
       },
       "isActive": true,
       "createdAt": "2026-01-10T10:00:00.000Z"
+    },
+    {
+      "name": "Barbearia Imperial",
+      "slug": "barbearia-imperial",
+      "type": "Barbearia",
+      "phone": "(11) 98765-4321",
+      "whatsapp": "11987654321",
+      "ownerEmail": "imperial@contato.com",
+      "ownerPassword": "MinhaSenhaForte123",
+      "ownerName": "Carlos Imperial",
+      "address": {
+        "city": "São Paulo",
+        "state": "SP"
+      },
+      "workingHours": [],
+      "settings": {
+        "isOpenNow": true
+      },
+      "id": "org-1791928523248",
+      "isActive": true,
+      "createdAt": "2026-10-13T21:55:23.248Z",
+      "subscription": {
+        "status": "PENDENTE",
+        "planName": "Plano Pro Barbearia (R$ 79,90/mês)",
+        "priceMonthly": 79.9,
+        "trialDaysRemaining": 0,
+        "nextBillingDate": "2026-11-12",
+        "isPaid": false,
+        "invoices": []
+      }
+    },
+    {
+      "name": "Barbearia Teste",
+      "slug": "barbearia-teste",
+      "type": "Barbearia",
+      "description": "O melhor em barbearia e atendimento personalizado.",
+      "phone": "",
+      "whatsapp": "",
+      "instagram": "",
+      "ownerEmail": "wesleypmalves@gmail.com",
+      "ownerPassword": "123456",
+      "ownerName": "Barbearia Teste",
+      "address": {
+        "cep": "",
+        "street": "",
+        "number": "",
+        "neighborhood": "",
+        "city": "",
+        "state": "SP"
+      },
+      "workingHours": [
+        {
+          "dayOfWeek": 0,
+          "dayName": "Domingo",
+          "isOpen": false,
+          "openTime": "09:00",
+          "closeTime": "15:00"
+        },
+        {
+          "dayOfWeek": 1,
+          "dayName": "Segunda-feira",
+          "isOpen": true,
+          "openTime": "09:00",
+          "closeTime": "20:00",
+          "hasLunchBreak": true,
+          "lunchStart": "12:00",
+          "lunchEnd": "13:00"
+        },
+        {
+          "dayOfWeek": 2,
+          "dayName": "Terça-feira",
+          "isOpen": true,
+          "openTime": "09:00",
+          "closeTime": "20:00",
+          "hasLunchBreak": true,
+          "lunchStart": "12:00",
+          "lunchEnd": "13:00"
+        },
+        {
+          "dayOfWeek": 3,
+          "dayName": "Quarta-feira",
+          "isOpen": true,
+          "openTime": "09:00",
+          "closeTime": "20:00",
+          "hasLunchBreak": true,
+          "lunchStart": "12:00",
+          "lunchEnd": "13:00"
+        },
+        {
+          "dayOfWeek": 4,
+          "dayName": "Quinta-feira",
+          "isOpen": true,
+          "openTime": "09:00",
+          "closeTime": "20:00",
+          "hasLunchBreak": true,
+          "lunchStart": "12:00",
+          "lunchEnd": "13:00"
+        },
+        {
+          "dayOfWeek": 5,
+          "dayName": "Sexta-feira",
+          "isOpen": true,
+          "openTime": "09:00",
+          "closeTime": "20:00",
+          "hasLunchBreak": true,
+          "lunchStart": "12:00",
+          "lunchEnd": "13:00"
+        },
+        {
+          "dayOfWeek": 6,
+          "dayName": "Sábado",
+          "isOpen": true,
+          "openTime": "08:30",
+          "closeTime": "19:00",
+          "hasLunchBreak": false
+        }
+      ],
+      "settings": {
+        "maxLateMinutes": 15,
+        "cancellationHoursLimit": 2,
+        "queueMode": "SINGLE",
+        "autoNotifyAheadCount": 3,
+        "callToleranceMinutes": 3,
+        "allowToleranceRequest": true,
+        "primaryColor": "#f59e0b",
+        "secondaryColor": "#0f172a",
+        "welcomeMessage": "Bem-vindo à Barbearia Teste! Entre na nossa fila virtual pelo celular ou agende online.",
+        "isOpenNow": true,
+        "whatsappApiConfigured": false
+      },
+      "planId": "premium",
+      "id": "org-1791928828381",
+      "isActive": true,
+      "createdAt": "2026-10-13T22:00:28.381Z",
+      "subscription": {
+        "status": "PENDENTE",
+        "planName": "Plano Pro Barbearia (R$ 79,90/mês)",
+        "priceMonthly": 79.9,
+        "trialDaysRemaining": 0,
+        "nextBillingDate": "2026-11-12",
+        "isPaid": false,
+        "invoices": []
+      }
     }
   ],
   "professionals": [
@@ -190,6 +333,44 @@
         6
       ],
       "createdAt": "2026-01-11T10:00:00.000Z"
+    },
+    {
+      "name": "Carlos Barbeiro",
+      "id": "prof-1791928523248",
+      "organizationId": "org-1791928523248",
+      "isActive": true,
+      "createdAt": "2026-10-13T21:55:23.248Z",
+      "serviceIds": [
+        "srv-1791928523248"
+      ]
+    },
+    {
+      "name": "Teste",
+      "phone": "",
+      "whatsapp": "",
+      "email": "teste@salao.com",
+      "avatarUrl": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
+      "specialties": [
+        "Corte",
+        "Atendimento"
+      ],
+      "serviceIds": [
+        "srv-1791928828381"
+      ],
+      "commissionPercent": 40,
+      "isActive": true,
+      "isAvailableToday": true,
+      "workingDays": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "id": "prof-1791928828381",
+      "organizationId": "org-1791928828381",
+      "createdAt": "2026-10-13T22:00:28.381Z"
     }
   ],
   "services": [
@@ -234,6 +415,31 @@
       ],
       "isActive": true,
       "createdAt": "2026-01-10T11:00:00.000Z"
+    },
+    {
+      "name": "Corte Moderno",
+      "price": 50,
+      "id": "srv-1791928523248",
+      "organizationId": "org-1791928523248",
+      "professionalIds": [
+        "prof-1791928523248"
+      ],
+      "isActive": true,
+      "createdAt": "2026-10-13T21:55:23.248Z"
+    },
+    {
+      "name": "Corte Padrão",
+      "description": "Atendimento completo com lavagem e finalização.",
+      "price": 45,
+      "durationMinutes": 30,
+      "category": "Cabelo",
+      "isActive": true,
+      "id": "srv-1791928828381",
+      "organizationId": "org-1791928828381",
+      "professionalIds": [
+        "prof-1791928828381"
+      ],
+      "createdAt": "2026-10-13T22:00:28.381Z"
     }
   ],
   "customers": [],
@@ -294,6 +500,100 @@
   "transactions": [],
   "reviews": [],
   "notifications": [],
-  "auditLogs": [],
-  "plans": []
+  "auditLogs": [
+    {
+      "id": "audit-1791928523248",
+      "organizationId": "org-1791928523248",
+      "userName": "Carlos Imperial",
+      "action": "Estabelecimento \"Barbearia Imperial\" criado com sucesso",
+      "timestamp": "2026-10-13T21:55:23.248Z"
+    },
+    {
+      "id": "audit-1791928828381",
+      "organizationId": "org-1791928828381",
+      "userName": "Barbearia Teste",
+      "action": "Estabelecimento \"Barbearia Teste\" criado com sucesso",
+      "timestamp": "2026-10-13T22:00:28.381Z"
+    }
+  ],
+  "plans": [],
+  "config": {
+    "superAdminPassword": "Anna123!@"
+  },
+  "sessions": [
+    {
+      "uid": "usr_owner_org-1791928523248",
+      "userId": "usr_owner_org-1791928523248",
+      "token": "sess_1af2e34772c24b17127a1927bc438ffb6ae6ca40f7866ead",
+      "sessionId": "sess_1af2e34772c24b17127a1927bc438ffb6ae6ca40f7866ead",
+      "role": "OWNER",
+      "organizationId": "org-1791928523248",
+      "userEmail": "imperial@contato.com",
+      "userName": "Carlos Imperial",
+      "createdAt": "2026-10-13T22:05:47.348Z",
+      "loggedAt": "2026-10-13T22:05:47.348Z",
+      "lastActiveAt": "2026-10-13T22:05:47.348Z",
+      "expiresAt": "2026-11-12T22:05:47.348Z",
+      "isAuthenticated": true
+    },
+    {
+      "uid": "usr_owner_org-1791928828381",
+      "userId": "usr_owner_org-1791928828381",
+      "token": "sess_22b40eb684d1f5a3737136376739114533637afc31405c51",
+      "sessionId": "sess_22b40eb684d1f5a3737136376739114533637afc31405c51",
+      "role": "OWNER",
+      "organizationId": "org-1791928828381",
+      "userEmail": "wesleypmalves@gmail.com",
+      "userName": "Barbearia Teste",
+      "createdAt": "2026-10-13T22:06:32.653Z",
+      "loggedAt": "2026-10-13T22:06:32.653Z",
+      "lastActiveAt": "2026-10-13T22:06:32.885Z",
+      "expiresAt": "2026-11-12T22:06:32.653Z",
+      "isAuthenticated": true
+    },
+    {
+      "uid": "usr_owner_org-1791928828381",
+      "userId": "usr_owner_org-1791928828381",
+      "token": "sess_1765f7a6b6413e27963f877597a176b919bd6784eaffeb4c",
+      "sessionId": "sess_1765f7a6b6413e27963f877597a176b919bd6784eaffeb4c",
+      "role": "OWNER",
+      "organizationId": "org-1791928828381",
+      "userEmail": "wesleypmalves@gmail.com",
+      "userName": "Barbearia Teste",
+      "createdAt": "2026-10-13T22:08:54.199Z",
+      "loggedAt": "2026-10-13T22:08:54.199Z",
+      "lastActiveAt": "2026-10-13T22:08:54.199Z",
+      "expiresAt": "2026-11-12T22:08:54.199Z",
+      "isAuthenticated": true
+    },
+    {
+      "uid": "usr_superadmin_master",
+      "userId": "usr_superadmin_master",
+      "token": "sess_c3df506d39aa7184d5afb6426e6d8098d4faf5cca058862e",
+      "sessionId": "sess_c3df506d39aa7184d5afb6426e6d8098d4faf5cca058862e",
+      "role": "SUPER_ADMIN",
+      "userEmail": "admin@barberos.com.br",
+      "userName": "Super Administrador (Dono da SaaS)",
+      "createdAt": "2026-10-13T22:10:57.659Z",
+      "loggedAt": "2026-10-13T22:10:57.659Z",
+      "lastActiveAt": "2026-10-13T22:10:57.659Z",
+      "expiresAt": "2026-11-12T22:10:57.659Z",
+      "isAuthenticated": true
+    },
+    {
+      "uid": "usr_owner_org-1791928828381",
+      "userId": "usr_owner_org-1791928828381",
+      "token": "sess_d8ccfbc8caaac4e24987f118aa7ac9b56d0d826ae64b0ca5",
+      "sessionId": "sess_d8ccfbc8caaac4e24987f118aa7ac9b56d0d826ae64b0ca5",
+      "role": "OWNER",
+      "organizationId": "org-1791928828381",
+      "userEmail": "wesleypmalves@gmail.com",
+      "userName": "Barbearia Teste",
+      "createdAt": "2026-10-13T22:13:00.481Z",
+      "loggedAt": "2026-10-13T22:13:00.481Z",
+      "lastActiveAt": "2026-10-13T22:13:00.481Z",
+      "expiresAt": "2026-11-12T22:13:00.481Z",
+      "isAuthenticated": true
+    }
+  ]
 }
