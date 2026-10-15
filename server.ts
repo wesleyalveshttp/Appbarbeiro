@@ -1059,6 +1059,13 @@ app.get('/api/organizations/slug/:slug', (req: Request, res: Response) => {
     });
   }
 
+  // 3. Fallback: If only 1 establishment exists or generic slug used ('fila', 'barbearia', 'default', 'app')
+  if (!org && orgs.length > 0) {
+    if (orgs.length === 1 || rawTerm === 'fila' || rawTerm === 'barbearia' || rawTerm === 'default' || !rawTerm) {
+      org = orgs[0];
+    }
+  }
+
   if (!org) {
     return res.status(404).json({ error: 'Estabelecimento não encontrado para este link.' });
   }

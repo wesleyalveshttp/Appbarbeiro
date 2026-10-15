@@ -58,16 +58,20 @@ function parseRouteFromLocation(): {
 
   // 1. Path-based routing (e.g. /fila/barbearia, /agendar/barbearia, /b/barbearia, /atendimento/token)
   const parts = path.split('/').filter(Boolean);
+  const defaultSlug = StorageService.getOrganizationById(StorageService.getCurrentOrgId())?.slug
+    || StorageService.getAllOrganizations()[0]?.slug
+    || 'barbearia';
+
   if (parts[0] === 'fila') {
-    const slug = parts[1] ? decodeURIComponent(parts[1]) : (StorageService.getCurrentOrgId() ? StorageService.getOrganizationById(StorageService.getCurrentOrgId())?.slug || 'barbearia' : 'barbearia');
+    const slug = parts[1] ? decodeURIComponent(parts[1]) : defaultSlug;
     return { route: 'public-queue', publicParams: { type: 'QUEUE', slug } };
   }
   if (parts[0] === 'agendar') {
-    const slug = parts[1] ? decodeURIComponent(parts[1]) : 'barbearia';
+    const slug = parts[1] ? decodeURIComponent(parts[1]) : defaultSlug;
     return { route: 'public-booking', publicParams: { type: 'BOOKING', slug } };
   }
   if (parts[0] === 'b') {
-    const slug = parts[1] ? decodeURIComponent(parts[1]) : 'barbearia';
+    const slug = parts[1] ? decodeURIComponent(parts[1]) : defaultSlug;
     return { route: 'public-store', publicParams: { type: 'STORE', slug } };
   }
   if (parts[0] === 'atendimento' && parts[1]) {

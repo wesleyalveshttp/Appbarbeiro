@@ -120,8 +120,9 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
   const onChairAppointments = appointments.filter(a => a.status === 'NA CADEIRA');
 
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const bookingUrl = `${origin}/agendar/${organization.slug}`;
-  const queueUrl = `${origin}/fila/${organization.slug}`;
+  const orgSlug = (organization?.slug || StorageService.getAllOrganizations()[0]?.slug || 'barbearia').trim();
+  const bookingUrl = `${origin}/agendar/${orgSlug}`;
+  const queueUrl = `${origin}/fila/${orgSlug}`;
 
   const handleCallCustomer = async (queueItem: WaitingQueueItem) => {
     const availableProf = professionals.find(p => p.isActive) || professionals[0];

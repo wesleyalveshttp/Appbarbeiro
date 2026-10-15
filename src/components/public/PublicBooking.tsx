@@ -54,6 +54,12 @@ export const PublicBooking: React.FC<PublicBookingProps> = ({
         if (!org) {
           org = StorageService.getOrganizationBySlug(slug) || null;
         }
+        if (!org) {
+          const all = StorageService.getAllOrganizations();
+          if (all.length > 0) {
+            org = all[0];
+          }
+        }
         if (org) {
           setOrganization(org);
           setOrgNotFound(false);

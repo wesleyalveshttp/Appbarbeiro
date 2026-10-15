@@ -532,14 +532,19 @@ export class StorageService {
       });
     }
 
+    if (!org && orgs.length > 0) {
+      if (orgs.length === 1 || clean === 'fila' || clean === 'barbearia' || clean === 'default' || !clean) {
+        return orgs[0];
+      }
+    }
+
     return org;
   }
 
   static async fetchOrganizationBySlug(slug: string): Promise<Organization | null> {
-    if (!slug) return null;
-    const clean = decodeURIComponent(slug).trim().toLowerCase();
+    const clean = decodeURIComponent(slug || '').trim().toLowerCase();
     try {
-      const res = await fetch(`/api/organizations/slug/${encodeURIComponent(clean)}`);
+      const res = await fetch(`/api/organizations/slug/${encodeURIComponent(clean || 'fila')}`);
       if (res.ok) {
         const data = await res.json();
         if (data.organization) {
@@ -558,7 +563,7 @@ export class StorageService {
     } catch {
       // network fallback
     }
-    return this.getOrganizationBySlug(clean) || null;
+    return this.getOrganizationBySlug(clean) || this.getAllOrganizations()[0] || null;
   }
 
   static createOrganization(

@@ -57,24 +57,25 @@ export const Header: React.FC<HeaderProps> = ({
 
   const getQRData = () => {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://barberos.app';
+    const orgSlug = (currentOrg?.slug || StorageService.getAllOrganizations()[0]?.slug || 'barbearia').trim();
     if (qrType === 'booking') {
       return {
         title: 'Agendamento Online',
         subtitle: 'Clientes escolhem profissional, data e horário',
-        url: `${origin}/agendar/${currentOrg.slug}`,
+        url: `${origin}/agendar/${orgSlug}`,
       };
     }
     if (qrType === 'queue') {
       return {
         title: 'Fila de Espera Digital',
         subtitle: 'Clientes entram na fila e acompanham ao vivo no celular',
-        url: `${origin}/fila/${currentOrg.slug}`,
+        url: `${origin}/fila/${orgSlug}`,
       };
     }
     return {
       title: 'Página Pública do Salão',
       subtitle: 'Vitrine com serviços, horários e links rápidos',
-      url: `${origin}/b/${currentOrg.slug}`,
+      url: `${origin}/b/${orgSlug}`,
     };
   };
 

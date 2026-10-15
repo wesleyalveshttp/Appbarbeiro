@@ -12,6 +12,7 @@ import {
   Building2
 } from 'lucide-react';
 import { Organization } from '../../types';
+import { StorageService } from '../../services/storage';
 import { QRCodeModal } from '../common/QRCodeModal';
 
 interface QRCodesViewProps {
@@ -36,9 +37,10 @@ export const QRCodesView: React.FC<QRCodesViewProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const bookingUrl = `${origin}/agendar/${organization.slug}`;
-  const queueUrl = `${origin}/fila/${organization.slug}`;
-  const storeUrl = `${origin}/b/${organization.slug}`;
+  const orgSlug = (organization?.slug || StorageService.getAllOrganizations()[0]?.slug || 'barbearia').trim();
+  const bookingUrl = `${origin}/agendar/${orgSlug}`;
+  const queueUrl = `${origin}/fila/${orgSlug}`;
+  const storeUrl = `${origin}/b/${orgSlug}`;
 
   const qrCards = [
     {
