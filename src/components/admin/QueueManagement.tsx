@@ -77,23 +77,38 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
     } catch {}
   };
 
-  const loadData = () => {
-    const q = StorageService.getAllQueueHistory(organization.id);
+  const loadData = async () => {
+    // 1. Immediate local render
+    const localQ = StorageService.getAllQueueHistory(organization.id);
     const profs = StorageService.getProfessionals(organization.id);
     const srvs = StorageService.getServices(organization.id);
-    setQueue(q);
+    setQueue(localQ);
     setProfessionals(profs);
     setServices(srvs);
     if (!newServiceId && srvs.length > 0) setNewServiceId(srvs[0].id);
     loadPushLogs();
+
+    // 2. Fetch fresh real-time queue from backend server
+    const freshQ = await StorageService.fetchQueue(organization.id);
+    if (freshQ && Array.isArray(freshQ)) {
+      setQueue(freshQ);
+    }
   };
 
   useEffect(() => {
     loadData();
+
+    // Poll every 3 seconds to guarantee instant multi-device sync
+    const interval = setInterval(loadData, 3000);
+
     const unsub = StorageService.subscribeToRealtimeEvents(() => {
       loadData();
     });
-    return unsub;
+
+    return () => {
+      clearInterval(interval);
+      unsub();
+    };
   }, [organization.id]);
 
   const origin = typeof window !== 'undefined' ? window.location.origin : '';

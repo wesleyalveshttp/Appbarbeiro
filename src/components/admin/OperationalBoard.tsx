@@ -50,7 +50,7 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
 
   const todayStr = new Date().toISOString().split('T')[0];
 
-  const loadData = () => {
+  const loadData = async () => {
     let apts = StorageService.getAppointments(organization.id, todayStr);
     let q = StorageService.getQueue(organization.id);
     let profs = StorageService.getProfessionals(organization.id);
@@ -63,14 +63,23 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
     setAppointments(apts);
     setQueue(q);
     setProfessionals(profs);
+
+    // Fetch fresh live queue from server
+    await StorageService.fetchQueue(organization.id);
+    let updatedQ = StorageService.getQueue(organization.id);
+    setQueue(updatedQ);
   };
 
   useEffect(() => {
     loadData();
+    const interval = setInterval(loadData, 3000);
     const unsub = StorageService.subscribeToRealtimeEvents(() => {
       loadData();
     });
-    return unsub;
+    return () => {
+      clearInterval(interval);
+      unsub();
+    };
   }, [organization.id, selectedProfessionalId]);
 
   // Unified items

@@ -368,6 +368,39 @@ export class StorageService {
         }
         serverDb.services = mergedServices;
 
+        // Smart merge queue: combine server queue with any local active items
+        const mergedQueue = [...(serverDb.queue || [])];
+        for (const localQ of (localDb.queue || [])) {
+          const idx = mergedQueue.findIndex(q => q.id === localQ.id);
+          if (idx === -1) {
+            mergedQueue.push(localQ);
+          } else {
+            mergedQueue[idx] = { ...localQ, ...mergedQueue[idx] };
+          }
+        }
+        serverDb.queue = mergedQueue;
+
+        // Smart merge appointments
+        const mergedApts = [...(serverDb.appointments || [])];
+        for (const localApt of (localDb.appointments || [])) {
+          const idx = mergedApts.findIndex(a => a.id === localApt.id);
+          if (idx === -1) {
+            mergedApts.push(localApt);
+          } else {
+            mergedApts[idx] = { ...localApt, ...mergedApts[idx] };
+          }
+        }
+        serverDb.appointments = mergedApts;
+
+        // Smart merge customers
+        const mergedCustomers = [...(serverDb.customers || [])];
+        for (const localCust of (localDb.customers || [])) {
+          if (!mergedCustomers.some(c => c.id === localCust.id)) {
+            mergedCustomers.push(localCust);
+          }
+        }
+        serverDb.customers = mergedCustomers;
+
         localStorage.setItem(STORAGE_KEY, JSON.stringify(serverDb));
         broadcastEvent('DB_SYNCED');
         return serverDb;
@@ -1100,7 +1133,34 @@ export class StorageService {
 
   static getAllQueueHistory(orgId: string): WaitingQueueItem[] {
     const db = this.getDB();
-    return db.queue.filter(q => q.organizationId === orgId);
+    return (db.queue || []).filter(q => q.organizationId === orgId);
+  }
+
+  // Fetch real-time queue from server endpoint /api/queue/:orgId
+  static async fetchQueue(orgId: string): Promise<WaitingQueueItem[]> {
+    if (typeof window === 'undefined') return this.getAllQueueHistory(orgId);
+    try {
+      const res = await fetch(`/api/queue/${encodeURIComponent(orgId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.queue)) {
+          const db = this.getDB();
+          if (!Array.isArray(db.queue)) db.queue = [];
+
+          // Keep queue items of other orgs, and update this org's queue
+          const otherOrgsQueue = db.queue.filter(q => q.organizationId !== orgId);
+          db.queue = [...otherOrgsQueue, ...data.queue];
+
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+          } catch {}
+          return data.queue;
+        }
+      }
+    } catch (err) {
+      console.warn('fetchQueue network error, using local queue:', err);
+    }
+    return this.getAllQueueHistory(orgId);
   }
 
   static async joinQueue(data: {
@@ -1119,11 +1179,25 @@ export class StorageService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      const json = await res.json();
-      if (json.success && json.item) {
-        await this.syncWithServer();
-        broadcastEvent('QUEUE_UPDATED', { orgId: data.organizationId, queueItemId: json.item.id });
-        return json.item;
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.item) {
+          // Immediately persist to local cache
+          const db = this.getDB();
+          if (!Array.isArray(db.queue)) db.queue = [];
+          const existingIdx = db.queue.findIndex(q => q.id === json.item.id);
+          if (existingIdx >= 0) {
+            db.queue[existingIdx] = json.item;
+          } else {
+            db.queue.push(json.item);
+          }
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+          } catch {}
+
+          broadcastEvent('QUEUE_UPDATED', { orgId: json.item.organizationId, queueItemId: json.item.id });
+          return json.item;
+        }
       }
     } catch (e) {
       console.warn('API join error, using local fallback:', e);

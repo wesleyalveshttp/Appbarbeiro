@@ -495,6 +495,20 @@
       "estimatedWaitMinutes": 80,
       "notificationToken": "dev_1791683400933",
       "pushDeliveryStatus": "NOT_ATTEMPTED"
+    },
+    {
+      "id": "queue_1792039117622_n4lahd",
+      "ticketNumber": 5,
+      "organizationId": "org-prime",
+      "customerName": "Cliente Teste Automático",
+      "customerPhone": "(11) 99999-8888",
+      "serviceId": "srv-1",
+      "serviceName": "Corte Masculino",
+      "status": "AGUARDANDO",
+      "joinedAt": "2026-10-15T04:38:37.622Z",
+      "estimatedWaitMinutes": 100,
+      "notificationToken": "dev_1792039117622",
+      "pushDeliveryStatus": "NOT_ATTEMPTED"
     }
   ],
   "transactions": [],

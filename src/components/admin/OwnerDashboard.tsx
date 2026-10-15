@@ -66,13 +66,18 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
 
   const todayStr = new Date().toISOString().split('T')[0];
 
-  const loadData = () => {
+  const loadData = async () => {
     const apts = StorageService.getAppointments(organization.id, todayStr);
     const q = StorageService.getQueue(organization.id);
     const profs = StorageService.getProfessionals(organization.id);
     setAppointments(apts);
     setQueue(q);
     setProfessionals(profs);
+
+    // Fetch fresh live queue from server
+    await StorageService.fetchQueue(organization.id);
+    const updatedQ = StorageService.getQueue(organization.id);
+    setQueue(updatedQ);
   };
 
   const handleResetMetrics = () => {
@@ -84,10 +89,14 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
 
   useEffect(() => {
     loadData();
+    const interval = setInterval(loadData, 3000);
     const unsub = StorageService.subscribeToRealtimeEvents(() => {
       loadData();
     });
-    return unsub;
+    return () => {
+      clearInterval(interval);
+      unsub();
+    };
   }, [organization.id]);
 
   const handleToggleOpen = () => {

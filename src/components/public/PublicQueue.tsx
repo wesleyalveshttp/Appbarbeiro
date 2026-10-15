@@ -89,11 +89,10 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
       setOrgNotFound(false);
 
       // Sync latest queue from server for this organization
-      await StorageService.syncWithServer();
-      const q = StorageService.getQueue(org.id);
+      const q = await StorageService.fetchQueue(org.id);
       const srvs = StorageService.getServices(org.id).filter(s => s.isActive);
       const profs = StorageService.getProfessionals(org.id).filter(p => p.isActive);
-      setQueue(q);
+      setQueue(q || []);
       setServices(srvs);
       setProfessionals(profs);
       if (!selectedServiceId && srvs.length > 0) setSelectedServiceId(srvs[0].id);
@@ -118,10 +117,18 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
     }
 
     loadData();
+
+    // 3s interval polling to ensure client sees realtime updates
+    const interval = setInterval(loadData, 3000);
+
     const unsub = StorageService.subscribeToRealtimeEvents(() => {
       loadData();
     });
-    return unsub;
+
+    return () => {
+      clearInterval(interval);
+      unsub();
+    };
   }, [slug]);
 
   // Find My Item

@@ -605,15 +605,53 @@ app.post('/api/db/sync', (req: Request, res: Response) => {
     db.services = srvs;
   }
 
-  if (Array.isArray(incoming.customers)) db.customers = incoming.customers;
-  if (Array.isArray(incoming.appointments)) db.appointments = incoming.appointments;
-  if (Array.isArray(incoming.queue)) db.queue = incoming.queue;
+  // Smart merge queue by ID to never erase active queue items created by clients
+  if (Array.isArray(incoming.queue)) {
+    const currentQueue = db.queue || [];
+    for (const inQ of incoming.queue) {
+      const idx = currentQueue.findIndex((q: any) => q.id === inQ.id);
+      if (idx >= 0) {
+        currentQueue[idx] = { ...currentQueue[idx], ...inQ };
+      } else {
+        currentQueue.push(inQ);
+      }
+    }
+    db.queue = currentQueue;
+  }
+
+  // Smart merge appointments by ID
+  if (Array.isArray(incoming.appointments)) {
+    const currentApts = db.appointments || [];
+    for (const inApt of incoming.appointments) {
+      const idx = currentApts.findIndex((a: any) => a.id === inApt.id);
+      if (idx >= 0) {
+        currentApts[idx] = { ...currentApts[idx], ...inApt };
+      } else {
+        currentApts.push(inApt);
+      }
+    }
+    db.appointments = currentApts;
+  }
+
+  // Smart merge customers by ID
+  if (Array.isArray(incoming.customers)) {
+    const currentCusts = db.customers || [];
+    for (const inCust of incoming.customers) {
+      const idx = currentCusts.findIndex((c: any) => c.id === inCust.id);
+      if (idx >= 0) {
+        currentCusts[idx] = { ...currentCusts[idx], ...inCust };
+      } else {
+        currentCusts.push(inCust);
+      }
+    }
+    db.customers = currentCusts;
+  }
+
   if (Array.isArray(incoming.transactions)) db.transactions = incoming.transactions;
   if (Array.isArray(incoming.reviews)) db.reviews = incoming.reviews;
   if (Array.isArray(incoming.notifications)) db.notifications = incoming.notifications;
 
   writeDB(db);
-  broadcastSSE('DB_SYNCED', { timestamp: Date.now() });
   res.json({ success: true, updated: new Date().toISOString() });
 });
 
@@ -1116,11 +1154,27 @@ app.post('/api/queue/join', (req: Request, res: Response) => {
   }
 
   const db = readDB();
-  const service = db.services.find((s: any) => s.id === serviceId);
-  if (!service) return res.status(400).json({ error: 'Serviço inválido' });
+
+  // Robust organization resolution (by ID or Slug)
+  let org = (db.organizations || []).find((o: any) => o.id === organizationId || o.slug === organizationId);
+  if (!org && (db.organizations || []).length > 0) {
+    org = db.organizations[0];
+  }
+  const resolvedOrgId = org ? org.id : organizationId;
+
+  // Robust service resolution
+  let service = (db.services || []).find((s: any) => s.id === serviceId);
+  if (!service) {
+    service = (db.services || []).find((s: any) => s.organizationId === resolvedOrgId) || {
+      id: serviceId,
+      name: 'Atendimento Geral',
+      price: 45.0,
+      durationMinutes: 30,
+    };
+  }
 
   // Calculate ticket number
-  const orgQueue = db.queue.filter((q: any) => q.organizationId === organizationId);
+  const orgQueue = (db.queue || []).filter((q: any) => q.organizationId === resolvedOrgId);
   const maxTicket = orgQueue.reduce((max: number, q: any) => Math.max(max, q.ticketNumber || 0), 0);
   const ticketNumber = maxTicket + 1;
 
@@ -1135,7 +1189,7 @@ app.post('/api/queue/join', (req: Request, res: Response) => {
   const newItem: any = {
     id: `queue_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
     ticketNumber,
-    organizationId,
+    organizationId: resolvedOrgId,
     customerName: customerName.trim(),
     customerPhone: customerPhone ? customerPhone.trim() : '(Celular Web)',
     serviceId: service.id,
@@ -1151,6 +1205,7 @@ app.post('/api/queue/join', (req: Request, res: Response) => {
     pushDeliveryStatus: 'NOT_ATTEMPTED',
   };
 
+  if (!Array.isArray(db.queue)) db.queue = [];
   db.queue.push(newItem);
   writeDB(db);
 
@@ -1172,7 +1227,7 @@ app.post('/api/queue/join', (req: Request, res: Response) => {
     writeSubscriptions(subs);
   }
 
-  broadcastSSE('QUEUE_UPDATED', { orgId: organizationId, queueItemId: newItem.id });
+  broadcastSSE('QUEUE_UPDATED', { orgId: resolvedOrgId, queueItemId: newItem.id });
 
   console.log(`👤 Novo cliente na fila: ${newItem.customerName} (Senha #${ticketNumber})`);
   res.json({ success: true, item: newItem });
@@ -2098,14 +2153,25 @@ async function startServer() {
   const isProd = process.env.NODE_ENV === 'production' && fs.existsSync(path.resolve(__dirname, 'dist'));
 
   if (isProd) {
+    // Serve static assets correctly for any sub-route deep links
+    app.use(['/fila/assets', '/agendar/assets', '/b/assets', '/atendimento/assets'], express.static(path.resolve(__dirname, 'dist', 'assets')));
     app.use(express.static(path.resolve(__dirname, 'dist')));
     app.get('*', (req: Request, res: Response) => {
+      // Guard against serving HTML for missing static files (preventing script MIME type errors)
+      if (/\.(js|css|png|jpg|jpeg|gif|svg|ico|webp|woff|woff2|ttf|json|webmanifest)$/i.test(req.path)) {
+        return res.status(404).send('Asset not found');
+      }
       res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
     });
     app.listen(Number(PORT), '0.0.0.0', () => {
       console.log(`💈 BarberOS Fila Virtual Server (Production) running on http://0.0.0.0:${PORT}`);
     });
   } else {
+    // Rewrite subpath asset requests in dev mode if any
+    app.use(['/fila/assets', '/agendar/assets', '/b/assets', '/atendimento/assets'], (req, res, next) => {
+      req.url = '/assets' + req.url;
+      next();
+    });
     // HMR is disabled in AI Studio environment to prevent WebSocket closed errors
     const isHmrDisabled = process.env.DISABLE_HMR !== 'false';
     const httpServer = http.createServer(app);
