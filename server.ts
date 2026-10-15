@@ -1615,9 +1615,9 @@ app.get('/api/mercadopago/config-status', (req: Request, res: Response) => {
 function getPlanDetails(planType: 'MONTHLY' | 'ANNUAL') {
   if (planType === 'ANNUAL') {
     return {
-      title: 'Plano BarberOS Pro Anual (12x R$ 69,90)',
+      title: 'Plano BarberOS Pro Anual (R$ 838,80 - 12 Meses)',
       amount: 838.80,
-      description: 'Acesso completo a todas as ferramentas por 12 meses',
+      description: 'Valor integral anual de R$ 838,80 à vista (parcelamento em até 12x com juros por conta do comprador)',
       frequencyMonths: 12,
     };
   }

@@ -21,9 +21,13 @@ import {
   Vibrate,
   Volume2,
   Menu,
-  X
+  X,
+  CreditCard
 } from 'lucide-react';
 import { SaaSPlan } from '../../types';
+import queueMockupImg from '../../assets/images/queue_mobile_mockup_1791313536444.jpg';
+import operationalMockupImg from '../../assets/images/operational_barber_mockup_1791313549350.jpg';
+import dashboardMockupImg from '../../assets/images/dashboard_mockup_1791313526248.jpg';
 
 interface LandingPageProps {
   onStartOnboarding: () => void;
@@ -56,7 +60,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       title: 'Fila Virtual Inteligente no Celular do Cliente',
       tag: 'O Diferencial Principal do BarberOS',
       description: 'O cliente escaneia o QR Code no balcão ou acessa o link da barbearia de onde estiver. Acompanha sua posição exata (#1º, #2º, #3º...), quantidade de pessoas à frente e tempo estimado de espera.',
-      image: '/src/assets/images/queue_mobile_mockup_1791313536444.jpg',
+      image: queueMockupImg,
+      fallbackImage: './images/queue_mobile_mockup_1791313536444.jpg',
       highlights: [
         'Sem espera física no salão: cliente aguarda onde quiser',
         'Notificação push nativa com som e vibração no aparelho',
@@ -68,7 +73,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       title: 'Painel do Barbeiro com Botão "Chamar Próximo"',
       tag: 'Velocidade Máxima na Bancada',
       description: 'Interface tátil otimizada para tablets e celulares nas cadeiras. Com um clique em "CHAMAR PRÓXIMO CLIENTE", o sistema atualiza a fila ao vivo e dispara o alerta sonoro e vibratório no celular do cliente.',
-      image: '/src/assets/images/operational_barber_mockup_1791313549350.jpg',
+      image: operationalMockupImg,
+      fallbackImage: './images/operational_barber_mockup_1791313549350.jpg',
       highlights: [
         'Botão gigante: CHAMAR PRÓXIMO CLIENTE com 1 toque',
         'Cronômetro de tolerância de comparecimento configurável (ex: 3 min)',
@@ -80,7 +86,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       title: 'Painel de Gestão & Faturamento da Barbearia',
       tag: 'Visão Executiva em Tempo Real',
       description: 'Tenha controle absoluto do seu negócio. Acompanhe entradas diárias, faturamento mensal, comissões de cada barbeiro automatizadas e métricas de retenção de clientes.',
-      image: '/src/assets/images/dashboard_mockup_1791313526248.jpg',
+      image: dashboardMockupImg,
+      fallbackImage: './images/dashboard_mockup_1791313526248.jpg',
       highlights: [
         'Gráficos de faturamento diário, semanal e mensal com PIX e cartões',
         'Cálculo automatizado de comissões por profissional (ex: 40% ou 50%)',
@@ -191,7 +198,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             onClick={() => scrollTo('planos')}
             className="block w-full text-left text-xs font-semibold text-slate-300 py-2 hover:text-amber-400"
           >
-            Planos & Preços (12x R$ 69,90)
+            Planos & Preços (R$ 838,80/ano)
           </button>
           <button
             onClick={() => scrollTo('faq')}
@@ -354,7 +361,15 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   <img
                     src={currentItem.image}
                     alt={currentItem.title}
-                    referrerPolicy="no-referrer"
+                    loading="lazy"
+                    decoding="async"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      const fallback = (currentItem as any).fallbackImage;
+                      if (fallback && target.src !== fallback) {
+                        target.src = fallback;
+                      }
+                    }}
                     className="w-full h-full object-cover object-center transform group-hover:scale-102 transition duration-500"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-950/40 via-transparent to-transparent pointer-events-none" />
@@ -478,7 +493,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         </div>
       </section>
 
-      {/* PLANOS SaaS SECTION (#Planos - Plano Anual 12x 69,90 e Plano Mensal 79,90) */}
+      {/* PLANOS SaaS SECTION (#Planos - Plano Anual R$ 838,80 e Plano Mensal R$ 79,90) */}
       <section id="planos" className="py-20 border-t border-slate-900">
         <div className="mx-auto max-w-5xl px-6">
           <div className="text-center max-w-2xl mx-auto mb-16 space-y-2">
@@ -539,7 +554,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </button>
             </div>
 
-            {/* PLANO ANUAL (12x 69,90 - DESTAQUE ESPECIAL) */}
+            {/* PLANO ANUAL (VALOR TOTAL INTEIRO R$ 838,80 - DESTAQUE ESPECIAL) */}
             <div className="rounded-3xl p-8 bg-gradient-to-b from-slate-900 via-slate-900 to-amber-950/30 border-2 border-amber-500/70 flex flex-col justify-between shadow-2xl ring-2 ring-amber-500/30 relative">
               <div className="absolute -top-3.5 right-6 px-3 py-1 rounded-full bg-amber-500 text-slate-950 text-[10px] uppercase font-black tracking-wider shadow-lg">
                 🔥 MAIS ESCOLHIDO • ECONOMIZE R$ 120/ANO
@@ -549,25 +564,40 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-xl font-bold text-white">Plano Pro Anual</h3>
                   <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300">
-                    12x R$ 69,90
+                    R$ 838,80 à vista
                   </span>
                 </div>
-                <p className="text-xs text-amber-300/90 mb-6">Pague em 12x no cartão ou PIX anual com economia real.</p>
+                <p className="text-xs text-amber-300/90 mb-6">
+                  Valor integral anual à vista. Se optar por dividir em até 12x no cartão, os juros da maquininha/operadora são por conta do comprador (sem descontos no valor total).
+                </p>
 
+                {/* Preço Total Inteiro em Destaque */}
                 <div className="mb-2 flex items-baseline gap-1.5">
-                  <span className="text-sm font-bold text-amber-400">12x</span>
                   <span className="text-xs text-slate-400">R$</span>
-                  <span className="text-5xl font-black text-amber-400 font-mono tracking-tight">69,90</span>
-                  <span className="text-xs text-slate-400">/mês</span>
+                  <span className="text-4xl sm:text-5xl font-black text-amber-400 font-mono tracking-tight">838,80</span>
+                  <span className="text-xs text-slate-400">/ano</span>
+                  <span className="ml-2 text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                    Valor Integral
+                  </span>
                 </div>
-                <div className="text-[11px] text-emerald-400 font-semibold mb-6">
-                  Economia de R$ 120,00 no ano (Total de R$ 838,80/ano)
+
+                <div className="space-y-1.5 mb-6 bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+                  <div className="text-xs text-slate-200 font-medium flex items-center gap-1.5">
+                    <CreditCard className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                    <span>Ou divida em até 12x no cartão de crédito</span>
+                  </div>
+                  <div className="text-[11px] text-amber-300/90 font-medium">
+                    ⚡ Juros do parcelamento por conta do cliente (não desconta do valor total)
+                  </div>
+                  <div className="text-[11px] text-emerald-400 font-semibold">
+                    ✓ Economia de R$ 120,00/ano (Equivale a apenas R$ 69,90/mês no valor à vista)
+                  </div>
                 </div>
 
                 <ul className="space-y-3 text-xs text-slate-200">
                   <li className="flex items-start gap-2.5">
                     <CheckCircle2 className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-                    <span><strong>Todas as ferramentas 100% liberadas</strong></span>
+                    <span><strong>Todas as ferramentas 100% liberadas por 12 meses</strong></span>
                   </li>
                   <li className="flex items-start gap-2.5">
                     <CheckCircle2 className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
@@ -592,7 +622,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 onClick={onStartOnboarding}
                 className="mt-8 w-full rounded-2xl py-4 text-xs font-black bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-xl shadow-amber-500/25 transition cursor-pointer"
               >
-                Começar com Plano Anual (12x R$ 69,90)
+                Começar com Plano Anual (R$ 838,80)
               </button>
             </div>
           </div>
@@ -629,7 +659,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 ))}
               </div>
               <p className="text-xs text-slate-300 leading-relaxed italic">
-                "O plano anual de 12x 69,90 se paga sozinho na primeira semana. Meus barbeiros amam o botão de Chamar na bancada porque elimina papelada e agiliza os cortes."
+                "O plano anual de R$ 838,80 se paga sozinho na primeira semana. Meus barbeiros amam o botão de Chamar na bancada porque elimina papelada e agiliza os cortes."
               </p>
               <div className="text-xs font-bold text-white">
                 — Marcos F., Mestre Barbeiro e Gestor
@@ -663,9 +693,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </div>
 
             <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-              <h4 className="font-bold text-white text-sm mb-1">Como assinar o plano anual de 12x R$ 69,90?</h4>
+              <h4 className="font-bold text-white text-sm mb-1">Como assinar o plano anual de R$ 838,80?</h4>
               <p className="text-slate-400 leading-relaxed">
-                Ao cadastrar sua barbearia, você tem acesso imediato. No painel, você pode escolher o pagamento mensal de R$ 79,90 ou o plano anual em 12x de R$ 69,90 com desconto.
+                Ao cadastrar sua barbearia, você tem acesso imediato. No painel, você pode escolher o pagamento mensal de R$ 79,90 ou o plano anual no valor total inteiro de R$ 838,80 à vista (PIX ou Cartão). Se o cliente optar por dividir em até 12x no cartão de crédito, os juros da operadora ficam a cargo do comprador, não descontando nada do valor total recebido.
               </p>
             </div>
           </div>

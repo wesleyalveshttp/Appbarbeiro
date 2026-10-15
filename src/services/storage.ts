@@ -136,16 +136,18 @@ const DEFAULT_PLANS: SaaSPlan[] = [
   },
   {
     id: 'premium',
-    name: 'Plano Pro Anual (12x R$ 69,90)',
+    name: 'Plano Pro Anual (R$ 838,80/ano)',
     priceMonthly: 69.9,
     priceAnnual: 838.8,
     maxProfessionals: -1,
     maxAppointmentsPerMonth: -1,
     popular: true,
     features: [
-      'Todas as ferramentas 100% Liberadas',
-      '12x de R$ 69,90 (Economia de R$ 120 no ano!)',
-      'Fila virtual com chamada e WhatsApp automático',
+      'Valor total anual: R$ 838,80 à vista (Economia de R$ 120 no ano!)',
+      'Parcele em até 12x no cartão (juros por conta do comprador)',
+      'Equivalente a R$ 69,90/mês no valor à vista sem descontos',
+      'Todas as ferramentas 100% Liberadas por 12 meses',
+      'Fila virtual com chamada e notificações ao vivo',
       'Agendamento online 24/7 ilimitado',
       'Painel de cadeiras em tempo real para bancada',
       'Controle de caixa, fluxo e comissões por barbeiro',
@@ -1556,8 +1558,8 @@ export class StorageService {
   // --- SaaS Plans ---
   static getPlans(): SaaSPlan[] {
     const db = this.getDB();
-    const hasAnnual69 = db.plans && db.plans.some(p => p.priceMonthly === 69.9 || p.name.includes('69,90'));
-    if (!hasAnnual69 || db.plans.length === 0) {
+    const hasAnnual838 = db.plans && db.plans.some(p => p.priceAnnual === 838.8 || p.name.includes('838,80'));
+    if (!hasAnnual838 || db.plans.length === 0) {
       db.plans = DEFAULT_PLANS;
       this.saveDB(db);
     }

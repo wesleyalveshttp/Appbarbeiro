@@ -72,7 +72,7 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const planAmount = selectedPlan === 'ANNUAL' ? 838.80 : 79.90;
-  const planLabel = selectedPlan === 'ANNUAL' ? 'Plano Pro Anual (12x R$ 69,90)' : 'Plano Pro Mensal (R$ 79,90/mês)';
+  const planLabel = selectedPlan === 'ANNUAL' ? 'Plano Pro Anual (R$ 838,80 à vista)' : 'Plano Pro Mensal (R$ 79,90/mês)';
 
   // Check Mercado Pago configuration on mount
   useEffect(() => {
@@ -288,7 +288,7 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
           </div>
         )}
 
-        {/* Plan Selector Toggle (12x 69,90 vs 79,90/mês) */}
+        {/* Plan Selector Toggle (R$ 838,80 à vista vs 79,90/mês) */}
         <div className="mt-4 grid grid-cols-2 gap-2 p-1.5 bg-slate-950 rounded-2xl border border-slate-800">
           <button
             type="button"
@@ -306,14 +306,14 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
           >
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10px] uppercase font-bold text-amber-400 tracking-wider">
-                12x R$ 69,90
+                R$ 838,80 à vista
               </span>
               <span className="text-[9px] font-bold bg-amber-500 text-slate-950 px-1.5 py-0.5 rounded">
-                -R$ 120
+                -R$ 120/ano
               </span>
             </div>
             <div className="text-sm font-black text-white">Plano Anual Pro</div>
-            <div className="text-[10px] text-slate-400 mt-0.5">R$ 838,80 / ano parcelável</div>
+            <div className="text-[10px] text-slate-400 mt-0.5">Valor integral R$ 838,80 (até 12x no cartão)</div>
           </button>
 
           <button
@@ -343,11 +343,11 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
           <div className="flex items-center justify-between">
             <div>
               <span className="text-[10px] uppercase font-bold tracking-wider text-amber-400 block">
-                {selectedPlan === 'ANNUAL' ? 'Total Promocional Anual' : 'Valor da Mensalidade'}
+                {selectedPlan === 'ANNUAL' ? 'Valor Total do Plano Anual' : 'Valor da Mensalidade'}
               </span>
               <span className="text-2xl font-black text-white font-mono">
                 {selectedPlan === 'ANNUAL' ? (
-                  <>12x R$ 69,90 <span className="text-xs text-slate-400 font-normal">(= R$ 838,80)</span></>
+                  <>R$ 838,80 <span className="text-xs text-slate-400 font-normal">à vista</span></>
                 ) : (
                   <>R$ 79,90 <span className="text-xs text-slate-400 font-normal">/ mês</span></>
                 )}
@@ -355,9 +355,21 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
             </div>
             <div className="text-right text-[11px] text-slate-400">
               <span className="text-emerald-400 font-semibold block">✓ Mercado Pago Seguro</span>
-              <span>Ativação Automática</span>
+              <span>{selectedPlan === 'ANNUAL' ? 'Economia de R$ 120/ano' : 'Ativação Automática'}</span>
             </div>
           </div>
+
+          {selectedPlan === 'ANNUAL' && (
+            <div className="mt-2.5 pt-2.5 border-t border-slate-800/80 text-[11px] text-slate-300 space-y-1">
+              <div className="flex items-center gap-1.5 text-amber-300 font-medium">
+                <CreditCard className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                <span>Parcelamento em até 12x no cartão de crédito disponível</span>
+              </div>
+              <p className="text-[10px] text-slate-400 leading-tight">
+                ⚡ Os juros da operadora de cartão de crédito ficam a cargo do comprador (cliente). O valor integral de R$ 838,80 é preservado sem descontos de parcelamento.
+              </p>
+            </div>
+          )}
 
           <div className="mt-3 pt-3 border-t border-slate-800 grid grid-cols-2 gap-2 text-[11px] text-slate-300">
             <div className="flex items-center gap-1.5">
@@ -598,7 +610,7 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
         <div className="mt-5 pt-3 border-t border-slate-800 flex items-center justify-center gap-2 text-[10px] text-slate-500">
           <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
           <span>
-            Integração Oficial Mercado Pago · SSL Criptografado · {selectedPlan === 'ANNUAL' ? '12x R$ 69,90' : 'R$ 79,90/mês'}
+            Integração Oficial Mercado Pago · SSL Criptografado · {selectedPlan === 'ANNUAL' ? 'Plano Anual R$ 838,80 (parcelável até 12x)' : 'R$ 79,90/mês'}
           </span>
         </div>
       </div>

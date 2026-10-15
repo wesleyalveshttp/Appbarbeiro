@@ -745,7 +745,7 @@ export default function App() {
         }}
       />
 
-      {/* Global Subscription Checkout Modal (R$ 79,90 e 12x 69,90) */}
+      {/* Global Subscription Checkout Modal (R$ 79,90 e R$ 838,80) */}
       <SubscriptionCheckoutModal
         isOpen={isSubscriptionModalOpen}
         onClose={() => setIsSubscriptionModalOpen(false)}

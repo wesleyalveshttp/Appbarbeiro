@@ -539,16 +539,16 @@
     {
       "uid": "usr_owner_org-1791928828381",
       "userId": "usr_owner_org-1791928828381",
-      "token": "sess_22b40eb684d1f5a3737136376739114533637afc31405c51",
-      "sessionId": "sess_22b40eb684d1f5a3737136376739114533637afc31405c51",
+      "token": "sess_b4357d2cda764c99e5ac160b9aa8e9138314061e2ce67270",
+      "sessionId": "sess_b4357d2cda764c99e5ac160b9aa8e9138314061e2ce67270",
       "role": "OWNER",
       "organizationId": "org-1791928828381",
       "userEmail": "wesleypmalves@gmail.com",
       "userName": "Barbearia Teste",
-      "createdAt": "2026-10-13T22:06:32.653Z",
-      "loggedAt": "2026-10-13T22:06:32.653Z",
-      "lastActiveAt": "2026-10-13T22:06:32.885Z",
-      "expiresAt": "2026-11-12T22:06:32.653Z",
+      "createdAt": "2026-10-15T03:16:37.199Z",
+      "loggedAt": "2026-10-15T03:16:37.199Z",
+      "lastActiveAt": "2026-10-15T03:23:40.906Z",
+      "expiresAt": "2026-11-14T03:23:40.906Z",
       "isAuthenticated": true
     },
     {
@@ -569,15 +569,15 @@
     {
       "uid": "usr_superadmin_master",
       "userId": "usr_superadmin_master",
-      "token": "sess_c3df506d39aa7184d5afb6426e6d8098d4faf5cca058862e",
-      "sessionId": "sess_c3df506d39aa7184d5afb6426e6d8098d4faf5cca058862e",
+      "token": "sess_5a14c9c372aae50ca4b1a9aa9ceee9b2a8c28ea473a033a8",
+      "sessionId": "sess_5a14c9c372aae50ca4b1a9aa9ceee9b2a8c28ea473a033a8",
       "role": "SUPER_ADMIN",
       "userEmail": "admin@barberos.com.br",
       "userName": "Super Administrador (Dono da SaaS)",
-      "createdAt": "2026-10-13T22:10:57.659Z",
-      "loggedAt": "2026-10-13T22:10:57.659Z",
-      "lastActiveAt": "2026-10-13T22:10:57.659Z",
-      "expiresAt": "2026-11-12T22:10:57.659Z",
+      "createdAt": "2026-10-15T03:25:55.708Z",
+      "loggedAt": "2026-10-15T03:25:55.708Z",
+      "lastActiveAt": "2026-10-15T03:25:55.930Z",
+      "expiresAt": "2026-11-14T03:25:55.708Z",
       "isAuthenticated": true
     },
     {
@@ -593,6 +593,35 @@
       "loggedAt": "2026-10-13T22:13:00.481Z",
       "lastActiveAt": "2026-10-13T22:13:00.481Z",
       "expiresAt": "2026-11-12T22:13:00.481Z",
+      "isAuthenticated": true
+    },
+    {
+      "uid": "usr_owner_org-1791928828381",
+      "userId": "usr_owner_org-1791928828381",
+      "token": "sess_b4357d2cda764c99e5ac160b9aa8e9138314061e2ce67270",
+      "sessionId": "sess_b4357d2cda764c99e5ac160b9aa8e9138314061e2ce67270",
+      "role": "OWNER",
+      "organizationId": "org-1791928828381",
+      "userEmail": "wesleypmalves@gmail.com",
+      "userName": "Barbearia Teste",
+      "createdAt": "2026-10-15T03:16:37.199Z",
+      "loggedAt": "2026-10-15T03:16:37.199Z",
+      "lastActiveAt": "2026-10-15T03:16:37.199Z",
+      "expiresAt": "2026-11-14T03:16:37.199Z",
+      "isAuthenticated": true
+    },
+    {
+      "uid": "usr_superadmin_master",
+      "userId": "usr_superadmin_master",
+      "token": "sess_5a14c9c372aae50ca4b1a9aa9ceee9b2a8c28ea473a033a8",
+      "sessionId": "sess_5a14c9c372aae50ca4b1a9aa9ceee9b2a8c28ea473a033a8",
+      "role": "SUPER_ADMIN",
+      "userEmail": "admin@barberos.com.br",
+      "userName": "Super Administrador (Dono da SaaS)",
+      "createdAt": "2026-10-15T03:25:55.708Z",
+      "loggedAt": "2026-10-15T03:25:55.708Z",
+      "lastActiveAt": "2026-10-15T03:25:55.708Z",
+      "expiresAt": "2026-11-14T03:25:55.708Z",
       "isAuthenticated": true
     }
   ]
