@@ -1097,10 +1097,10 @@ app.get('/api/organizations/slug/:slug', (req: Request, res: Response) => {
     });
   }
 
-  // 3. Fallback: If only 1 establishment exists or generic slug used ('fila', 'barbearia', 'default', 'app')
+  // 3. Fallback: Only for generic roots ('fila', 'default', empty)
   if (!org && orgs.length > 0) {
-    if (orgs.length === 1 || rawTerm === 'fila' || rawTerm === 'barbearia' || rawTerm === 'default' || !rawTerm) {
-      org = orgs[0];
+    if (rawTerm === 'fila' || rawTerm === 'default' || !rawTerm) {
+      org = orgs.find((o: any) => o.id !== 'org-prime') || orgs[0];
     }
   }
 
@@ -1149,28 +1149,34 @@ app.post('/api/queue/join', (req: Request, res: Response) => {
     subscription,
   } = req.body;
 
-  if (!organizationId || !customerName || !serviceId) {
-    return res.status(400).json({ error: 'Campos obrigatórios não fornecidos' });
+  if (!organizationId || !customerName) {
+    return res.status(400).json({ error: 'Nome do cliente e identificação da barbearia são obrigatórios' });
   }
 
   const db = readDB();
 
-  // Robust organization resolution (by ID or Slug)
-  let org = (db.organizations || []).find((o: any) => o.id === organizationId || o.slug === organizationId);
-  if (!org && (db.organizations || []).length > 0) {
-    org = db.organizations[0];
+  // Robust organization resolution (by ID, Slug, or exact match)
+  const orgClean = String(organizationId).trim().toLowerCase();
+  let org = (db.organizations || []).find((o: any) =>
+    (o.id && o.id.toLowerCase() === orgClean) ||
+    (o.slug && o.slug.toLowerCase() === orgClean)
+  );
+
+  if (!org) {
+    return res.status(404).json({ error: 'Barbearia não encontrada para entrar na fila.' });
   }
-  const resolvedOrgId = org ? org.id : organizationId;
+  const resolvedOrgId = org.id;
 
   // Robust service resolution
   let service = (db.services || []).find((s: any) => s.id === serviceId);
   if (!service) {
-    service = (db.services || []).find((s: any) => s.organizationId === resolvedOrgId) || {
-      id: serviceId,
-      name: 'Atendimento Geral',
-      price: 45.0,
-      durationMinutes: 30,
-    };
+    service = (db.services || []).find((s: any) => s.organizationId === resolvedOrgId && s.isActive) ||
+      (db.services || []).find((s: any) => s.organizationId === resolvedOrgId) || {
+        id: serviceId || `srv-${Date.now()}`,
+        name: 'Atendimento Geral',
+        price: 45.0,
+        durationMinutes: 30,
+      };
   }
 
   // Calculate ticket number

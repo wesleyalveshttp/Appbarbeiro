@@ -37,7 +37,7 @@ export const QRCodesView: React.FC<QRCodesViewProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const orgSlug = (organization?.slug || StorageService.getAllOrganizations()[0]?.slug || 'barbearia').trim();
+  const orgSlug = (organization?.slug || '').trim();
   const bookingUrl = `${origin}/agendar/${orgSlug}`;
   const queueUrl = `${origin}/fila/${orgSlug}`;
   const storeUrl = `${origin}/b/${orgSlug}`;
@@ -46,29 +46,29 @@ export const QRCodesView: React.FC<QRCodesViewProps> = ({
     {
       id: 'booking',
       title: 'QR Code de Agendamento Online',
-      subtitle: 'Clientes escaneiam para escolher serviço, data e horário',
+      subtitle: `Clientes escaneiam para agendar horário exclusivo em ${organization.name}`,
       url: bookingUrl,
       icon: Calendar,
       color: 'text-amber-400',
-      badge: '/agendar/' + organization.slug,
+      badge: '/agendar/' + orgSlug,
     },
     {
       id: 'queue',
       title: 'QR Code da Fila de Espera Digital',
-      subtitle: 'Ideal para imprimir e colocar no balcão de recepção ou espelhos',
+      subtitle: `Ideal para imprimir no balcão: clientes entram na fila de ${organization.name}`,
       url: queueUrl,
       icon: Clock,
       color: 'text-blue-400',
-      badge: '/fila/' + organization.slug,
+      badge: '/fila/' + orgSlug,
     },
     {
       id: 'store',
       title: 'QR Code da Vitrine / Cartão Digital',
-      subtitle: 'Apresenta catálogo de serviços, fotos, endereço e links rápidos',
+      subtitle: `Catálogo de serviços, fotos, endereço e links de ${organization.name}`,
       url: storeUrl,
       icon: Building2,
       color: 'text-purple-400',
-      badge: '/b/' + organization.slug,
+      badge: '/b/' + orgSlug,
     },
   ];
 
@@ -81,9 +81,9 @@ export const QRCodesView: React.FC<QRCodesViewProps> = ({
             <QrCode className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-white">Central de QR Codes & Links Públicos</h1>
+            <h1 className="text-xl font-bold text-white">Links & QR Codes — {organization.name}</h1>
             <p className="mt-1 text-xs text-slate-400">
-              Gere, baixe imagens PNG em alta resolução e imprima cartazes profissionais para seu salão.
+              Links exclusivos de {organization.name}. Baixe o QR Code em PNG ou imprima o cartaz para o balcão.
             </p>
           </div>
         </div>

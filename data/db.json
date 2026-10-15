@@ -509,6 +509,20 @@
       "estimatedWaitMinutes": 100,
       "notificationToken": "dev_1792039117622",
       "pushDeliveryStatus": "NOT_ATTEMPTED"
+    },
+    {
+      "id": "queue_1792040702777_7ndwxt",
+      "ticketNumber": 1,
+      "organizationId": "org-1791928828381",
+      "customerName": "Wesley Teste Real",
+      "customerPhone": "11988887777",
+      "serviceId": "srv-1791928828381",
+      "serviceName": "Corte Padrão",
+      "status": "PROXIMO",
+      "joinedAt": "2026-10-15T05:05:02.777Z",
+      "estimatedWaitMinutes": 5,
+      "notificationToken": "dev_1792040702777",
+      "pushDeliveryStatus": "NOT_ATTEMPTED"
     }
   ],
   "transactions": [],

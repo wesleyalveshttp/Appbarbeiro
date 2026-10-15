@@ -478,6 +478,9 @@ export class StorageService {
       }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
       this.setCurrentOrgId(data.organization.id);
+      if (data.session) {
+        this.setAuthSession(data.session);
+      }
       broadcastEvent('ORGANIZATIONS_UPDATED');
 
       return { success: true, organization: data.organization };
@@ -490,13 +493,34 @@ export class StorageService {
 
   // --- Session & Current Org Context ---
   static getCurrentOrgId(): string {
-    if (typeof window === 'undefined') return 'org-prime';
-    return localStorage.getItem(CURRENT_ORG_KEY) || 'org-prime';
+    if (typeof window === 'undefined') return '';
+    // Priority 1: If authenticated session has an organizationId, that is authoritative
+    const session = this.getAuthSession();
+    if (session?.isAuthenticated && session.organizationId) {
+      return session.organizationId;
+    }
+    // Priority 2: Saved organization in localStorage
+    const saved = localStorage.getItem(CURRENT_ORG_KEY);
+    const db = this.getDB();
+    if (saved && db.organizations?.some(o => o.id === saved)) {
+      return saved;
+    }
+    // Priority 3: Non-demo registered accounts (so user's real salon is preferred over demo)
+    const custom = (db.organizations || []).find(o => o.id !== 'org-prime');
+    if (custom) {
+      return custom.id;
+    }
+    return db.organizations?.[0]?.id || '';
   }
 
   static setCurrentOrgId(id: string): void {
     if (typeof window === 'undefined') return;
     localStorage.setItem(CURRENT_ORG_KEY, id);
+    const session = this.getAuthSession();
+    if (session?.isAuthenticated && session.role === 'OWNER' && session.organizationId !== id) {
+      session.organizationId = id;
+      localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
+    }
     broadcastEvent('ORG_CHANGED', { orgId: id });
   }
 
@@ -566,8 +590,8 @@ export class StorageService {
     }
 
     if (!org && orgs.length > 0) {
-      if (orgs.length === 1 || clean === 'fila' || clean === 'barbearia' || clean === 'default' || !clean) {
-        return orgs[0];
+      if (clean === 'fila' || clean === 'default' || !clean) {
+        return orgs.find(o => o.id !== 'org-prime') || orgs[0];
       }
     }
 
@@ -596,7 +620,7 @@ export class StorageService {
     } catch {
       // network fallback
     }
-    return this.getOrganizationBySlug(clean) || this.getAllOrganizations()[0] || null;
+    return this.getOrganizationBySlug(clean) || null;
   }
 
   static createOrganization(

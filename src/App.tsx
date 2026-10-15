@@ -59,6 +59,7 @@ function parseRouteFromLocation(): {
   // 1. Path-based routing (e.g. /fila/barbearia, /agendar/barbearia, /b/barbearia, /atendimento/token)
   const parts = path.split('/').filter(Boolean);
   const defaultSlug = StorageService.getOrganizationById(StorageService.getCurrentOrgId())?.slug
+    || StorageService.getAllOrganizations().find(o => o.id !== 'org-prime')?.slug
     || StorageService.getAllOrganizations()[0]?.slug
     || 'barbearia';
 
@@ -168,40 +169,49 @@ export default function App() {
 
     parseUrl();
 
-    // Restore & verify full user session (UID, role, token) from backend database
-    StorageService.restoreSession().then((session) => {
+    const initApp = async () => {
+      // 1. Sync with server backend first to load all registered accounts into local state
+      const serverDb = await StorageService.syncWithServer();
+
+      // 2. Restore and verify user session
+      const session = await StorageService.restoreSession();
       if (session?.isAuthenticated) {
         setAuthSession(session);
         setCurrentRole(session.role);
+
         if (session.role === 'SUPER_ADMIN') {
           setCurrentRoute((prev) => (prev.startsWith('public-') ? prev : (prev === 'landing' ? 'superadmin' : prev)));
         } else {
+          let org: Organization | undefined;
           if (session.organizationId) {
-            const org = StorageService.getOrganizationById(session.organizationId);
-            if (org) setCurrentOrg(org);
+            org = StorageService.getOrganizationById(session.organizationId);
+          }
+          if (!org) {
+            const orgId = StorageService.getCurrentOrgId();
+            org = StorageService.getOrganizationById(orgId) || serverDb?.organizations?.find(o => o.id !== 'org-prime') || serverDb?.organizations?.[0] || StorageService.getAllOrganizations()[0];
+          }
+          if (org) {
+            setCurrentOrg(org);
+            StorageService.setCurrentOrgId(org.id);
           }
           setCurrentRoute((prev) => (prev.startsWith('public-') ? prev : (prev === 'landing' ? 'dashboard' : prev)));
         }
+      } else {
+        // Not logged in: pick current or registered account
+        const orgId = StorageService.getCurrentOrgId();
+        const org = StorageService.getOrganizationById(orgId) || serverDb?.organizations?.find(o => o.id !== 'org-prime') || serverDb?.organizations?.[0] || StorageService.getAllOrganizations()[0];
+        if (org) {
+          setCurrentOrg(org);
+          StorageService.setCurrentOrgId(org.id);
+        }
       }
-    });
 
-    // Initial sync with server backend to load all registered accounts
-    StorageService.syncWithServer().then((serverDb) => {
-      if (serverDb?.organizations?.length) {
-        const activeOrgId = StorageService.getCurrentOrgId();
-        const found = serverDb.organizations.find(o => o.id === activeOrgId) || serverDb.organizations[0];
-        if (found) setCurrentOrg(found);
-      }
-    });
+      const roleInfo = StorageService.getCurrentRole();
+      setCurrentRole(roleInfo.role);
+      setSelectedProfessionalId(roleInfo.professionalId);
+    };
 
-    // Load active org and role
-    const orgId = StorageService.getCurrentOrgId();
-    const org = StorageService.getOrganizationById(orgId) || StorageService.getAllOrganizations()[0];
-    if (org) setCurrentOrg(org);
-
-    const roleInfo = StorageService.getCurrentRole();
-    setCurrentRole(roleInfo.role);
-    setSelectedProfessionalId(roleInfo.professionalId);
+    initApp();
 
     const unsub = StorageService.subscribeToRealtimeEvents((event) => {
       if (event.type === 'AUTH_SESSION_CHANGED') {
@@ -227,8 +237,10 @@ export default function App() {
         event.type === 'METRICS_RESET'
       ) {
         const activeOrgId = StorageService.getCurrentOrgId();
-        const updated = StorageService.getOrganizationById(activeOrgId);
-        if (updated) setCurrentOrg({ ...updated });
+        if (activeOrgId) {
+          const updated = StorageService.getOrganizationById(activeOrgId);
+          if (updated) setCurrentOrg({ ...updated });
+        }
       }
     });
 
@@ -243,6 +255,12 @@ export default function App() {
   const handleSelectOrg = (org: Organization) => {
     setCurrentOrg(org);
     StorageService.setCurrentOrgId(org.id);
+    const session = StorageService.getAuthSession();
+    if (session?.isAuthenticated && session.role === 'OWNER') {
+      const updatedSession: AuthSession = { ...session, organizationId: org.id };
+      StorageService.setAuthSession(updatedSession);
+      setAuthSession(updatedSession);
+    }
   };
 
   const handleChangeRole = (role: UserRole, professionalId?: string) => {
@@ -252,7 +270,7 @@ export default function App() {
   };
 
   const handleNavigateToPublic = (type: 'QUEUE' | 'BOOKING' | 'STORE' | 'TRACKER', slugOrToken?: string) => {
-    const slug = slugOrToken || currentOrg?.slug || 'barbearia';
+    const slug = slugOrToken || currentOrg?.slug || StorageService.getAllOrganizations().find(o => o.id !== 'org-prime')?.slug || 'barbearia';
     if (type === 'QUEUE') {
       setPublicRouteParams({ type: 'QUEUE', slug });
       setCurrentRoute('public-queue');

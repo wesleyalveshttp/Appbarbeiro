@@ -112,7 +112,7 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
   }, [organization.id]);
 
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const orgSlug = (organization?.slug || StorageService.getAllOrganizations()[0]?.slug || 'barbearia').trim();
+  const orgSlug = (organization?.slug || '').trim();
   const queueUrl = `${origin}/fila/${orgSlug}`;
 
   // Filter items
