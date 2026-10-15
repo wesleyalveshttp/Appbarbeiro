@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
-import { X, Download, Printer, Copy, Check, ExternalLink, QrCode } from 'lucide-react';
+import { X, Download, Printer, Copy, Check, ExternalLink, QrCode, ArrowRight } from 'lucide-react';
 
 interface QRCodeModalProps {
   isOpen: boolean;
@@ -9,6 +9,7 @@ interface QRCodeModalProps {
   subtitle?: string;
   url: string;
   establishmentName: string;
+  onNavigateDirectly?: () => void;
 }
 
 export const QRCodeModal: React.FC<QRCodeModalProps> = ({
@@ -18,37 +19,70 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
   subtitle,
   url,
   establishmentName,
+  onNavigateDirectly,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [copied, setCopied] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
 
+  // Guarantee absolute URL
+  const absoluteUrl = (() => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    if (typeof window !== 'undefined') {
+      const origin = window.location.origin || `${window.location.protocol}//${window.location.host}`;
+      return `${origin}${url.startsWith('/') ? '' : '/'}${url}`;
+    }
+    return url;
+  })();
+
   useEffect(() => {
-    if (isOpen && canvasRef.current) {
-      QRCode.toCanvas(
-        canvasRef.current,
-        url,
+    if (isOpen && absoluteUrl) {
+      // 1. Generate reliable Base64 image
+      QRCode.toDataURL(
+        absoluteUrl,
         {
-          width: 260,
+          width: 300,
           margin: 2,
           color: {
             dark: '#0f172a',
             light: '#ffffff',
           },
         },
-        (err) => {
-          if (!err && canvasRef.current) {
-            setQrDataUrl(canvasRef.current.toDataURL('image/png'));
+        (err, dataUri) => {
+          if (!err && dataUri) {
+            setQrDataUrl(dataUri);
           }
         }
       );
+
+      // 2. Also draw to canvas if ref mounted
+      if (canvasRef.current) {
+        QRCode.toCanvas(
+          canvasRef.current,
+          absoluteUrl,
+          {
+            width: 260,
+            margin: 2,
+            color: {
+              dark: '#0f172a',
+              light: '#ffffff',
+            },
+          },
+          (err) => {
+            if (err) console.warn('Canvas QR render error:', err);
+          }
+        );
+      }
     }
-  }, [isOpen, url]);
+  }, [isOpen, absoluteUrl]);
 
   if (!isOpen) return null;
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(url);
+    if (navigator.clipboard && absoluteUrl) {
+      navigator.clipboard.writeText(absoluteUrl);
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -65,13 +99,16 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
 
   const handlePrint = () => {
     const printWin = window.open('', '_blank');
-    if (!printWin) return;
+    if (!printWin) {
+      window.print();
+      return;
+    }
     printWin.document.write(`
       <html>
         <head>
           <title>${establishmentName} - ${title}</title>
           <style>
-            body { font-family: 'Plus Jakarta Sans', sans-serif; text-align: center; padding: 40px; }
+            body { font-family: system-ui, -apple-system, sans-serif; text-align: center; padding: 40px; }
             .card { border: 2px solid #0f172a; border-radius: 16px; padding: 32px; max-width: 400px; margin: 0 auto; }
             h1 { font-size: 24px; margin-bottom: 8px; color: #0f172a; }
             p { font-size: 14px; color: #475569; margin-bottom: 24px; }
@@ -84,13 +121,34 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
             <h1>${establishmentName}</h1>
             <p>${title}<br/><small>${subtitle || 'Aponte a câmera do seu celular'}</small></p>
             <img src="${qrDataUrl}" alt="QR Code" />
-            <div class="url">${url}</div>
+            <div class="url">${absoluteUrl}</div>
           </div>
           <script>window.onload = function() { window.print(); window.close(); }</script>
         </body>
       </html>
     `);
     printWin.document.close();
+  };
+
+  const handleOpenLink = () => {
+    onClose();
+    if (onNavigateDirectly) {
+      onNavigateDirectly();
+      return;
+    }
+    // Check if it is a local relative or same-domain link
+    try {
+      if (typeof window !== 'undefined') {
+        const u = new URL(absoluteUrl, window.location.href);
+        if (u.origin === window.location.origin) {
+          window.location.href = u.pathname + u.search + u.hash;
+          return;
+        }
+      }
+    } catch {
+      // fallback
+    }
+    window.open(absoluteUrl, '_blank');
   };
 
   return (
@@ -111,53 +169,67 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
           <p className="mt-1 text-sm text-slate-400">{subtitle || 'Escaneie para acessar instantaneamente'}</p>
         </div>
 
-        {/* QR Canvas Display */}
+        {/* QR Display */}
         <div className="mt-6 flex flex-col items-center justify-center rounded-xl bg-white p-6 shadow-inner">
-          <canvas ref={canvasRef} className="rounded-lg" />
-          <p className="mt-2 text-xs font-medium text-slate-500 text-center">
+          {qrDataUrl ? (
+            <img src={qrDataUrl} alt="QR Code" className="w-[260px] h-[260px] rounded-lg" />
+          ) : (
+            <canvas ref={canvasRef} className="rounded-lg" />
+          )}
+          <p className="mt-2 text-xs font-bold text-slate-800 text-center">
             {establishmentName}
           </p>
         </div>
 
-        {/* URL Box */}
-        <div className="mt-4 flex items-center gap-2 rounded-lg bg-slate-950 p-2.5 border border-slate-800">
-          <span className="truncate text-xs font-mono text-slate-300 flex-1">{url}</span>
+        {/* URL Box with direct click */}
+        <div className="mt-4 flex items-center gap-2 rounded-xl bg-slate-950 p-2.5 border border-slate-800">
+          <a
+            href={absoluteUrl}
+            onClick={(e) => {
+              e.preventDefault();
+              handleOpenLink();
+            }}
+            title="Clique para abrir a fila agora"
+            className="truncate text-xs font-mono text-blue-400 hover:text-blue-300 hover:underline flex-1 cursor-pointer"
+          >
+            {absoluteUrl}
+          </a>
           <button
             onClick={handleCopy}
-            className="flex items-center gap-1.5 rounded-md bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 transition"
+            className="flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 transition cursor-pointer shrink-0"
           >
             {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
             {copied ? 'Copiado' : 'Copiar'}
           </button>
         </div>
 
+        {/* Direct Access / Test Button (ALWAYS Available) */}
+        <button
+          onClick={handleOpenLink}
+          className="mt-4 w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 py-3 text-xs font-black text-slate-950 shadow-lg shadow-amber-500/25 transition cursor-pointer"
+        >
+          <ExternalLink className="h-4 w-4" />
+          <span>Acessar Fila / Página Agora</span>
+          <ArrowRight className="h-4 w-4" />
+        </button>
+
         {/* Action Buttons */}
-        <div className="mt-5 grid grid-cols-2 gap-3">
+        <div className="mt-3 grid grid-cols-2 gap-3">
           <button
             onClick={handleDownload}
-            className="flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-slate-950 hover:bg-amber-400 shadow-md transition"
+            className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 hover:bg-slate-750 px-4 py-2.5 text-xs font-semibold text-slate-200 border border-slate-700 transition cursor-pointer"
           >
-            <Download className="h-4 w-4" />
+            <Download className="h-4 w-4 text-amber-400" />
             Baixar Imagem
           </button>
           <button
             onClick={handlePrint}
-            className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 py-2.5 text-sm font-medium text-slate-200 hover:bg-slate-700 border border-slate-700 transition"
+            className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 hover:bg-slate-750 px-4 py-2.5 text-xs font-medium text-slate-200 border border-slate-700 transition cursor-pointer"
           >
-            <Printer className="h-4 w-4" />
+            <Printer className="h-4 w-4 text-slate-300" />
             Imprimir Cartaz
           </button>
         </div>
-
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-3 flex items-center justify-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 transition"
-        >
-          <ExternalLink className="h-3.5 w-3.5" />
-          Abrir link em nova aba
-        </a>
       </div>
     </div>
   );

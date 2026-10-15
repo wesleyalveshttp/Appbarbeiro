@@ -32,9 +32,10 @@ import { QRCodeModal } from '../common/QRCodeModal';
 
 interface QueueManagementProps {
   organization: Organization;
+  onNavigateToQueue?: (slug: string) => void;
 }
 
-export const QueueManagement: React.FC<QueueManagementProps> = ({ organization }) => {
+export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, onNavigateToQueue }) => {
   const [queue, setQueue] = useState<WaitingQueueItem[]>([]);
   const [professionals, setProfessionals] = useState<Professional[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -444,6 +445,17 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization }
               </option>
             ))}
           </select>
+
+          {onNavigateToQueue && (
+            <button
+              onClick={() => onNavigateToQueue(organization.slug)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400 hover:bg-blue-500/20 text-xs font-bold transition cursor-pointer"
+              title="Abrir a tela da fila virtual do cliente"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Abrir Fila Pública</span>
+            </button>
+          )}
 
           <button
             onClick={() => setShowQR(true)}
@@ -967,6 +979,7 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization }
         subtitle="Aponte a câmera para entrar na fila pelo celular"
         url={queueUrl}
         establishmentName={organization.name}
+        onNavigateDirectly={() => onNavigateToQueue?.(organization.slug)}
       />
     </div>
   );

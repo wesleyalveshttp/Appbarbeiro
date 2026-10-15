@@ -1019,9 +1019,46 @@ app.get('/api/organizations', (req: Request, res: Response) => {
 app.get('/api/organizations/slug/:slug', (req: Request, res: Response) => {
   const { slug } = req.params;
   const db = readDB();
-  const org = (db.organizations || []).find(
-    (o: any) => o.slug.toLowerCase() === slug.toLowerCase()
-  );
+  const rawTerm = decodeURIComponent(slug || '').trim().toLowerCase();
+  const normalize = (str: string) =>
+    (str || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)+/g, '');
+
+  const normTerm = normalize(rawTerm);
+
+  const orgs = db.organizations || [];
+  // 1. Exact match (slug, id, name, or normalized equivalent)
+  let org = orgs.find((o: any) => {
+    if (!o) return false;
+    const oSlug = (o.slug || '').toLowerCase();
+    const oId = (o.id || '').toLowerCase();
+    const oName = (o.name || '').toLowerCase();
+    return (
+      oSlug === rawTerm ||
+      oId === rawTerm ||
+      oName === rawTerm ||
+      normalize(oSlug) === normTerm ||
+      normalize(oName) === normTerm
+    );
+  });
+
+  // 2. Fallback to prefix match if exact match not found
+  if (!org && normTerm) {
+    org = orgs.find((o: any) => {
+      if (!o) return false;
+      const oSlug = (o.slug || '').toLowerCase();
+      const oName = (o.name || '').toLowerCase();
+      return (
+        normalize(oSlug).startsWith(normTerm) ||
+        normalize(oName).startsWith(normTerm)
+      );
+    });
+  }
+
   if (!org) {
     return res.status(404).json({ error: 'Estabelecimento não encontrado para este link.' });
   }

@@ -16,14 +16,24 @@ import { QRCodeModal } from '../common/QRCodeModal';
 
 interface QRCodesViewProps {
   organization: Organization;
+  onNavigateToQueue?: (slug: string) => void;
+  onNavigateToBooking?: (slug: string) => void;
+  onNavigateToStore?: (slug: string) => void;
 }
 
-export const QRCodesView: React.FC<QRCodesViewProps> = ({ organization }) => {
+export const QRCodesView: React.FC<QRCodesViewProps> = ({
+  organization,
+  onNavigateToQueue,
+  onNavigateToBooking,
+  onNavigateToStore,
+}) => {
   const [activeModal, setActiveModal] = useState<{
+    id: string;
     title: string;
     subtitle: string;
     url: string;
   } | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const bookingUrl = `${origin}/agendar/${organization.slug}`;
@@ -99,35 +109,79 @@ export const QRCodesView: React.FC<QRCodesViewProps> = ({ organization }) => {
                 <h3 className="text-base font-bold text-white">{card.title}</h3>
                 <p className="text-xs text-slate-400 mt-1 leading-relaxed">{card.subtitle}</p>
 
-                <div className="mt-4 p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-300 truncate">
-                  {card.url}
+                <div className="mt-4 flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800">
+                  <span className="text-[11px] font-mono text-slate-300 truncate flex-1">
+                    {card.url}
+                  </span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(card.url);
+                      setCopiedId(card.id);
+                      setTimeout(() => setCopiedId(null), 2500);
+                    }}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 transition cursor-pointer shrink-0"
+                  >
+                    {copiedId === card.id ? (
+                      <>
+                        <Check className="h-3 w-3 text-emerald-400" />
+                        <span className="text-[11px] text-emerald-400 font-bold">Copiado</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3 w-3 text-slate-400" />
+                        <span className="text-[11px]">Copiar</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
 
               <div className="space-y-2 pt-2">
+                {/* Direct Test / Open in System Button */}
+                <button
+                  onClick={() => {
+                    if (card.id === 'queue' && onNavigateToQueue) {
+                      onNavigateToQueue(organization.slug);
+                    } else if (card.id === 'booking' && onNavigateToBooking) {
+                      onNavigateToBooking(organization.slug);
+                    } else if (card.id === 'store' && onNavigateToStore) {
+                      onNavigateToStore(organization.slug);
+                    } else {
+                      window.open(card.url, '_blank');
+                    }
+                  }}
+                  className={`w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-xs font-bold transition cursor-pointer shadow-md ${
+                    card.id === 'queue'
+                      ? 'bg-blue-500 hover:bg-blue-400 text-slate-950 shadow-blue-500/20'
+                      : card.id === 'booking'
+                      ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-500/20'
+                      : 'bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/20'
+                  }`}
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  <span>
+                    {card.id === 'queue'
+                      ? 'Abrir Fila Virtual Agora'
+                      : card.id === 'booking'
+                      ? 'Testar Agendamento Online'
+                      : 'Acessar Vitrine Digital'}
+                  </span>
+                </button>
+
                 <button
                   onClick={() =>
                     setActiveModal({
+                      id: card.id,
                       title: card.title,
                       subtitle: card.subtitle,
                       url: card.url,
                     })
                   }
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 py-2.5 text-xs font-bold text-slate-950 shadow-md transition"
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 py-2.5 text-xs font-semibold text-slate-200 transition cursor-pointer"
                 >
-                  <QrCode className="h-4 w-4" />
+                  <QrCode className="h-4 w-4 text-amber-400" />
                   <span>Visualizar & Baixar QR Code</span>
                 </button>
-
-                <a
-                  href={card.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full flex items-center justify-center gap-1.5 text-xs text-slate-400 hover:text-white py-1 transition"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  <span>Testar link no navegador</span>
-                </a>
               </div>
             </div>
           );
@@ -142,6 +196,17 @@ export const QRCodesView: React.FC<QRCodesViewProps> = ({ organization }) => {
           subtitle={activeModal.subtitle}
           url={activeModal.url}
           establishmentName={organization.name}
+          onNavigateDirectly={() => {
+            if (activeModal.id === 'queue' && onNavigateToQueue) {
+              onNavigateToQueue(organization.slug);
+            } else if (activeModal.id === 'booking' && onNavigateToBooking) {
+              onNavigateToBooking(organization.slug);
+            } else if (activeModal.id === 'store' && onNavigateToStore) {
+              onNavigateToStore(organization.slug);
+            } else {
+              window.open(activeModal.url, '_blank');
+            }
+          }}
         />
       )}
     </div>

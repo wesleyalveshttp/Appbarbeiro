@@ -34,6 +34,8 @@ interface OwnerDashboardProps {
   onNavigate: (route: string) => void;
   onOpenNewAppointmentModal: () => void;
   onOpenNewQueueModal: () => void;
+  onNavigateToQueue?: (slug: string) => void;
+  onNavigateToBooking?: (slug: string) => void;
 }
 
 export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
@@ -41,6 +43,8 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
   onNavigate,
   onOpenNewAppointmentModal,
   onOpenNewQueueModal,
+  onNavigateToQueue,
+  onNavigateToBooking,
 }) => {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [queue, setQueue] = useState<WaitingQueueItem[]>([]);
@@ -49,6 +53,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
   const [showQR, setShowQR] = useState(false);
   const [qrType, setQrType] = useState<'booking' | 'queue'>('booking');
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [copiedLinkType, setCopiedLinkType] = useState<string | null>(null);
 
   const sub = organization.subscription || {
     status: 'TESTE_GRATIS',
@@ -642,18 +647,31 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
             </h3>
 
             {/* Agendamento */}
+            {/* Agendamento */}
             <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-1.5">
               <div className="font-semibold text-slate-200 flex items-center justify-between">
                 <span>Agendamento Online</span>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(bookingUrl);
-                    alert('Link copiado!');
-                  }}
-                  className="text-amber-400 hover:underline text-[11px]"
-                >
-                  Copiar Link
-                </button>
+                <div className="flex items-center gap-2">
+                  {onNavigateToBooking && (
+                    <button
+                      onClick={() => onNavigateToBooking(organization.slug)}
+                      className="text-amber-400 hover:text-amber-300 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      Testar
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(bookingUrl);
+                      setCopiedLinkType('booking');
+                      setTimeout(() => setCopiedLinkType(null), 2500);
+                    }}
+                    className="text-slate-400 hover:text-white text-[11px] cursor-pointer"
+                  >
+                    {copiedLinkType === 'booking' ? 'Copiado!' : 'Copiar'}
+                  </button>
+                </div>
               </div>
               <p className="text-slate-400 text-[11px] truncate font-mono">{bookingUrl}</p>
             </div>
@@ -662,23 +680,41 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
             <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-1.5">
               <div className="font-semibold text-slate-200 flex items-center justify-between">
                 <span>Link da Fila Digital</span>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(queueUrl);
-                    alert('Link copiado!');
-                  }}
-                  className="text-blue-400 hover:underline text-[11px]"
-                >
-                  Copiar Link
-                </button>
+                <div className="flex items-center gap-2">
+                  {onNavigateToQueue && (
+                    <button
+                      onClick={() => onNavigateToQueue(organization.slug)}
+                      className="text-blue-400 hover:text-blue-300 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      Abrir Fila
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(queueUrl);
+                      setCopiedLinkType('queue');
+                      setTimeout(() => setCopiedLinkType(null), 2500);
+                    }}
+                    className="text-slate-400 hover:text-white text-[11px] cursor-pointer"
+                  >
+                    {copiedLinkType === 'queue' ? 'Copiado!' : 'Copiar'}
+                  </button>
+                </div>
               </div>
-              <p className="text-slate-400 text-[11px] truncate font-mono">{queueUrl}</p>
+              <p
+                onClick={() => onNavigateToQueue?.(organization.slug)}
+                className="text-slate-400 hover:text-blue-400 text-[11px] truncate font-mono cursor-pointer transition"
+                title="Clique para abrir a fila"
+              >
+                {queueUrl}
+              </p>
             </div>
 
             <div className="pt-2">
               <button
                 onClick={() => onNavigate('qrcodes')}
-                className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-800 py-2.5 text-xs font-semibold text-slate-200 hover:bg-slate-750 border border-slate-700 transition"
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-800 py-2.5 text-xs font-semibold text-slate-200 hover:bg-slate-750 border border-slate-700 transition cursor-pointer"
               >
                 <QrCode className="h-4 w-4 text-amber-400" />
                 Gerar & Imprimir QR Codes
@@ -694,6 +730,13 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
         title={qrType === 'booking' ? 'QR Code de Agendamento' : 'QR Code da Fila Digital'}
         url={qrType === 'booking' ? bookingUrl : queueUrl}
         establishmentName={organization.name}
+        onNavigateDirectly={() => {
+          if (qrType === 'booking') {
+            onNavigateToBooking?.(organization.slug);
+          } else {
+            onNavigateToQueue?.(organization.slug);
+          }
+        }}
       />
 
       <SubscriptionCheckoutModal

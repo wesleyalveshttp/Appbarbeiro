@@ -492,12 +492,52 @@ export class StorageService {
   }
 
   static getOrganizationBySlug(slug: string): Organization | undefined {
-    return this.getDB().organizations.find(o => o.slug.toLowerCase() === slug.toLowerCase());
+    if (!slug) return undefined;
+    const clean = decodeURIComponent(slug).trim().toLowerCase();
+    const normalize = (str: string) =>
+      (str || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)+/g, '');
+    const normTerm = normalize(clean);
+
+    const orgs = this.getDB().organizations;
+    let org = orgs.find(o => {
+      if (!o) return false;
+      const oSlug = (o.slug || '').toLowerCase();
+      const oId = (o.id || '').toLowerCase();
+      const oName = (o.name || '').toLowerCase();
+      return (
+        oSlug === clean ||
+        oId === clean ||
+        oName === clean ||
+        normalize(oSlug) === normTerm ||
+        normalize(oName) === normTerm
+      );
+    });
+
+    if (!org && normTerm) {
+      org = orgs.find(o => {
+        if (!o) return false;
+        const oSlug = (o.slug || '').toLowerCase();
+        const oName = (o.name || '').toLowerCase();
+        return (
+          normalize(oSlug).startsWith(normTerm) ||
+          normalize(oName).startsWith(normTerm)
+        );
+      });
+    }
+
+    return org;
   }
 
   static async fetchOrganizationBySlug(slug: string): Promise<Organization | null> {
+    if (!slug) return null;
+    const clean = decodeURIComponent(slug).trim().toLowerCase();
     try {
-      const res = await fetch(`/api/organizations/slug/${encodeURIComponent(slug)}`);
+      const res = await fetch(`/api/organizations/slug/${encodeURIComponent(clean)}`);
       if (res.ok) {
         const data = await res.json();
         if (data.organization) {
@@ -516,7 +556,7 @@ export class StorageService {
     } catch {
       // network fallback
     }
-    return this.getOrganizationBySlug(slug) || null;
+    return this.getOrganizationBySlug(clean) || null;
   }
 
   static createOrganization(

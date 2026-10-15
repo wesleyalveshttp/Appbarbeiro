@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { StorageService } from './services/storage';
 import { Organization, Professional, UserRole, AuthSession } from './types';
 import { CreditCard, Sparkles } from 'lucide-react';
@@ -40,18 +40,90 @@ import { PublicStorefront } from './components/public/PublicStorefront';
 import { PublicAppointmentTracker } from './components/public/PublicAppointmentTracker';
 import { LoginModal } from './components/auth/LoginModal';
 
+// Robust URL Parser that works for all formats (/fila/slug, #/fila/slug, ?fila=slug)
+function parseRouteFromLocation(): {
+  route: string;
+  publicParams: {
+    type: 'BOOKING' | 'QUEUE' | 'STORE' | 'TRACKER' | null;
+    slug?: string;
+    token?: string;
+  };
+} {
+  if (typeof window === 'undefined') {
+    return { route: 'landing', publicParams: { type: null } };
+  }
+  const path = window.location.pathname || '';
+  const hash = window.location.hash || '';
+  const search = new URLSearchParams(window.location.search || '');
+
+  // 1. Path-based routing (e.g. /fila/barbearia, /agendar/barbearia, /b/barbearia, /atendimento/token)
+  const parts = path.split('/').filter(Boolean);
+  if (parts[0] === 'fila') {
+    const slug = parts[1] ? decodeURIComponent(parts[1]) : (StorageService.getCurrentOrgId() ? StorageService.getOrganizationById(StorageService.getCurrentOrgId())?.slug || 'barbearia' : 'barbearia');
+    return { route: 'public-queue', publicParams: { type: 'QUEUE', slug } };
+  }
+  if (parts[0] === 'agendar') {
+    const slug = parts[1] ? decodeURIComponent(parts[1]) : 'barbearia';
+    return { route: 'public-booking', publicParams: { type: 'BOOKING', slug } };
+  }
+  if (parts[0] === 'b') {
+    const slug = parts[1] ? decodeURIComponent(parts[1]) : 'barbearia';
+    return { route: 'public-store', publicParams: { type: 'STORE', slug } };
+  }
+  if (parts[0] === 'atendimento' && parts[1]) {
+    return { route: 'public-tracker', publicParams: { type: 'TRACKER', token: decodeURIComponent(parts[1]) } };
+  }
+
+  // 2. Hash-based routing (e.g. #/fila/barbearia)
+  if (hash) {
+    const hashClean = hash.replace(/^#\/?/, '');
+    const hashParts = hashClean.split('/').filter(Boolean);
+    if (hashParts[0] === 'fila') {
+      const slug = hashParts[1] ? decodeURIComponent(hashParts[1]) : 'barbearia';
+      return { route: 'public-queue', publicParams: { type: 'QUEUE', slug } };
+    }
+    if (hashParts[0] === 'agendar') {
+      const slug = hashParts[1] ? decodeURIComponent(hashParts[1]) : 'barbearia';
+      return { route: 'public-booking', publicParams: { type: 'BOOKING', slug } };
+    }
+    if (hashParts[0] === 'b') {
+      const slug = hashParts[1] ? decodeURIComponent(hashParts[1]) : 'barbearia';
+      return { route: 'public-store', publicParams: { type: 'STORE', slug } };
+    }
+  }
+
+  // 3. Query param routing (?fila=slug or ?route=fila&slug=slug)
+  const qFila = search.get('fila');
+  if (qFila) {
+    return { route: 'public-queue', publicParams: { type: 'QUEUE', slug: decodeURIComponent(qFila) } };
+  }
+  const qRoute = search.get('route');
+  const qSlug = search.get('slug');
+  if (qRoute === 'fila') {
+    return { route: 'public-queue', publicParams: { type: 'QUEUE', slug: qSlug ? decodeURIComponent(qSlug) : 'barbearia' } };
+  }
+  if (qRoute === 'agendar') {
+    return { route: 'public-booking', publicParams: { type: 'BOOKING', slug: qSlug ? decodeURIComponent(qSlug) : 'barbearia' } };
+  }
+
+  const session = StorageService.getAuthSession();
+  if (session.isAuthenticated) {
+    return {
+      route: session.role === 'SUPER_ADMIN' ? 'superadmin' : 'dashboard',
+      publicParams: { type: null }
+    };
+  }
+
+  return { route: 'landing', publicParams: { type: null } };
+}
+
 export default function App() {
+  const initialRouteInfo = useMemo(() => parseRouteFromLocation(), []);
   const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
   const [currentRole, setCurrentRole] = useState<UserRole>('OWNER');
   const [authSession, setAuthSession] = useState<AuthSession>(() => StorageService.getAuthSession());
   const [selectedProfessionalId, setSelectedProfessionalId] = useState<string | undefined>();
-  const [currentRoute, setCurrentRoute] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const isMobile = window.innerWidth < 1024;
-      return isMobile ? 'dashboard' : 'landing';
-    }
-    return 'landing';
-  });
+  const [currentRoute, setCurrentRoute] = useState<string>(initialRouteInfo.route);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Global Modals State
@@ -63,52 +135,30 @@ export default function App() {
   const [loginInitialTab, setLoginInitialTab] = useState<'OWNER' | 'SUPER_ADMIN'>('OWNER');
 
   // Path routing parsing (e.g. /agendar/dom-navalha, /fila/dom-navalha, /b/dom-navalha, /atendimento/token)
-  const [publicRouteParams, setPublicRouteParams] = useState<{
-    type: 'BOOKING' | 'QUEUE' | 'STORE' | 'TRACKER' | null;
-    slug?: string;
-    token?: string;
-  }>({ type: null });
+  const [publicRouteParams, setPublicRouteParams] = useState(initialRouteInfo.publicParams);
 
   // Initialize Organization & Session
   useEffect(() => {
     const parseUrl = () => {
-      const path = window.location.pathname;
-      const parts = path.split('/').filter(Boolean);
-
-      if (parts[0] === 'agendar' && parts[1]) {
-        setPublicRouteParams({ type: 'BOOKING', slug: parts[1] });
-        setCurrentRoute('public-booking');
-        return;
-      }
-      if (parts[0] === 'fila' && parts[1]) {
-        setPublicRouteParams({ type: 'QUEUE', slug: parts[1] });
-        setCurrentRoute('public-queue');
-        return;
-      }
-      if (parts[0] === 'b' && parts[1]) {
-        setPublicRouteParams({ type: 'STORE', slug: parts[1] });
-        setCurrentRoute('public-store');
-        return;
-      }
-      if (parts[0] === 'atendimento' && parts[1]) {
-        setPublicRouteParams({ type: 'TRACKER', token: parts[1] });
-        setCurrentRoute('public-tracker');
+      const parsed = parseRouteFromLocation();
+      if (parsed.publicParams.type) {
+        setPublicRouteParams(parsed.publicParams);
+        setCurrentRoute(parsed.route);
         return;
       }
 
-      // Default initial view: ALWAYS show landing page first, unless user already has an active authenticated session
       const session = StorageService.getAuthSession();
       setAuthSession(session);
       if (session.isAuthenticated) {
         if (session.role === 'SUPER_ADMIN') {
-          setCurrentRoute('superadmin');
+          setCurrentRoute((prev) => (prev.startsWith('public-') ? prev : 'superadmin'));
           setCurrentRole('SUPER_ADMIN');
         } else {
-          setCurrentRoute('dashboard');
+          setCurrentRoute((prev) => (prev.startsWith('public-') ? prev : 'dashboard'));
           setCurrentRole('OWNER');
         }
       } else {
-        setCurrentRoute('landing');
+        setCurrentRoute((prev) => (prev.startsWith('public-') ? prev : 'landing'));
       }
     };
 
@@ -120,13 +170,13 @@ export default function App() {
         setAuthSession(session);
         setCurrentRole(session.role);
         if (session.role === 'SUPER_ADMIN') {
-          setCurrentRoute((prev) => (prev === 'landing' ? 'superadmin' : prev));
+          setCurrentRoute((prev) => (prev.startsWith('public-') ? prev : (prev === 'landing' ? 'superadmin' : prev)));
         } else {
           if (session.organizationId) {
             const org = StorageService.getOrganizationById(session.organizationId);
             if (org) setCurrentOrg(org);
           }
-          setCurrentRoute((prev) => (prev === 'landing' ? 'dashboard' : prev));
+          setCurrentRoute((prev) => (prev.startsWith('public-') ? prev : (prev === 'landing' ? 'dashboard' : prev)));
         }
       }
     });
@@ -178,8 +228,11 @@ export default function App() {
       }
     });
 
+    window.addEventListener('popstate', parseUrl);
+
     return () => {
       unsub();
+      window.removeEventListener('popstate', parseUrl);
     };
   }, []);
 
@@ -194,9 +247,50 @@ export default function App() {
     StorageService.setCurrentRole(role, professionalId);
   };
 
+  const handleNavigateToPublic = (type: 'QUEUE' | 'BOOKING' | 'STORE' | 'TRACKER', slugOrToken?: string) => {
+    const slug = slugOrToken || currentOrg?.slug || 'barbearia';
+    if (type === 'QUEUE') {
+      setPublicRouteParams({ type: 'QUEUE', slug });
+      setCurrentRoute('public-queue');
+      if (typeof window !== 'undefined' && window.history) {
+        window.history.pushState({}, '', `/fila/${slug}`);
+      }
+    } else if (type === 'BOOKING') {
+      setPublicRouteParams({ type: 'BOOKING', slug });
+      setCurrentRoute('public-booking');
+      if (typeof window !== 'undefined' && window.history) {
+        window.history.pushState({}, '', `/agendar/${slug}`);
+      }
+    } else if (type === 'STORE') {
+      setPublicRouteParams({ type: 'STORE', slug });
+      setCurrentRoute('public-store');
+      if (typeof window !== 'undefined' && window.history) {
+        window.history.pushState({}, '', `/b/${slug}`);
+      }
+    } else if (type === 'TRACKER') {
+      setPublicRouteParams({ type: 'TRACKER', token: slug });
+      setCurrentRoute('public-tracker');
+      if (typeof window !== 'undefined' && window.history) {
+        window.history.pushState({}, '', `/atendimento/${slug}`);
+      }
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const handleNavigate = (route: string) => {
+    if (route === 'public-queue') {
+      handleNavigateToPublic('QUEUE');
+      return;
+    }
+    if (route === 'public-booking') {
+      handleNavigateToPublic('BOOKING');
+      return;
+    }
     setCurrentRoute(route);
     setPublicRouteParams({ type: null });
+    if (typeof window !== 'undefined' && window.history && (window.location.pathname.startsWith('/fila') || window.location.pathname.startsWith('/agendar') || window.location.pathname.startsWith('/b/'))) {
+      window.history.pushState({}, '', '/');
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -249,6 +343,89 @@ export default function App() {
     setCurrentRole('OWNER');
   };
 
+  // 1. Render Public Direct Route Overlays (Guaranteed to work on any phone or incognito window without needing admin org state)
+  if (currentRoute === 'public-queue') {
+    const activeSlug = publicRouteParams.slug || currentOrg?.slug || 'barbearia';
+    return (
+      <PublicQueue
+        slug={activeSlug}
+        onBackToHome={() => {
+          const session = StorageService.getAuthSession();
+          if (session.isAuthenticated) {
+            handleNavigate(session.role === 'SUPER_ADMIN' ? 'superadmin' : 'dashboard');
+          } else {
+            handleNavigate('landing');
+          }
+        }}
+        onNavigateToBooking={(slug) => {
+          handleNavigateToPublic('BOOKING', slug);
+        }}
+      />
+    );
+  }
+
+  if (currentRoute === 'public-booking') {
+    const activeSlug = publicRouteParams.slug || currentOrg?.slug || 'barbearia';
+    return (
+      <PublicBooking
+        slug={activeSlug}
+        onNavigateToQueue={(slug) => {
+          handleNavigateToPublic('QUEUE', slug);
+        }}
+        onBookingSuccess={(token) => {
+          handleNavigateToPublic('TRACKER', token);
+        }}
+        onBackToHome={() => {
+          const session = StorageService.getAuthSession();
+          if (session.isAuthenticated) {
+            handleNavigate(session.role === 'SUPER_ADMIN' ? 'superadmin' : 'dashboard');
+          } else {
+            handleNavigate('landing');
+          }
+        }}
+      />
+    );
+  }
+
+  if (currentRoute === 'public-store') {
+    const activeSlug = publicRouteParams.slug || currentOrg?.slug || 'barbearia';
+    return (
+      <PublicStorefront
+        slug={activeSlug}
+        onNavigateToBooking={(slug) => {
+          handleNavigateToPublic('BOOKING', slug);
+        }}
+        onNavigateToQueue={(slug) => {
+          handleNavigateToPublic('QUEUE', slug);
+        }}
+        onBackToHome={() => {
+          const session = StorageService.getAuthSession();
+          if (session.isAuthenticated) {
+            handleNavigate(session.role === 'SUPER_ADMIN' ? 'superadmin' : 'dashboard');
+          } else {
+            handleNavigate('landing');
+          }
+        }}
+      />
+    );
+  }
+
+  if (currentRoute === 'public-tracker' && publicRouteParams.token) {
+    return (
+      <PublicAppointmentTracker
+        token={publicRouteParams.token}
+        onBackToHome={() => {
+          const session = StorageService.getAuthSession();
+          if (session.isAuthenticated) {
+            handleNavigate(session.role === 'SUPER_ADMIN' ? 'superadmin' : 'dashboard');
+          } else {
+            handleNavigate('landing');
+          }
+        }}
+      />
+    );
+  }
+
   if (!currentOrg) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center text-white">
@@ -260,63 +437,6 @@ export default function App() {
   const selectedProfessional = selectedProfessionalId
     ? StorageService.getProfessionalById(selectedProfessionalId)
     : undefined;
-
-  // Render Public Direct Route Overlays
-  if (currentRoute === 'public-booking' && publicRouteParams.slug) {
-    return (
-      <PublicBooking
-        slug={publicRouteParams.slug}
-        onNavigateToQueue={(slug) => {
-          setPublicRouteParams({ type: 'QUEUE', slug });
-          setCurrentRoute('public-queue');
-        }}
-        onBookingSuccess={(token) => {
-          setPublicRouteParams({ type: 'TRACKER', token });
-          setCurrentRoute('public-tracker');
-        }}
-        onBackToHome={() => handleNavigate('landing')}
-      />
-    );
-  }
-
-  if (currentRoute === 'public-queue' && publicRouteParams.slug) {
-    return (
-      <PublicQueue
-        slug={publicRouteParams.slug}
-        onBackToHome={() => handleNavigate('landing')}
-        onNavigateToBooking={(slug) => {
-          setPublicRouteParams({ type: 'BOOKING', slug });
-          setCurrentRoute('public-booking');
-        }}
-      />
-    );
-  }
-
-  if (currentRoute === 'public-store' && publicRouteParams.slug) {
-    return (
-      <PublicStorefront
-        slug={publicRouteParams.slug}
-        onNavigateToBooking={(slug) => {
-          setPublicRouteParams({ type: 'BOOKING', slug });
-          setCurrentRoute('public-booking');
-        }}
-        onNavigateToQueue={(slug) => {
-          setPublicRouteParams({ type: 'QUEUE', slug });
-          setCurrentRoute('public-queue');
-        }}
-        onBackToHome={() => handleNavigate('landing')}
-      />
-    );
-  }
-
-  if (currentRoute === 'public-tracker' && publicRouteParams.token) {
-    return (
-      <PublicAppointmentTracker
-        token={publicRouteParams.token}
-        onBackToHome={() => handleNavigate('landing')}
-      />
-    );
-  }
 
   // Check authentication session
   const activeSession = authSession.isAuthenticated ? authSession : StorageService.getAuthSession();
@@ -395,6 +515,8 @@ export default function App() {
           handleNavigate(route);
         }}
         onOpenLogin={handleOpenLogin}
+        onNavigateToQueue={(slug) => handleNavigateToPublic('QUEUE', slug)}
+        onNavigateToBooking={(slug) => handleNavigateToPublic('BOOKING', slug)}
       />
 
       <div className="flex-1 flex overflow-hidden">
@@ -459,6 +581,8 @@ export default function App() {
                 onNavigate={handleNavigate}
                 onOpenNewAppointmentModal={() => setIsNewAppointmentOpen(true)}
                 onOpenNewQueueModal={() => setIsNewQueueOpen(true)}
+                onNavigateToQueue={(slug) => handleNavigateToPublic('QUEUE', slug)}
+                onNavigateToBooking={(slug) => handleNavigateToPublic('BOOKING', slug)}
               />
             )}
 
@@ -491,7 +615,10 @@ export default function App() {
             )}
 
             {currentRoute === 'fila' && (
-              <QueueManagement organization={currentOrg} />
+              <QueueManagement
+                organization={currentOrg}
+                onNavigateToQueue={(slug) => handleNavigateToPublic('QUEUE', slug)}
+              />
             )}
 
             {currentRoute === 'clientes' && (
@@ -545,7 +672,12 @@ export default function App() {
             )}
 
             {currentRoute === 'qrcodes' && (
-              <QRCodesView organization={currentOrg} />
+              <QRCodesView
+                organization={currentOrg}
+                onNavigateToQueue={(slug) => handleNavigateToPublic('QUEUE', slug)}
+                onNavigateToBooking={(slug) => handleNavigateToPublic('BOOKING', slug)}
+                onNavigateToStore={(slug) => handleNavigateToPublic('STORE', slug)}
+              />
             )}
 
             {currentRoute === 'configuracoes' && (
