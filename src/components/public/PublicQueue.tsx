@@ -66,30 +66,40 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
   const [orgNotFound, setOrgNotFound] = useState(false);
 
   const loadData = async () => {
+    if (!slug) {
+      setOrgNotFound(true);
+      setIsLoading(false);
+      return;
+    }
     try {
-      // 1. Fetch Organization accurately by slug from server or local
-      let org = await StorageService.fetchOrganizationBySlug(slug);
-      if (!org) {
-        org = StorageService.getOrganizationBySlug(slug) || null;
+      // 1. Authoritative fetch of establishment, services, professionals, and queue
+      const data = await StorageService.fetchPublicEstablishment(slug);
+      if (data && data.organization) {
+        setOrganization(data.organization);
+        setOrgNotFound(false);
+        setServices(data.services || []);
+        setProfessionals(data.professionals || []);
+        setQueue(data.queue || []);
+        if (!selectedServiceId && data.services?.length > 0) {
+          setSelectedServiceId(data.services[0].id);
+        }
+      } else {
+        // Fallback to local storage if present
+        const localOrg = StorageService.getOrganizationBySlug(slug);
+        if (localOrg) {
+          setOrganization(localOrg);
+          setOrgNotFound(false);
+          const srvs = StorageService.getServices(localOrg.id).filter(s => s.isActive);
+          const profs = StorageService.getProfessionals(localOrg.id).filter(p => p.isActive);
+          setServices(srvs);
+          setProfessionals(profs);
+          const q = await StorageService.fetchQueue(localOrg.id);
+          setQueue(q || []);
+          if (!selectedServiceId && srvs.length > 0) setSelectedServiceId(srvs[0].id);
+        } else {
+          setOrgNotFound(true);
+        }
       }
-
-      if (!org) {
-        setOrgNotFound(true);
-        setIsLoading(false);
-        return;
-      }
-
-      setOrganization(org);
-      setOrgNotFound(false);
-
-      // Sync latest queue from server for this organization
-      const q = await StorageService.fetchQueue(org.id);
-      const srvs = StorageService.getServices(org.id).filter(s => s.isActive);
-      const profs = StorageService.getProfessionals(org.id).filter(p => p.isActive);
-      setQueue(q || []);
-      setServices(srvs);
-      setProfessionals(profs);
-      if (!selectedServiceId && srvs.length > 0) setSelectedServiceId(srvs[0].id);
     } catch (err) {
       console.warn('Erro ao carregar dados da fila pública:', err);
     } finally {

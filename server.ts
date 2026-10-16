@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import webpush from 'web-push';
 import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
 import { fileURLToPath } from 'url';
+import { CloudDBService } from './src/services/cloud-db.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -280,6 +281,11 @@ function writeDB(data: any): void {
     // Direct write fallback
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
   }
+
+  // Asynchronously synchronize changes to Google Cloud Firestore
+  CloudDBService.syncAllToCloud(data).catch((err) => {
+    console.warn('Cloud Firestore sync background warning:', err);
+  });
 }
 
 function readSubscriptions(): any[] {
@@ -329,7 +335,7 @@ function addLog(log: any) {
 // ---------------------------------------------------------------------------
 const sseClients = new Set<Response>();
 
-function broadcastSSE(type: string, payload: any) {
+function broadcastSSE(type: string, payload: any = {}) {
   const message = `data: ${JSON.stringify({ type, payload, timestamp: Date.now() })}\n\n`;
   for (const client of sseClients) {
     try {
@@ -859,9 +865,20 @@ app.post('/api/auth/login-owner', (req: Request, res: Response) => {
   db.sessions.push(sessionRecord);
   writeDB(db);
 
+  const services = (db.services || []).filter((s: any) => s.organizationId === org.id);
+  const professionals = (db.professionals || []).filter((p: any) => p.organizationId === org.id);
+  const appointments = (db.appointments || []).filter((a: any) => a.organizationId === org.id);
+  const customers = (db.customers || []).filter((c: any) => c.organizationId === org.id);
+  const queue = (db.queue || []).filter((q: any) => q.organizationId === org.id);
+
   res.json({
     success: true,
     organization: org,
+    services,
+    professionals,
+    appointments,
+    customers,
+    queue,
     session: sessionRecord
   });
 });
@@ -989,15 +1006,33 @@ app.post('/api/auth/session/verify', (req: Request, res: Response) => {
   session.isAuthenticated = true;
   writeDB(db);
 
-  let organization = null;
+  let organization: any = null;
+  let services: any[] = [];
+  let professionals: any[] = [];
+  let appointments: any[] = [];
+  let customers: any[] = [];
+  let queue: any[] = [];
+
   if (session.organizationId) {
     organization = (db.organizations || []).find((o: any) => o.id === session.organizationId) || null;
+    if (organization) {
+      services = (db.services || []).filter((s: any) => s.organizationId === organization.id);
+      professionals = (db.professionals || []).filter((p: any) => p.organizationId === organization.id);
+      appointments = (db.appointments || []).filter((a: any) => a.organizationId === organization.id);
+      customers = (db.customers || []).filter((c: any) => c.organizationId === organization.id);
+      queue = (db.queue || []).filter((q: any) => q.organizationId === organization.id);
+    }
   }
 
   res.json({
     valid: true,
     session,
-    organization
+    organization,
+    services,
+    professionals,
+    appointments,
+    customers,
+    queue
   });
 });
 
@@ -1048,10 +1083,97 @@ app.post('/api/auth/update-superadmin-password', (req: Request, res: Response) =
   res.json({ success: true, message: 'Senha do Dono da SaaS atualizada com sucesso no servidor.' });
 });
 
+// Helper: Extract validated session from incoming request
+function getSessionFromRequest(req: Request, db: any): any | null {
+  const authHeader = req.headers.authorization;
+  const token =
+    (authHeader && authHeader.replace(/^Bearer\s+/i, '').trim()) ||
+    (req.headers['x-session-token'] as string) ||
+    (req.query.token as string) ||
+    req.body?.sessionToken;
+  if (!token) return null;
+  const session = (db.sessions || []).find((s: any) => s.token === token || s.sessionId === token);
+  if (!session) return null;
+  if (session.expiresAt && new Date(session.expiresAt).getTime() < Date.now()) return null;
+  return session;
+}
+
+// Helper: Sanitize organization for public viewing (strip passwords, emails, financial data)
+function sanitizeOrgPublic(org: any): any {
+  if (!org) return null;
+  const { ownerPassword, ownerEmail, invoices, mercadopagoAccessToken, stripeSecretKey, ...safeOrg } = org;
+  return safeOrg;
+}
+
+// ---------------------------------------------------------------------------
+// PUBLIC ESTABLISHMENT RESOLUTION (Pure Isolation, Zero Demo Fallback)
+// ---------------------------------------------------------------------------
+app.get('/api/public/establishment/:slug', (req: Request, res: Response) => {
+  const { slug } = req.params;
+  const db = readDB();
+  const rawTerm = decodeURIComponent(slug || '').trim().toLowerCase();
+  const normalize = (str: string) =>
+    (str || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)+/g, '');
+  const normTerm = normalize(rawTerm);
+  const orgs = db.organizations || [];
+
+  // Strict match by slug or exact ID
+  const org = orgs.find((o: any) => {
+    if (!o) return false;
+    const oSlug = (o.slug || '').toLowerCase();
+    const oId = (o.id || '').toLowerCase();
+    return oSlug === rawTerm || normalize(oSlug) === normTerm || oId === rawTerm;
+  });
+
+  if (!org) {
+    return res.status(404).json({
+      error: 'Estabelecimento não encontrado para este link.',
+      requestedSlug: rawTerm
+    });
+  }
+
+  const services = (db.services || []).filter((s: any) => s.organizationId === org.id && s.isActive !== false);
+  const professionals = (db.professionals || []).filter((p: any) => p.organizationId === org.id && p.isActive !== false);
+  const queue = (db.queue || []).filter((q: any) => q.organizationId === org.id);
+
+  res.json({
+    organization: sanitizeOrgPublic(org),
+    services,
+    professionals,
+    queue
+  });
+});
+
 // Organization resolution endpoints (Public & Admin)
 app.get('/api/organizations', (req: Request, res: Response) => {
   const db = readDB();
-  res.json({ organizations: db.organizations || [] });
+  const session = getSessionFromRequest(req, db);
+
+  // If Super Admin: return all organizations with full management properties
+  if (session && session.role === 'SUPER_ADMIN') {
+    return res.json({ organizations: db.organizations || [] });
+  }
+
+  // If Owner: return ONLY their own authorized organization
+  if (session && session.role === 'OWNER' && session.organizationId) {
+    const myOrg = (db.organizations || []).filter((o: any) => o.id === session.organizationId);
+    return res.json({ organizations: myOrg });
+  }
+
+  // Public / Unauthenticated: return only public summaries without sensitive credentials
+  const publicList = (db.organizations || []).map((o: any) => ({
+    id: o.id,
+    name: o.name,
+    slug: o.slug,
+    type: o.type,
+    isActive: o.isActive
+  }));
+  res.json({ organizations: publicList });
 });
 
 app.get('/api/organizations/slug/:slug', (req: Request, res: Response) => {
@@ -1067,47 +1189,34 @@ app.get('/api/organizations/slug/:slug', (req: Request, res: Response) => {
       .replace(/(^-|-$)+/g, '');
 
   const normTerm = normalize(rawTerm);
-
   const orgs = db.organizations || [];
-  // 1. Exact match (slug, id, name, or normalized equivalent)
-  let org = orgs.find((o: any) => {
+
+  // Strict match by slug or exact ID - NO PREFIX MATCH AND NO FALLBACK
+  const org = orgs.find((o: any) => {
     if (!o) return false;
     const oSlug = (o.slug || '').toLowerCase();
     const oId = (o.id || '').toLowerCase();
-    const oName = (o.name || '').toLowerCase();
-    return (
-      oSlug === rawTerm ||
-      oId === rawTerm ||
-      oName === rawTerm ||
-      normalize(oSlug) === normTerm ||
-      normalize(oName) === normTerm
-    );
+    return oSlug === rawTerm || normalize(oSlug) === normTerm || oId === rawTerm;
   });
-
-  // 2. Fallback to prefix match if exact match not found
-  if (!org && normTerm) {
-    org = orgs.find((o: any) => {
-      if (!o) return false;
-      const oSlug = (o.slug || '').toLowerCase();
-      const oName = (o.name || '').toLowerCase();
-      return (
-        normalize(oSlug).startsWith(normTerm) ||
-        normalize(oName).startsWith(normTerm)
-      );
-    });
-  }
-
-  // 3. Fallback: Only for generic roots ('fila', 'default', empty)
-  if (!org && orgs.length > 0) {
-    if (rawTerm === 'fila' || rawTerm === 'default' || !rawTerm) {
-      org = orgs.find((o: any) => o.id !== 'org-prime') || orgs[0];
-    }
-  }
 
   if (!org) {
     return res.status(404).json({ error: 'Estabelecimento não encontrado para este link.' });
   }
-  res.json({ organization: org });
+
+  const session = getSessionFromRequest(req, db);
+  const isSuperAdmin = session && session.role === 'SUPER_ADMIN';
+  const isMyOrg = session && session.organizationId === org.id;
+
+  const services = (db.services || []).filter((s: any) => s.organizationId === org.id && s.isActive !== false);
+  const professionals = (db.professionals || []).filter((p: any) => p.organizationId === org.id && p.isActive !== false);
+  const queue = (db.queue || []).filter((q: any) => q.organizationId === org.id);
+
+  res.json({
+    organization: (isSuperAdmin || isMyOrg) ? org : sanitizeOrgPublic(org),
+    services,
+    professionals,
+    queue
+  });
 });
 
 app.get('/api/organizations/:id', (req: Request, res: Response) => {
@@ -1117,7 +1226,494 @@ app.get('/api/organizations/:id', (req: Request, res: Response) => {
   if (!org) {
     return res.status(404).json({ error: 'Organização não encontrada.' });
   }
-  res.json({ organization: org });
+  const session = getSessionFromRequest(req, db);
+  const isAuthorized = session && (session.role === 'SUPER_ADMIN' || session.organizationId === org.id);
+  res.json({ organization: isAuthorized ? org : sanitizeOrgPublic(org) });
+});
+
+// Update Organization (Protected)
+app.put('/api/organizations/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const updates = req.body;
+  const db = readDB();
+  const session = getSessionFromRequest(req, db);
+
+  // Authorize: must be Super Admin or the owner of this organization
+  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== id) {
+    return res.status(403).json({ error: 'Acesso negado: você não tem permissão para alterar este estabelecimento.' });
+  }
+
+  const idx = (db.organizations || []).findIndex((o: any) => o.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Organização não encontrada.' });
+  }
+
+  // Prevent modifying the organization id
+  delete updates.id;
+
+  db.organizations[idx] = {
+    ...db.organizations[idx],
+    ...updates,
+    updatedAt: new Date().toISOString()
+  };
+
+  writeDB(db);
+  broadcastSSE('ORGANIZATION_UPDATED', { orgId: id });
+  res.json({ success: true, organization: db.organizations[idx] });
+});
+
+// Delete Organization (Super Admin Only)
+app.delete('/api/organizations/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const db = readDB();
+  const session = getSessionFromRequest(req, db);
+
+  if (session && session.role !== 'SUPER_ADMIN') {
+    return res.status(403).json({ error: 'Acesso restrito ao Dono da SaaS (Super Admin).' });
+  }
+
+  const org = (db.organizations || []).find((o: any) => o.id === id);
+  if (!org) {
+    return res.status(404).json({ error: 'Organização não encontrada.' });
+  }
+
+  // Delete organization and all associated entities permanently
+  db.organizations = (db.organizations || []).filter((o: any) => o.id !== id);
+  db.professionals = (db.professionals || []).filter((p: any) => p.organizationId !== id);
+  db.services = (db.services || []).filter((s: any) => s.organizationId !== id);
+  db.customers = (db.customers || []).filter((c: any) => c.organizationId !== id);
+  db.appointments = (db.appointments || []).filter((a: any) => a.organizationId !== id);
+  db.queue = (db.queue || []).filter((q: any) => q.organizationId !== id);
+  db.transactions = (db.transactions || []).filter((t: any) => t.organizationId !== id);
+  db.reviews = (db.reviews || []).filter((r: any) => r.organizationId !== id);
+
+  writeDB(db);
+  broadcastSSE('ORGANIZATIONS_UPDATED', { orgId: id });
+  res.json({ success: true, message: `Estabelecimento "${org.name}" excluído com sucesso.` });
+});
+
+// ---------------------------------------------------------------------------
+// SERVICES CRUD ENDPOINTS (Multi-tenant Isolated)
+// ---------------------------------------------------------------------------
+app.get('/api/services', (req: Request, res: Response) => {
+  const orgId = req.query.orgId as string;
+  const db = readDB();
+  if (!orgId) {
+    return res.status(400).json({ error: 'Parâmetro orgId é obrigatório.' });
+  }
+  const services = (db.services || []).filter((s: any) => s.organizationId === orgId);
+  res.json({ services });
+});
+
+app.post('/api/services', (req: Request, res: Response) => {
+  const srvData = req.body;
+  if (!srvData.organizationId || !srvData.name) {
+    return res.status(400).json({ error: 'Nome do serviço e organização são obrigatórios.' });
+  }
+  const db = readDB();
+  const session = getSessionFromRequest(req, db);
+  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== srvData.organizationId) {
+    return res.status(403).json({ error: 'Acesso negado para esta organização.' });
+  }
+
+  const newService = {
+    ...srvData,
+    id: srvData.id || `srv-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    price: Number(srvData.price) || 0,
+    durationMinutes: Number(srvData.durationMinutes) || 30,
+    isActive: srvData.isActive !== false,
+    createdAt: new Date().toISOString()
+  };
+
+  if (!Array.isArray(db.services)) db.services = [];
+  db.services.push(newService);
+  writeDB(db);
+  broadcastSSE('SERVICES_UPDATED', { orgId: srvData.organizationId });
+  res.status(201).json({ success: true, service: newService });
+});
+
+app.put('/api/services/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const updates = req.body;
+  const db = readDB();
+  const idx = (db.services || []).findIndex((s: any) => s.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Serviço não encontrado.' });
+  }
+
+  const srv = db.services[idx];
+  const session = getSessionFromRequest(req, db);
+  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== srv.organizationId) {
+    return res.status(403).json({ error: 'Acesso negado para esta organização.' });
+  }
+
+  delete updates.id;
+  delete updates.organizationId;
+
+  db.services[idx] = {
+    ...srv,
+    ...updates,
+    updatedAt: new Date().toISOString()
+  };
+
+  writeDB(db);
+  broadcastSSE('SERVICES_UPDATED', { orgId: srv.organizationId });
+  res.json({ success: true, service: db.services[idx] });
+});
+
+app.delete('/api/services/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const db = readDB();
+  const srv = (db.services || []).find((s: any) => s.id === id);
+  if (!srv) {
+    return res.status(404).json({ error: 'Serviço não encontrado.' });
+  }
+
+  const session = getSessionFromRequest(req, db);
+  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== srv.organizationId) {
+    return res.status(403).json({ error: 'Acesso negado para esta organização.' });
+  }
+
+  db.services = (db.services || []).filter((s: any) => s.id !== id);
+  writeDB(db);
+  broadcastSSE('SERVICES_UPDATED', { orgId: srv.organizationId });
+  res.json({ success: true, message: 'Serviço excluído com sucesso.' });
+});
+
+// ---------------------------------------------------------------------------
+// PROFESSIONALS CRUD ENDPOINTS (Multi-tenant Isolated)
+// ---------------------------------------------------------------------------
+app.get('/api/professionals', (req: Request, res: Response) => {
+  const orgId = req.query.orgId as string;
+  const db = readDB();
+  if (!orgId) {
+    return res.status(400).json({ error: 'Parâmetro orgId é obrigatório.' });
+  }
+  const professionals = (db.professionals || []).filter((p: any) => p.organizationId === orgId);
+  res.json({ professionals });
+});
+
+app.post('/api/professionals', (req: Request, res: Response) => {
+  const profData = req.body;
+  if (!profData.organizationId || !profData.name) {
+    return res.status(400).json({ error: 'Nome do profissional e organização são obrigatórios.' });
+  }
+  const db = readDB();
+  const session = getSessionFromRequest(req, db);
+  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== profData.organizationId) {
+    return res.status(403).json({ error: 'Acesso negado para esta organização.' });
+  }
+
+  const newProf = {
+    ...profData,
+    id: profData.id || `prof-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    commissionPercent: Number(profData.commissionPercent) || 40,
+    isActive: profData.isActive !== false,
+    isAvailableToday: profData.isAvailableToday !== false,
+    workingDays: Array.isArray(profData.workingDays) ? profData.workingDays : [1, 2, 3, 4, 5, 6],
+    specialties: Array.isArray(profData.specialties) ? profData.specialties : ['Corte'],
+    serviceIds: Array.isArray(profData.serviceIds) ? profData.serviceIds : [],
+    createdAt: new Date().toISOString()
+  };
+
+  if (!Array.isArray(db.professionals)) db.professionals = [];
+  db.professionals.push(newProf);
+  writeDB(db);
+  broadcastSSE('PROFESSIONALS_UPDATED', { orgId: profData.organizationId });
+  res.status(201).json({ success: true, professional: newProf });
+});
+
+app.put('/api/professionals/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const updates = req.body;
+  const db = readDB();
+  const idx = (db.professionals || []).findIndex((p: any) => p.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Profissional não encontrado.' });
+  }
+
+  const prof = db.professionals[idx];
+  const session = getSessionFromRequest(req, db);
+  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== prof.organizationId) {
+    return res.status(403).json({ error: 'Acesso negado para esta organização.' });
+  }
+
+  delete updates.id;
+  delete updates.organizationId;
+
+  db.professionals[idx] = {
+    ...prof,
+    ...updates,
+    updatedAt: new Date().toISOString()
+  };
+
+  writeDB(db);
+  broadcastSSE('PROFESSIONALS_UPDATED', { orgId: prof.organizationId });
+  res.json({ success: true, professional: db.professionals[idx] });
+});
+
+app.delete('/api/professionals/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const db = readDB();
+  const prof = (db.professionals || []).find((p: any) => p.id === id);
+  if (!prof) {
+    return res.status(404).json({ error: 'Profissional não encontrado.' });
+  }
+
+  const session = getSessionFromRequest(req, db);
+  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== prof.organizationId) {
+    return res.status(403).json({ error: 'Acesso negado para esta organização.' });
+  }
+
+  db.professionals = (db.professionals || []).filter((p: any) => p.id !== id);
+  writeDB(db);
+  broadcastSSE('PROFESSIONALS_UPDATED', { orgId: prof.organizationId });
+  res.json({ success: true, message: 'Profissional excluído com sucesso.' });
+});
+
+// ---------------------------------------------------------------------------
+// APPOINTMENTS CRUD ENDPOINTS (Multi-tenant Isolated)
+// ---------------------------------------------------------------------------
+app.get('/api/appointments', (req: Request, res: Response) => {
+  const orgId = req.query.orgId as string;
+  const date = req.query.date as string;
+  const db = readDB();
+  if (!orgId) {
+    return res.status(400).json({ error: 'Parâmetro orgId é obrigatório.' });
+  }
+  let appointments = (db.appointments || []).filter((a: any) => a.organizationId === orgId);
+  if (date) {
+    appointments = appointments.filter((a: any) => a.date === date);
+  }
+  res.json({ appointments });
+});
+
+app.post('/api/appointments', (req: Request, res: Response) => {
+  const aptData = req.body;
+  if (!aptData.organizationId || !aptData.customerName || !aptData.date || !aptData.time) {
+    return res.status(400).json({ error: 'Campos obrigatórios de agendamento incompletos.' });
+  }
+  const db = readDB();
+
+  // Check schedule conflict for same professional on same date/time
+  if (aptData.professionalId) {
+    const conflict = (db.appointments || []).find(
+      (a: any) =>
+        a.organizationId === aptData.organizationId &&
+        a.professionalId === aptData.professionalId &&
+        a.date === aptData.date &&
+        a.time === aptData.time &&
+        a.status !== 'CANCELADO'
+    );
+    if (conflict) {
+      return res.status(409).json({ error: 'Este profissional já possui um agendamento neste horário.' });
+    }
+  }
+
+  const newApt = {
+    ...aptData,
+    id: aptData.id || `apt-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    status: aptData.status || 'CONFIRMADO',
+    createdAt: new Date().toISOString()
+  };
+
+  if (!Array.isArray(db.appointments)) db.appointments = [];
+  db.appointments.push(newApt);
+
+  // Auto-record customer in CRM
+  if (!Array.isArray(db.customers)) db.customers = [];
+  const cleanPhone = (aptData.customerPhone || '').replace(/\D/g, '');
+  let existingCust = db.customers.find(
+    (c: any) => c.organizationId === aptData.organizationId && c.phone.replace(/\D/g, '') === cleanPhone
+  );
+  if (existingCust) {
+    existingCust.totalAppointments = (existingCust.totalAppointments || 0) + 1;
+    existingCust.lastVisit = aptData.date;
+  } else if (cleanPhone) {
+    db.customers.push({
+      id: `cust-${Date.now()}`,
+      organizationId: aptData.organizationId,
+      name: aptData.customerName,
+      phone: aptData.customerPhone,
+      whatsapp: cleanPhone,
+      email: aptData.customerEmail,
+      totalAppointments: 1,
+      totalSpent: 0,
+      lastVisit: aptData.date,
+      createdAt: new Date().toISOString()
+    });
+  }
+
+  writeDB(db);
+  broadcastSSE('APPOINTMENTS_UPDATED', { orgId: aptData.organizationId });
+  res.status(201).json({ success: true, appointment: newApt });
+});
+
+app.put('/api/appointments/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const updates = req.body;
+  const db = readDB();
+  const idx = (db.appointments || []).findIndex((a: any) => a.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Agendamento não encontrado.' });
+  }
+
+  const apt = db.appointments[idx];
+  const session = getSessionFromRequest(req, db);
+  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== apt.organizationId) {
+    return res.status(403).json({ error: 'Acesso negado para este agendamento.' });
+  }
+
+  delete updates.id;
+  delete updates.organizationId;
+
+  db.appointments[idx] = {
+    ...apt,
+    ...updates,
+    updatedAt: new Date().toISOString()
+  };
+
+  writeDB(db);
+  broadcastSSE('APPOINTMENTS_UPDATED', { orgId: apt.organizationId });
+  res.json({ success: true, appointment: db.appointments[idx] });
+});
+
+app.delete('/api/appointments/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const db = readDB();
+  const apt = (db.appointments || []).find((a: any) => a.id === id);
+  if (!apt) {
+    return res.status(404).json({ error: 'Agendamento não encontrado.' });
+  }
+
+  const session = getSessionFromRequest(req, db);
+  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== apt.organizationId) {
+    return res.status(403).json({ error: 'Acesso negado para este agendamento.' });
+  }
+
+  db.appointments = (db.appointments || []).filter((a: any) => a.id !== id);
+  writeDB(db);
+  broadcastSSE('APPOINTMENTS_UPDATED', { orgId: apt.organizationId });
+  res.json({ success: true, message: 'Agendamento excluído com sucesso.' });
+});
+
+// ---------------------------------------------------------------------------
+// CUSTOMERS CRUD ENDPOINTS
+// ---------------------------------------------------------------------------
+app.get('/api/customers', (req: Request, res: Response) => {
+  const orgId = req.query.orgId as string;
+  const db = readDB();
+  if (!orgId) return res.status(400).json({ error: 'orgId é obrigatório.' });
+  const customers = (db.customers || []).filter((c: any) => c.organizationId === orgId);
+  res.json({ customers });
+});
+
+app.post('/api/customers', (req: Request, res: Response) => {
+  const custData = req.body;
+  if (!custData.organizationId || !custData.name) {
+    return res.status(400).json({ error: 'Nome e organização são obrigatórios.' });
+  }
+  const db = readDB();
+  const newCust = {
+    ...custData,
+    id: custData.id || `cust-${Date.now()}`,
+    totalAppointments: 0,
+    totalSpent: 0,
+    createdAt: new Date().toISOString()
+  };
+  if (!Array.isArray(db.customers)) db.customers = [];
+  db.customers.push(newCust);
+  writeDB(db);
+  res.status(201).json({ success: true, customer: newCust });
+});
+
+app.put('/api/customers/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const updates = req.body;
+  const db = readDB();
+  const idx = (db.customers || []).findIndex((c: any) => c.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'Cliente não encontrado.' });
+  delete updates.id;
+  delete updates.organizationId;
+  db.customers[idx] = { ...db.customers[idx], ...updates };
+  writeDB(db);
+  res.json({ success: true, customer: db.customers[idx] });
+});
+
+// ---------------------------------------------------------------------------
+// TRANSACTIONS & REVIEWS ENDPOINTS
+// ---------------------------------------------------------------------------
+app.get('/api/transactions', (req: Request, res: Response) => {
+  const orgId = req.query.orgId as string;
+  const db = readDB();
+  if (!orgId) return res.status(400).json({ error: 'orgId é obrigatório.' });
+  const transactions = (db.transactions || []).filter((t: any) => t.organizationId === orgId);
+  res.json({ transactions });
+});
+
+app.post('/api/transactions', (req: Request, res: Response) => {
+  const txData = req.body;
+  if (!txData.organizationId || !txData.amount) {
+    return res.status(400).json({ error: 'organizationId e amount são obrigatórios.' });
+  }
+  const db = readDB();
+  const newTx = {
+    ...txData,
+    id: txData.id || `tx-${Date.now()}`,
+    createdAt: new Date().toISOString()
+  };
+  if (!Array.isArray(db.transactions)) db.transactions = [];
+  db.transactions.push(newTx);
+  writeDB(db);
+  res.status(201).json({ success: true, transaction: newTx });
+});
+
+app.get('/api/reviews', (req: Request, res: Response) => {
+  const orgId = req.query.orgId as string;
+  const db = readDB();
+  if (!orgId) return res.status(400).json({ error: 'orgId é obrigatório.' });
+  const reviews = (db.reviews || []).filter((r: any) => r.organizationId === orgId);
+  res.json({ reviews });
+});
+
+app.post('/api/reviews', (req: Request, res: Response) => {
+  const revData = req.body;
+  if (!revData.organizationId || !revData.rating) {
+    return res.status(400).json({ error: 'organizationId e rating são obrigatórios.' });
+  }
+  const db = readDB();
+  const newRev = {
+    ...revData,
+    id: revData.id || `rev-${Date.now()}`,
+    createdAt: new Date().toISOString()
+  };
+  if (!Array.isArray(db.reviews)) db.reviews = [];
+  db.reviews.push(newRev);
+  writeDB(db);
+  res.status(201).json({ success: true, review: newRev });
+});
+
+// ---------------------------------------------------------------------------
+// PLANS ENDPOINTS
+// ---------------------------------------------------------------------------
+app.get('/api/plans', (req: Request, res: Response) => {
+  const db = readDB();
+  res.json({ plans: db.plans || [] });
+});
+
+app.put('/api/plans/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const updates = req.body;
+  const db = readDB();
+  const session = getSessionFromRequest(req, db);
+  if (session && session.role !== 'SUPER_ADMIN') {
+    return res.status(403).json({ error: 'Apenas o Super Admin pode atualizar planos.' });
+  }
+  const idx = (db.plans || []).findIndex((p: any) => p.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'Plano não encontrado.' });
+  db.plans[idx] = { ...db.plans[idx], ...updates };
+  writeDB(db);
+  res.json({ success: true, plan: db.plans[idx] });
 });
 
 // Organization Queue
@@ -2153,9 +2749,95 @@ app.get('/api/subscription/status/:orgId', (req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
+// HEALTH CHECK ENDPOINT
+// ---------------------------------------------------------------------------
+app.get('/api/health', (req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    name: 'BarberOS',
+    version: '1.0.0',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CLOUD DATABASE STATUS & SYNC ENDPOINTS (Google Cloud Firestore)
+// ---------------------------------------------------------------------------
+app.get('/api/cloud/status', (req: Request, res: Response) => {
+  res.json({
+    configured: CloudDBService.isConfigured(),
+    provider: 'Google Cloud Firestore',
+    databaseId: 'ai-studio-barberosgestosaa-e7ca71ef-951e-4bef-9535-6db663a76ee9',
+    projectId: 'gen-lang-client-0208879192',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.post('/api/cloud/sync', async (req: Request, res: Response) => {
+  try {
+    const db = readDB();
+    await CloudDBService.syncAllToCloud(db);
+    res.json({ success: true, message: 'Dados sincronizados com o Cloud Firestore com sucesso.' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// STRICT 404 FOR UNMATCHED /api/* (CRITICAL: NEVER RETURN HTML FOR API CALLS)
+// ---------------------------------------------------------------------------
+app.all('/api/*', (req: Request, res: Response) => {
+  res.status(404).json({
+    error: `Rota de API não encontrada: ${req.method} ${req.path}`,
+    status: 404
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 7. VITE DEV SERVER OR STATIC PROD SERVING
 // ---------------------------------------------------------------------------
 async function startServer() {
+  // Bootstrap & merge persistent data from Google Cloud Firestore
+  try {
+    const cloudData = await CloudDBService.loadAllFromCloud();
+    if (cloudData && Array.isArray(cloudData.organizations) && cloudData.organizations.length > 0) {
+      const db = readDB();
+      for (const cloudOrg of cloudData.organizations) {
+        const idx = (db.organizations || []).findIndex((o: any) => o.id === cloudOrg.id);
+        if (idx >= 0) db.organizations[idx] = { ...db.organizations[idx], ...cloudOrg };
+        else db.organizations.push(cloudOrg);
+      }
+      if (Array.isArray(cloudData.services)) {
+        for (const s of cloudData.services) {
+          const idx = (db.services || []).findIndex((x: any) => x.id === s.id);
+          if (idx >= 0) db.services[idx] = { ...db.services[idx], ...s };
+          else db.services.push(s);
+        }
+      }
+      if (Array.isArray(cloudData.professionals)) {
+        for (const p of cloudData.professionals) {
+          const idx = (db.professionals || []).findIndex((x: any) => x.id === p.id);
+          if (idx >= 0) db.professionals[idx] = { ...db.professionals[idx], ...p };
+          else db.professionals.push(p);
+        }
+      }
+      if (Array.isArray(cloudData.queue)) {
+        for (const q of cloudData.queue) {
+          const idx = (db.queue || []).findIndex((x: any) => x.id === q.id);
+          if (idx >= 0) db.queue[idx] = { ...db.queue[idx], ...q };
+          else db.queue.push(q);
+        }
+      }
+      writeDB(db);
+      console.log(`☁️ Cloud Firestore: ${cloudData.organizations.length} estabelecimentos carregados com sucesso.`);
+    } else {
+      const db = readDB();
+      await CloudDBService.syncAllToCloud(db);
+    }
+  } catch (err) {
+    console.warn('CloudDB initial boot error:', err);
+  }
+
   const isProd = process.env.NODE_ENV === 'production' && fs.existsSync(path.resolve(__dirname, 'dist'));
 
   if (isProd) {

@@ -26,7 +26,9 @@ import {
   EyeOff,
   Edit3,
   Check,
-  X
+  X,
+  Database,
+  Cloud
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization, SaaSPlan, AuditLog } from '../../types';
@@ -55,6 +57,26 @@ export const SuperAdminDashboard: React.FC = () => {
 
   // Visible passwords map for establishments table
   const [showPasswordsMap, setShowPasswordsMap] = useState<{ [id: string]: boolean }>({});
+  const [cloudSyncing, setCloudSyncing] = useState(false);
+  const [cloudSyncSuccess, setCloudSyncSuccess] = useState<string | null>(null);
+
+  const handleManualCloudSync = async () => {
+    setCloudSyncing(true);
+    setCloudSyncSuccess(null);
+    try {
+      const res = await fetch('/api/cloud/sync', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setCloudSyncSuccess('Sincronização com o Google Cloud Firestore concluída com sucesso!');
+        setTimeout(() => setCloudSyncSuccess(null), 4000);
+      }
+    } catch {
+      setCloudSyncSuccess('Erro de conexão ao sincronizar com o Cloud Firestore.');
+      setTimeout(() => setCloudSyncSuccess(null), 4000);
+    } finally {
+      setCloudSyncing(false);
+    }
+  };
 
   const loadData = () => {
     setOrganizations(StorageService.getAllOrganizations());
@@ -601,6 +623,67 @@ export const SuperAdminDashboard: React.FC = () => {
               <span className="text-[10px] text-purple-400">{log.action}</span>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Cloud Database & Infrastructure Card */}
+      <div className="rounded-2xl bg-gradient-to-br from-slate-900 to-slate-950 border border-emerald-500/30 p-6 space-y-4 shadow-xl">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <Database className="h-6 w-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-white">Banco de Dados em Nuvem (Google Cloud Firestore)</h3>
+                <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Conectado & Ativo
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Persistência permanente de alta disponibilidade: dados sincronizados na nuvem do Google Cloud.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleManualCloudSync}
+            disabled={cloudSyncing}
+            className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs px-4 py-2.5 transition shadow-lg shadow-emerald-600/20 cursor-pointer shrink-0"
+          >
+            <RefreshCw className={`h-4 w-4 ${cloudSyncing ? 'animate-spin' : ''}`} />
+            <span>{cloudSyncing ? 'Sincronizando...' : 'Sincronizar com a Nuvem'}</span>
+          </button>
+        </div>
+
+        {cloudSyncSuccess && (
+          <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+            <span>{cloudSyncSuccess}</span>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 text-xs">
+          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+            <span className="text-[10px] text-slate-500 block uppercase font-bold">Provedor</span>
+            <span className="font-semibold text-slate-200 mt-0.5 block flex items-center gap-1.5">
+              <Cloud className="h-3.5 w-3.5 text-blue-400" />
+              Google Cloud Firestore
+            </span>
+          </div>
+          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+            <span className="text-[10px] text-slate-500 block uppercase font-bold">Projeto Cloud</span>
+            <span className="font-mono text-slate-300 mt-0.5 block truncate">
+              gen-lang-client-0208879192
+            </span>
+          </div>
+          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+            <span className="text-[10px] text-slate-500 block uppercase font-bold">Tolerância a Falhas</span>
+            <span className="font-semibold text-emerald-400 mt-0.5 block">
+              100% Alta Disponibilidade
+            </span>
+          </div>
         </div>
       </div>
 

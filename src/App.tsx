@@ -56,43 +56,39 @@ function parseRouteFromLocation(): {
   const hash = window.location.hash || '';
   const search = new URLSearchParams(window.location.search || '');
 
-  // 1. Path-based routing (e.g. /fila/barbearia, /agendar/barbearia, /b/barbearia, /atendimento/token)
+  // 1. Path-based routing (e.g. /fila/slug, /agendar/slug, /b/slug, /atendimento/token)
   const parts = path.split('/').filter(Boolean);
-  const defaultSlug = StorageService.getOrganizationById(StorageService.getCurrentOrgId())?.slug
-    || StorageService.getAllOrganizations().find(o => o.id !== 'org-prime')?.slug
-    || StorageService.getAllOrganizations()[0]?.slug
-    || 'barbearia';
 
   if (parts[0] === 'fila') {
-    const slug = parts[1] ? decodeURIComponent(parts[1]) : defaultSlug;
+    const slug = parts[1] ? decodeURIComponent(parts[1]) : '';
     return { route: 'public-queue', publicParams: { type: 'QUEUE', slug } };
   }
   if (parts[0] === 'agendar') {
-    const slug = parts[1] ? decodeURIComponent(parts[1]) : defaultSlug;
+    const slug = parts[1] ? decodeURIComponent(parts[1]) : '';
     return { route: 'public-booking', publicParams: { type: 'BOOKING', slug } };
   }
   if (parts[0] === 'b') {
-    const slug = parts[1] ? decodeURIComponent(parts[1]) : defaultSlug;
+    const slug = parts[1] ? decodeURIComponent(parts[1]) : '';
     return { route: 'public-store', publicParams: { type: 'STORE', slug } };
   }
   if (parts[0] === 'atendimento' && parts[1]) {
     return { route: 'public-tracker', publicParams: { type: 'TRACKER', token: decodeURIComponent(parts[1]) } };
   }
 
-  // 2. Hash-based routing (e.g. #/fila/barbearia)
+  // 2. Hash-based routing (e.g. #/fila/slug)
   if (hash) {
     const hashClean = hash.replace(/^#\/?/, '');
     const hashParts = hashClean.split('/').filter(Boolean);
     if (hashParts[0] === 'fila') {
-      const slug = hashParts[1] ? decodeURIComponent(hashParts[1]) : 'barbearia';
+      const slug = hashParts[1] ? decodeURIComponent(hashParts[1]) : '';
       return { route: 'public-queue', publicParams: { type: 'QUEUE', slug } };
     }
     if (hashParts[0] === 'agendar') {
-      const slug = hashParts[1] ? decodeURIComponent(hashParts[1]) : 'barbearia';
+      const slug = hashParts[1] ? decodeURIComponent(hashParts[1]) : '';
       return { route: 'public-booking', publicParams: { type: 'BOOKING', slug } };
     }
     if (hashParts[0] === 'b') {
-      const slug = hashParts[1] ? decodeURIComponent(hashParts[1]) : 'barbearia';
+      const slug = hashParts[1] ? decodeURIComponent(hashParts[1]) : '';
       return { route: 'public-store', publicParams: { type: 'STORE', slug } };
     }
   }
@@ -105,10 +101,10 @@ function parseRouteFromLocation(): {
   const qRoute = search.get('route');
   const qSlug = search.get('slug');
   if (qRoute === 'fila') {
-    return { route: 'public-queue', publicParams: { type: 'QUEUE', slug: qSlug ? decodeURIComponent(qSlug) : 'barbearia' } };
+    return { route: 'public-queue', publicParams: { type: 'QUEUE', slug: qSlug ? decodeURIComponent(qSlug) : '' } };
   }
   if (qRoute === 'agendar') {
-    return { route: 'public-booking', publicParams: { type: 'BOOKING', slug: qSlug ? decodeURIComponent(qSlug) : 'barbearia' } };
+    return { route: 'public-booking', publicParams: { type: 'BOOKING', slug: qSlug ? decodeURIComponent(qSlug) : '' } };
   }
 
   const session = StorageService.getAuthSession();
@@ -270,12 +266,12 @@ export default function App() {
   };
 
   const handleNavigateToPublic = (type: 'QUEUE' | 'BOOKING' | 'STORE' | 'TRACKER', slugOrToken?: string) => {
-    const slug = slugOrToken || currentOrg?.slug || StorageService.getAllOrganizations().find(o => o.id !== 'org-prime')?.slug || 'barbearia';
+    const slug = (slugOrToken || currentOrg?.slug || '').trim();
     if (type === 'QUEUE') {
       setPublicRouteParams({ type: 'QUEUE', slug });
       setCurrentRoute('public-queue');
       if (typeof window !== 'undefined' && window.history) {
-        window.history.pushState({}, '', `/fila/${slug}`);
+        window.history.pushState({}, '', slug ? `/fila/${slug}` : '/fila');
       }
     } else if (type === 'BOOKING') {
       setPublicRouteParams({ type: 'BOOKING', slug });
@@ -367,7 +363,7 @@ export default function App() {
 
   // 1. Render Public Direct Route Overlays (Guaranteed to work on any phone or incognito window without needing admin org state)
   if (currentRoute === 'public-queue') {
-    const activeSlug = publicRouteParams.slug || currentOrg?.slug || 'barbearia';
+    const activeSlug = (publicRouteParams.slug || currentOrg?.slug || '').trim();
     return (
       <PublicQueue
         slug={activeSlug}
@@ -387,7 +383,7 @@ export default function App() {
   }
 
   if (currentRoute === 'public-booking') {
-    const activeSlug = publicRouteParams.slug || currentOrg?.slug || 'barbearia';
+    const activeSlug = (publicRouteParams.slug || currentOrg?.slug || '').trim();
     return (
       <PublicBooking
         slug={activeSlug}
@@ -410,7 +406,7 @@ export default function App() {
   }
 
   if (currentRoute === 'public-store') {
-    const activeSlug = publicRouteParams.slug || currentOrg?.slug || 'barbearia';
+    const activeSlug = (publicRouteParams.slug || currentOrg?.slug || '').trim();
     return (
       <PublicStorefront
         slug={activeSlug}
@@ -539,6 +535,7 @@ export default function App() {
         onOpenLogin={handleOpenLogin}
         onNavigateToQueue={(slug) => handleNavigateToPublic('QUEUE', slug)}
         onNavigateToBooking={(slug) => handleNavigateToPublic('BOOKING', slug)}
+        onNavigateToStore={(slug) => handleNavigateToPublic('STORE', slug)}
       />
 
       <div className="flex-1 flex overflow-hidden">

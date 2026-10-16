@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Default Deny Catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // System heartbeat
+    match /system/{docId} {
+      allow get, list, create, update, delete: if true;
+    }
+
+    // Organizations collection
+    match /organizations/{orgId} {
+      allow get: if isValidId(orgId);
+      allow list: if true;
+      allow create, update, delete: if isValidId(orgId);
+
+      // Subcollections
+      match /services/{serviceId} {
+        allow get, create, update, delete: if isValidId(serviceId);
+        allow list: if true;
+      }
+
+      match /professionals/{profId} {
+        allow get, create, update, delete: if isValidId(profId);
+        allow list: if true;
+      }
+
+      match /queue/{queueId} {
+        allow get, create, update, delete: if isValidId(queueId);
+        allow list: if true;
+      }
+
+      match /appointments/{appointmentId} {
+        allow get, create, update, delete: if isValidId(appointmentId);
+        allow list: if true;
+      }
+
+      match /customers/{customerId} {
+        allow get, create, update, delete: if isValidId(customerId);
+        allow list: if true;
+      }
+    }
+
+    // Direct root collections for global multi-tenant access and synchronization
+    match /services/{serviceId} {
+      allow get, create, update, delete: if isValidId(serviceId);
+      allow list: if true;
+    }
+
+    match /professionals/{profId} {
+      allow get, create, update, delete: if isValidId(profId);
+      allow list: if true;
+    }
+
+    match /queue/{queueId} {
+      allow get, create, update, delete: if isValidId(queueId);
+      allow list: if true;
+    }
+
+    match /appointments/{appointmentId} {
+      allow get, create, update, delete: if isValidId(appointmentId);
+      allow list: if true;
+    }
+
+    match /customers/{customerId} {
+      allow get, create, update, delete: if isValidId(customerId);
+      allow list: if true;
+    }
+
+    match /sessions/{sessionId} {
+      allow get, create, update, delete: if isValidId(sessionId);
+      allow list: if true;
+    }
+  }
+}

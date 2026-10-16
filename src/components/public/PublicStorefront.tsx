@@ -41,20 +41,34 @@ export const PublicStorefront: React.FC<PublicStorefrontProps> = ({
 
   useEffect(() => {
     const fetchOrg = async () => {
+      if (!slug) {
+        setOrgNotFound(true);
+        setIsLoading(false);
+        return;
+      }
       try {
-        let org = await StorageService.fetchOrganizationBySlug(slug);
-        if (!org) {
-          org = StorageService.getOrganizationBySlug(slug) || null;
-        }
-        if (org) {
-          setOrganization(org);
+        const data = await StorageService.fetchPublicEstablishment(slug);
+        if (data && data.organization) {
+          setOrganization(data.organization);
           setOrgNotFound(false);
-          setServices(StorageService.getServices(org.id).filter(s => s.isActive));
-          setProfessionals(StorageService.getProfessionals(org.id).filter(p => p.isActive));
-          setReviews(StorageService.getReviews(org.id));
+          setServices(data.services || []);
+          setProfessionals(data.professionals || []);
+          setReviews(StorageService.getReviews(data.organization.id));
         } else {
-          setOrgNotFound(true);
+          const localOrg = StorageService.getOrganizationBySlug(slug);
+          if (localOrg) {
+            setOrganization(localOrg);
+            setOrgNotFound(false);
+            setServices(StorageService.getServices(localOrg.id).filter(s => s.isActive));
+            setProfessionals(StorageService.getProfessionals(localOrg.id).filter(p => p.isActive));
+            setReviews(StorageService.getReviews(localOrg.id));
+          } else {
+            setOrgNotFound(true);
+          }
         }
+      } catch (err) {
+        console.warn('Erro ao carregar vitrine:', err);
+        setOrgNotFound(true);
       } finally {
         setIsLoading(false);
       }

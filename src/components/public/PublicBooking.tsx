@@ -49,23 +49,40 @@ export const PublicBooking: React.FC<PublicBookingProps> = ({
 
   useEffect(() => {
     const fetchOrg = async () => {
+      if (!slug) {
+        setOrgNotFound(true);
+        setIsLoading(false);
+        return;
+      }
       try {
-        let org = await StorageService.fetchOrganizationBySlug(slug);
-        if (!org) {
-          org = StorageService.getOrganizationBySlug(slug) || null;
-        }
-        if (org) {
-          setOrganization(org);
+        const data = await StorageService.fetchPublicEstablishment(slug);
+        if (data && data.organization) {
+          setOrganization(data.organization);
           setOrgNotFound(false);
-          const srvs = StorageService.getServices(org.id).filter(s => s.isActive);
-          const profs = StorageService.getProfessionals(org.id).filter(p => p.isActive);
+          const srvs = data.services || [];
+          const profs = data.professionals || [];
           setServices(srvs);
           setProfessionals(profs);
           if (srvs.length > 0) setSelectedService(srvs[0]);
           if (profs.length > 0) setSelectedProfessional(profs[0]);
         } else {
-          setOrgNotFound(true);
+          const localOrg = StorageService.getOrganizationBySlug(slug);
+          if (localOrg) {
+            setOrganization(localOrg);
+            setOrgNotFound(false);
+            const srvs = StorageService.getServices(localOrg.id).filter(s => s.isActive);
+            const profs = StorageService.getProfessionals(localOrg.id).filter(p => p.isActive);
+            setServices(srvs);
+            setProfessionals(profs);
+            if (srvs.length > 0) setSelectedService(srvs[0]);
+            if (profs.length > 0) setSelectedProfessional(profs[0]);
+          } else {
+            setOrgNotFound(true);
+          }
         }
+      } catch (err) {
+        console.warn('Erro ao carregar dados de agendamento:', err);
+        setOrgNotFound(true);
       } finally {
         setIsLoading(false);
       }

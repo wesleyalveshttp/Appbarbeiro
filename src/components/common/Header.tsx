@@ -32,6 +32,7 @@ interface HeaderProps {
   onOpenLogin?: (tab?: 'OWNER' | 'SUPER_ADMIN') => void;
   onNavigateToQueue?: (slug: string) => void;
   onNavigateToBooking?: (slug: string) => void;
+  onNavigateToStore?: (slug: string) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -46,6 +47,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenLogin,
   onNavigateToQueue,
   onNavigateToBooking,
+  onNavigateToStore,
 }) => {
   const [showOrgDropdown, setShowOrgDropdown] = useState(false);
   const [showRoleDropdown, setShowRoleDropdown] = useState(false);
@@ -410,6 +412,8 @@ export const Header: React.FC<HeaderProps> = ({
           setShowQRModal(false);
           if (qrType === 'booking') {
             onNavigateToBooking?.(currentOrg.slug);
+          } else if (qrType === 'store') {
+            onNavigateToStore?.(currentOrg.slug);
           } else {
             onNavigateToQueue?.(currentOrg.slug);
           }

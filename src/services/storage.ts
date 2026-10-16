@@ -335,75 +335,11 @@ export class StorageService {
       const res = await fetch('/api/db');
       if (res.ok) {
         const serverDb: AppDatabase = await res.json();
-        const localDb = this.getDB();
-
-        // Smart merge organizations: never wipe out locally added organizations
-        const mergedOrgs = [...(serverDb.organizations || [])];
-        for (const localOrg of (localDb.organizations || [])) {
-          const idx = mergedOrgs.findIndex(o => o.id === localOrg.id);
-          if (idx === -1) {
-            mergedOrgs.push(localOrg);
-          } else {
-            // Keep the most complete version
-            mergedOrgs[idx] = { ...localOrg, ...mergedOrgs[idx] };
-          }
+        if (serverDb && Array.isArray(serverDb.organizations)) {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(serverDb));
+          broadcastEvent('DB_SYNCED');
+          return serverDb;
         }
-        serverDb.organizations = mergedOrgs;
-
-        // Smart merge professionals
-        const mergedProfs = [...(serverDb.professionals || [])];
-        for (const localProf of (localDb.professionals || [])) {
-          if (!mergedProfs.some(p => p.id === localProf.id)) {
-            mergedProfs.push(localProf);
-          }
-        }
-        serverDb.professionals = mergedProfs;
-
-        // Smart merge services
-        const mergedServices = [...(serverDb.services || [])];
-        for (const localSrv of (localDb.services || [])) {
-          if (!mergedServices.some(s => s.id === localSrv.id)) {
-            mergedServices.push(localSrv);
-          }
-        }
-        serverDb.services = mergedServices;
-
-        // Smart merge queue: combine server queue with any local active items
-        const mergedQueue = [...(serverDb.queue || [])];
-        for (const localQ of (localDb.queue || [])) {
-          const idx = mergedQueue.findIndex(q => q.id === localQ.id);
-          if (idx === -1) {
-            mergedQueue.push(localQ);
-          } else {
-            mergedQueue[idx] = { ...localQ, ...mergedQueue[idx] };
-          }
-        }
-        serverDb.queue = mergedQueue;
-
-        // Smart merge appointments
-        const mergedApts = [...(serverDb.appointments || [])];
-        for (const localApt of (localDb.appointments || [])) {
-          const idx = mergedApts.findIndex(a => a.id === localApt.id);
-          if (idx === -1) {
-            mergedApts.push(localApt);
-          } else {
-            mergedApts[idx] = { ...localApt, ...mergedApts[idx] };
-          }
-        }
-        serverDb.appointments = mergedApts;
-
-        // Smart merge customers
-        const mergedCustomers = [...(serverDb.customers || [])];
-        for (const localCust of (localDb.customers || [])) {
-          if (!mergedCustomers.some(c => c.id === localCust.id)) {
-            mergedCustomers.push(localCust);
-          }
-        }
-        serverDb.customers = mergedCustomers;
-
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(serverDb));
-        broadcastEvent('DB_SYNCED');
-        return serverDb;
       }
     } catch (e) {
       console.warn('Network sync offline fallback', e);
@@ -563,64 +499,77 @@ export class StorageService {
     const normTerm = normalize(clean);
 
     const orgs = this.getDB().organizations;
-    let org = orgs.find(o => {
+    // Strict match by slug or exact ID - NO PREFIX MATCH AND NO DEMO FALLBACK
+    return orgs.find(o => {
       if (!o) return false;
       const oSlug = (o.slug || '').toLowerCase();
       const oId = (o.id || '').toLowerCase();
-      const oName = (o.name || '').toLowerCase();
-      return (
-        oSlug === clean ||
-        oId === clean ||
-        oName === clean ||
-        normalize(oSlug) === normTerm ||
-        normalize(oName) === normTerm
-      );
+      return oSlug === clean || normalize(oSlug) === normTerm || oId === clean;
     });
-
-    if (!org && normTerm) {
-      org = orgs.find(o => {
-        if (!o) return false;
-        const oSlug = (o.slug || '').toLowerCase();
-        const oName = (o.name || '').toLowerCase();
-        return (
-          normalize(oSlug).startsWith(normTerm) ||
-          normalize(oName).startsWith(normTerm)
-        );
-      });
-    }
-
-    if (!org && orgs.length > 0) {
-      if (clean === 'fila' || clean === 'default' || !clean) {
-        return orgs.find(o => o.id !== 'org-prime') || orgs[0];
-      }
-    }
-
-    return org;
   }
 
-  static async fetchOrganizationBySlug(slug: string): Promise<Organization | null> {
-    const clean = decodeURIComponent(slug || '').trim().toLowerCase();
+  // Authoritative fetch of establishment, services, professionals, and queue for public pages (/fila/:slug, /agendar/:slug, /b/:slug)
+  static async fetchPublicEstablishment(slug: string): Promise<{
+    organization: Organization;
+    services: Service[];
+    professionals: Professional[];
+    queue: WaitingQueueItem[];
+  } | null> {
+    if (!slug) return null;
+    const clean = decodeURIComponent(slug).trim().toLowerCase();
     try {
-      const res = await fetch(`/api/organizations/slug/${encodeURIComponent(clean || 'fila')}`);
-      if (res.ok) {
+      const res = await fetch(`/api/public/establishment/${encodeURIComponent(clean)}`);
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
         if (data.organization) {
-          // Merge into local cache
           const db = this.getDB();
-          const existingIdx = db.organizations.findIndex(o => o.id === data.organization.id);
-          if (existingIdx >= 0) {
-            db.organizations[existingIdx] = data.organization;
+          const orgIdx = db.organizations.findIndex(o => o.id === data.organization.id);
+          if (orgIdx >= 0) {
+            db.organizations[orgIdx] = { ...db.organizations[orgIdx], ...data.organization };
           } else {
             db.organizations.push(data.organization);
           }
-          this.saveDB(db);
-          return data.organization;
+
+          if (Array.isArray(data.services)) {
+            const otherServices = db.services.filter(s => s.organizationId !== data.organization.id);
+            db.services = [...otherServices, ...data.services];
+          }
+          if (Array.isArray(data.professionals)) {
+            const otherProfs = db.professionals.filter(p => p.organizationId !== data.organization.id);
+            db.professionals = [...otherProfs, ...data.professionals];
+          }
+          if (Array.isArray(data.queue)) {
+            const otherQueue = db.queue.filter(q => q.organizationId !== data.organization.id);
+            db.queue = [...otherQueue, ...data.queue];
+          }
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+          } catch {}
+
+          return data;
         }
       }
-    } catch {
-      // network fallback
+    } catch (err) {
+      console.warn('Network error fetching public establishment:', err);
     }
-    return this.getOrganizationBySlug(clean) || null;
+
+    // Local cache fallback ONLY IF exact match exists
+    const localOrg = this.getOrganizationBySlug(clean);
+    if (localOrg) {
+      return {
+        organization: localOrg,
+        services: this.getServices(localOrg.id),
+        professionals: this.getProfessionals(localOrg.id),
+        queue: this.getQueue(localOrg.id)
+      };
+    }
+    return null;
+  }
+
+  static async fetchOrganizationBySlug(slug: string): Promise<Organization | null> {
+    const data = await this.fetchPublicEstablishment(slug);
+    return data ? data.organization : null;
   }
 
   static createOrganization(
@@ -658,12 +607,29 @@ export class StorageService {
     return newOrg;
   }
 
+  static getAuthToken(): string {
+    if (typeof window === 'undefined') return '';
+    const session = this.getAuthSession();
+    return session.token || localStorage.getItem(SESSION_TOKEN_KEY) || '';
+  }
+
   static updateOrganization(id: string, updates: Partial<Organization>): Organization {
     const db = this.getDB();
     const index = db.organizations.findIndex(o => o.id === id);
     if (index === -1) throw new Error('Organização não encontrada');
     db.organizations[index] = { ...db.organizations[index], ...updates };
     this.saveDB(db);
+
+    const token = this.getAuthToken();
+    fetch(`/api/organizations/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(updates)
+    }).catch(err => console.warn('Server update organization failed:', err));
+
     broadcastEvent('ORGANIZATION_UPDATED', { orgId: id });
     return db.organizations[index];
   }
@@ -674,6 +640,17 @@ export class StorageService {
     if (!org) throw new Error('Organização não encontrada');
     org.isActive = !org.isActive;
     this.saveDB(db);
+
+    const token = this.getAuthToken();
+    fetch(`/api/organizations/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ isActive: org.isActive })
+    }).catch(err => console.warn('Server toggle organization failed:', err));
+
     broadcastEvent('ORGANIZATION_UPDATED', { orgId: id });
     return org;
   }
@@ -703,6 +680,15 @@ export class StorageService {
     }
 
     this.saveDB(db);
+
+    const token = this.getAuthToken();
+    fetch(`/api/organizations/${id}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    }).catch(err => console.warn('Server delete organization failed:', err));
+
     this.logAudit(id, 'Super Admin', `Estabelecimento "${org.name}" excluído permanentemente da plataforma`);
     broadcastEvent('ORGANIZATION_DELETED', { orgId: id });
     broadcastEvent('ORGANIZATIONS_UPDATED');
@@ -719,6 +705,21 @@ export class StorageService {
     if (name) org.ownerName = name.trim();
 
     this.saveDB(db);
+
+    const token = this.getAuthToken();
+    fetch(`/api/organizations/${orgId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        ownerEmail: org.ownerEmail,
+        ownerPassword: org.ownerPassword,
+        ownerName: org.ownerName
+      })
+    }).catch(err => console.warn('Server update owner credentials failed:', err));
+
     this.logAudit(orgId, 'Proprietário', `Credenciais de login e senha atualizadas`);
     broadcastEvent('ORGANIZATION_UPDATED', { orgId });
     return org;
@@ -743,6 +744,17 @@ export class StorageService {
     };
     db.professionals.push(newProf);
     this.saveDB(db);
+
+    const token = this.getAuthToken();
+    fetch('/api/professionals', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(newProf)
+    }).catch(err => console.warn('Server create professional failed:', err));
+
     broadcastEvent('PROFESSIONALS_UPDATED', { orgId: data.organizationId });
     return newProf;
   }
@@ -753,6 +765,17 @@ export class StorageService {
     if (idx === -1) throw new Error('Profissional não encontrado');
     db.professionals[idx] = { ...db.professionals[idx], ...updates };
     this.saveDB(db);
+
+    const token = this.getAuthToken();
+    fetch(`/api/professionals/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(updates)
+    }).catch(err => console.warn('Server update professional failed:', err));
+
     broadcastEvent('PROFESSIONALS_UPDATED', { orgId: db.professionals[idx].organizationId });
     return db.professionals[idx];
   }
@@ -761,9 +784,19 @@ export class StorageService {
     const db = this.getDB();
     const prof = db.professionals.find(p => p.id === id);
     if (!prof) return;
+    const orgId = prof.organizationId;
     db.professionals = db.professionals.filter(p => p.id !== id);
     this.saveDB(db);
-    broadcastEvent('PROFESSIONALS_UPDATED', { orgId: prof.organizationId });
+
+    const token = this.getAuthToken();
+    fetch(`/api/professionals/${id}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    }).catch(err => console.warn('Server delete professional failed:', err));
+
+    broadcastEvent('PROFESSIONALS_UPDATED', { orgId });
   }
 
   // --- Services ---
@@ -785,6 +818,17 @@ export class StorageService {
     };
     db.services.push(newSrv);
     this.saveDB(db);
+
+    const token = this.getAuthToken();
+    fetch('/api/services', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(newSrv)
+    }).catch(err => console.warn('Server create service failed:', err));
+
     broadcastEvent('SERVICES_UPDATED', { orgId: data.organizationId });
     return newSrv;
   }
@@ -795,6 +839,17 @@ export class StorageService {
     if (idx === -1) throw new Error('Serviço não encontrado');
     db.services[idx] = { ...db.services[idx], ...updates };
     this.saveDB(db);
+
+    const token = this.getAuthToken();
+    fetch(`/api/services/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify(updates)
+    }).catch(err => console.warn('Server update service failed:', err));
+
     broadcastEvent('SERVICES_UPDATED', { orgId: db.services[idx].organizationId });
     return db.services[idx];
   }
@@ -803,9 +858,19 @@ export class StorageService {
     const db = this.getDB();
     const srv = db.services.find(s => s.id === id);
     if (!srv) return;
+    const orgId = srv.organizationId;
     db.services = db.services.filter(s => s.id !== id);
     this.saveDB(db);
-    broadcastEvent('SERVICES_UPDATED', { orgId: srv.organizationId });
+
+    const token = this.getAuthToken();
+    fetch(`/api/services/${id}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    }).catch(err => console.warn('Server delete service failed:', err));
+
+    broadcastEvent('SERVICES_UPDATED', { orgId });
   }
 
   // --- Customers CRM ---
@@ -2038,6 +2103,21 @@ export class StorageService {
             } else {
               db.organizations.push(data.organization);
             }
+            if (Array.isArray(data.services)) {
+              db.services = [...db.services.filter(s => s.organizationId !== data.organization.id), ...data.services];
+            }
+            if (Array.isArray(data.professionals)) {
+              db.professionals = [...db.professionals.filter(p => p.organizationId !== data.organization.id), ...data.professionals];
+            }
+            if (Array.isArray(data.appointments)) {
+              db.appointments = [...db.appointments.filter(a => a.organizationId !== data.organization.id), ...data.appointments];
+            }
+            if (Array.isArray(data.customers)) {
+              db.customers = [...db.customers.filter(c => c.organizationId !== data.organization.id), ...data.customers];
+            }
+            if (Array.isArray(data.queue)) {
+              db.queue = [...db.queue.filter(q => q.organizationId !== data.organization.id), ...data.queue];
+            }
             localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
           }
 
@@ -2084,13 +2164,28 @@ export class StorageService {
       });
       const data = await res.json();
       if (res.ok && data.success && data.organization) {
-        // Sync local DB cache with the loaded organization
+        // Sync local DB cache with the loaded organization and all its data
         const db = this.getDB();
         const existingIdx = db.organizations.findIndex(o => o.id === data.organization.id);
         if (existingIdx >= 0) {
           db.organizations[existingIdx] = data.organization;
         } else {
           db.organizations.push(data.organization);
+        }
+        if (Array.isArray(data.services)) {
+          db.services = [...db.services.filter(s => s.organizationId !== data.organization.id), ...data.services];
+        }
+        if (Array.isArray(data.professionals)) {
+          db.professionals = [...db.professionals.filter(p => p.organizationId !== data.organization.id), ...data.professionals];
+        }
+        if (Array.isArray(data.appointments)) {
+          db.appointments = [...db.appointments.filter(a => a.organizationId !== data.organization.id), ...data.appointments];
+        }
+        if (Array.isArray(data.customers)) {
+          db.customers = [...db.customers.filter(c => c.organizationId !== data.organization.id), ...data.customers];
+        }
+        if (Array.isArray(data.queue)) {
+          db.queue = [...db.queue.filter(q => q.organizationId !== data.organization.id), ...data.queue];
         }
         localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
 

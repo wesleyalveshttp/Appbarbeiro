@@ -1,0 +1,154 @@
+{
+  "entities": {
+    "Organization": {
+      "title": "Organization",
+      "description": "Establishment/Barbershop tenant entity with isolated settings, subscription, and slug",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "type": { "type": "string" },
+        "description": { "type": "string" },
+        "phone": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "instagram": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "ownerEmail": { "type": "string" },
+        "address": { "type": "object" },
+        "workingHours": { "type": "array" },
+        "settings": { "type": "object" },
+        "planId": { "type": "string" },
+        "subscription": { "type": "object" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "slug"]
+    },
+    "Service": {
+      "title": "Service",
+      "description": "Catalog service offered by an organization",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "durationMinutes": { "type": "number" },
+        "category": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "professionalIds": { "type": "array" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "organizationId", "name", "price", "durationMinutes"]
+    },
+    "Professional": {
+      "title": "Professional",
+      "description": "Barber or stylist belonging to an organization",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "email": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "specialties": { "type": "array" },
+        "serviceIds": { "type": "array" },
+        "commissionPercent": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "isAvailableToday": { "type": "boolean" },
+        "workingDays": { "type": "array" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "organizationId", "name"]
+    },
+    "QueueItem": {
+      "title": "QueueItem",
+      "description": "Virtual queue entry for a customer at an organization",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ticketNumber": { "type": "number" },
+        "organizationId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "serviceId": { "type": "string" },
+        "serviceName": { "type": "string" },
+        "preferredProfessionalId": { "type": "string" },
+        "status": { "type": "string" },
+        "joinedAt": { "type": "string" },
+        "estimatedWaitMinutes": { "type": "number" },
+        "notificationToken": { "type": "string" },
+        "pushDeliveryStatus": { "type": "string" }
+      },
+      "required": ["id", "ticketNumber", "organizationId", "customerName", "serviceId", "status"]
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "Scheduled booking appointment",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "serviceId": { "type": "string" },
+        "serviceName": { "type": "string" },
+        "professionalId": { "type": "string" },
+        "professionalName": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "status": { "type": "string" },
+        "totalPrice": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "organizationId", "customerName", "serviceId", "professionalId", "date", "time", "status"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Customer record for an organization",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "totalAppointments": { "type": "number" },
+        "totalSpent": { "type": "number" },
+        "lastVisit": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "organizationId", "name"]
+    }
+  },
+  "firestore": {
+    "/organizations/{orgId}": {
+      "schema": { "$ref": "#/entities/Organization" },
+      "description": "Establishment organization document"
+    },
+    "/organizations/{orgId}/services/{serviceId}": {
+      "schema": { "$ref": "#/entities/Service" },
+      "description": "Services offered by the organization"
+    },
+    "/organizations/{orgId}/professionals/{profId}": {
+      "schema": { "$ref": "#/entities/Professional" },
+      "description": "Professionals working at the organization"
+    },
+    "/organizations/{orgId}/queue/{queueId}": {
+      "schema": { "$ref": "#/entities/QueueItem" },
+      "description": "Virtual queue entries for the organization"
+    },
+    "/organizations/{orgId}/appointments/{appointmentId}": {
+      "schema": { "$ref": "#/entities/Appointment" },
+      "description": "Scheduled appointments for the organization"
+    },
+    "/organizations/{orgId}/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/Customer" },
+      "description": "Registered customers of the organization"
+    }
+  }
+}
