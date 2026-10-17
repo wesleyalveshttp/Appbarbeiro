@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
-import { X, Download, Printer, Copy, Check, ExternalLink, QrCode, ArrowRight } from 'lucide-react';
+import { X, Download, Printer, Copy, Check, ExternalLink, QrCode, ArrowRight, Send, Globe } from 'lucide-react';
 
 interface QRCodeModalProps {
   isOpen: boolean;
@@ -212,6 +212,27 @@ export const QRCodeModal: React.FC<QRCodeModalProps> = ({
           <span>Acessar Fila / Página Agora</span>
           <ArrowRight className="h-4 w-4" />
         </button>
+
+        {/* WhatsApp Sharing Button */}
+        <a
+          href={`https://api.whatsapp.com/send?text=${encodeURIComponent(
+            `Entre na fila virtual ou agende seu horário em ${establishmentName}: ${absoluteUrl}`
+          )}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2.5 w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 py-2.5 text-xs font-bold text-white shadow-md shadow-emerald-600/20 transition cursor-pointer"
+        >
+          <Send className="h-4 w-4" />
+          <span>Enviar Link no WhatsApp</span>
+        </a>
+
+        {/* Worldwide Notice */}
+        <div className="mt-3 p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-left text-[11px] text-blue-200 flex items-start gap-2">
+          <Globe className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
+          <span>
+            <strong>Link Online Mundial:</strong> Seus clientes podem acessar de qualquer celular ou computador de casa, entrar na fila virtual e aguardar sua chamada sem precisar ir até a barbearia antes da hora.
+          </span>
+        </div>
 
         {/* Action Buttons */}
         <div className="mt-3 grid grid-cols-2 gap-3">

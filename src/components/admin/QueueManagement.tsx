@@ -29,6 +29,7 @@ import {
 import { StorageService } from '../../services/storage';
 import { Organization, WaitingQueueItem, Professional, Service } from '../../types';
 import { QRCodeModal } from '../common/QRCodeModal';
+import { getPublicBaseUrl } from '../../utils/publicUrl';
 
 interface QueueManagementProps {
   organization: Organization;
@@ -111,7 +112,7 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
     };
   }, [organization.id]);
 
-  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const origin = getPublicBaseUrl(organization);
   const orgSlug = (organization?.slug || '').trim();
   const queueUrl = `${origin}/fila/${orgSlug}`;
 

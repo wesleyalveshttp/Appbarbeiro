@@ -16,7 +16,8 @@ import {
   Key,
   Lock,
   Eye,
-  EyeOff
+  EyeOff,
+  Globe
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization } from '../../types';
@@ -48,6 +49,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ organization, onNavi
   const [whatsappApiConfigured, setWhatsappApiConfigured] = useState(organization.settings.whatsappApiConfigured);
   const [whatsappApiKey, setWhatsappApiKey] = useState(organization.settings.whatsappApiKey || '');
   const [whatsappPhoneNumberId, setWhatsappPhoneNumberId] = useState(organization.settings.whatsappPhoneNumberId || '');
+  const [publicAppUrl, setPublicAppUrl] = useState(organization.settings.publicAppUrl || '');
 
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
@@ -69,6 +71,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ organization, onNavi
         whatsappApiConfigured,
         whatsappApiKey,
         whatsappPhoneNumberId,
+        publicAppUrl: publicAppUrl.trim(),
       },
     });
 
@@ -220,6 +223,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ organization, onNavi
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Link Público & Acesso Mundial para Clientes */}
+        <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Globe className="h-4 w-4 text-emerald-400" />
+              Link Público e Acesso Mundial (Clientes de Casa)
+            </h3>
+            <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              Online Mundial
+            </span>
+          </div>
+
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Configure a URL pública ou domínio próprio da sua barbearia. Este endereço será utilizado em todos os links gerados, QR Codes e mensagens de WhatsApp, permitindo que clientes em qualquer lugar do mundo entrem na fila pelo celular diretamente de casa.
+          </p>
+
+          <div>
+            <label className="text-xs font-semibold text-slate-300">
+              URL Base Pública / Domínio Próprio (Opcional)
+            </label>
+            <input
+              type="text"
+              value={publicAppUrl}
+              onChange={(e) => setPublicAppUrl(e.target.value)}
+              placeholder="Ex: https://ais-pre-v5rbu35zpzcopc6uev26pu-187272410426.us-west2.run.app ou https://minhabarbearia.com.br"
+              className="mt-1 w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2 text-xs text-white font-mono focus:outline-hidden focus:border-amber-500"
+            />
+            <span className="text-[10px] text-slate-500 mt-1 block">
+              Deixe em branco para usar automaticamente a URL pública compartilhada do sistema.
+            </span>
           </div>
         </div>
 

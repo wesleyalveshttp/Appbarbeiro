@@ -26,6 +26,7 @@ import { StorageService } from '../../services/storage';
 import { NotificationService, PushPermissionState } from '../../services/notificationService';
 import { Organization, WaitingQueueItem, Service, Professional } from '../../types';
 import { QRCodeModal } from '../common/QRCodeModal';
+import { getPublicBaseUrl } from '../../utils/publicUrl';
 
 interface PublicQueueProps {
   slug: string;
@@ -335,7 +336,7 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
     );
   }
 
-  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const origin = getPublicBaseUrl(organization);
   const queueUrl = `${origin}/fila/${slug}`;
 
   return (
@@ -633,13 +634,13 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
                     <span className="text-[9px] text-amber-400 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded">Exclusivo</span>
                   </div>
                   <div className="text-[11px] font-mono text-slate-300 bg-slate-900 p-2 rounded-xl border border-slate-800 truncate">
-                    {`${typeof window !== 'undefined' ? window.location.origin : ''}/fila/${slug}?ticket=${myQueueItem.id}`}
+                    {`${origin}/fila/${slug}?ticket=${myQueueItem.id}`}
                   </div>
                   <div className="flex gap-2">
                     <button
                       type="button"
                       onClick={() => {
-                        const url = `${window.location.origin}/fila/${slug}?ticket=${myQueueItem.id}`;
+                        const url = `${origin}/fila/${slug}?ticket=${myQueueItem.id}`;
                         navigator.clipboard.writeText(url);
                         setTestNotificationFeedback('✅ Link individual copiado! Você pode abri-lo em outro aparelho ou navegador.');
                         setTimeout(() => setTestNotificationFeedback(null), 4000);
@@ -651,7 +652,7 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
                     </button>
                     <a
                       href={`https://api.whatsapp.com/send?text=${encodeURIComponent(
-                        `Acompanhe minha posição na fila da ${organization.name}: ${window.location.origin}/fila/${slug}?ticket=${myQueueItem.id}`
+                        `Acompanhe minha posição na fila da ${organization.name}: ${origin}/fila/${slug}?ticket=${myQueueItem.id}`
                       )}`}
                       target="_blank"
                       rel="noopener noreferrer"

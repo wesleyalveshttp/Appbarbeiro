@@ -16,6 +16,7 @@ import { StorageService } from '../../services/storage';
 import { Organization, Professional, Service, Review } from '../../types';
 import { QRCodeModal } from '../common/QRCodeModal';
 import { WhatsAppService } from '../../services/whatsapp';
+import { getPublicBaseUrl } from '../../utils/publicUrl';
 
 interface PublicStorefrontProps {
   slug: string;
@@ -104,7 +105,7 @@ export const PublicStorefront: React.FC<PublicStorefrontProps> = ({
     );
   }
 
-  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const origin = getPublicBaseUrl(organization);
   const storeUrl = `${origin}/b/${slug}`;
 
   const avgRating = reviews.length > 0

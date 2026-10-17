@@ -19,6 +19,7 @@ import { StorageService } from '../../services/storage';
 import { Organization, Professional } from '../../types';
 import { NotificationBell } from './NotificationBell';
 import { QRCodeModal } from './QRCodeModal';
+import { getPublicBaseUrl } from '../../utils/publicUrl';
 
 interface HeaderProps {
   currentOrg: Organization;
@@ -58,7 +59,7 @@ export const Header: React.FC<HeaderProps> = ({
   const professionals = StorageService.getProfessionals(currentOrg.id);
 
   const getQRData = () => {
-    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://barberos.app';
+    const origin = getPublicBaseUrl(currentOrg);
     const orgSlug = (currentOrg?.slug || '').trim();
     const salonName = currentOrg?.name || 'Seu Salão';
     if (qrType === 'booking') {

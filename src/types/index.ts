@@ -119,6 +119,7 @@ export interface Organization {
     whatsappApiConfigured: boolean;
     whatsappApiKey?: string;
     whatsappPhoneNumberId?: string;
+    publicAppUrl?: string;
   };
   planId: 'gratuito' | 'profissional' | 'premium';
   subscription: OrgSubscription;

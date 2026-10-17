@@ -28,6 +28,7 @@ import { Organization, Appointment, WaitingQueueItem, Professional } from '../..
 import { QRCodeModal } from '../common/QRCodeModal';
 import { WhatsAppService } from '../../services/whatsapp';
 import { SubscriptionCheckoutModal } from './SubscriptionCheckoutModal';
+import { getPublicBaseUrl } from '../../utils/publicUrl';
 
 interface OwnerDashboardProps {
   organization: Organization;
@@ -128,7 +129,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
   // Currently on chair
   const onChairAppointments = appointments.filter(a => a.status === 'NA CADEIRA');
 
-  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const origin = getPublicBaseUrl(organization);
   const orgSlug = (organization?.slug || '').trim();
   const bookingUrl = `${origin}/agendar/${orgSlug}`;
   const queueUrl = `${origin}/fila/${orgSlug}`;

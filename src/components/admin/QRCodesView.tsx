@@ -14,6 +14,7 @@ import {
 import { Organization } from '../../types';
 import { StorageService } from '../../services/storage';
 import { QRCodeModal } from '../common/QRCodeModal';
+import { getPublicBaseUrl } from '../../utils/publicUrl';
 
 interface QRCodesViewProps {
   organization: Organization;
@@ -36,7 +37,7 @@ export const QRCodesView: React.FC<QRCodesViewProps> = ({
   } | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const origin = getPublicBaseUrl(organization);
   const orgSlug = (organization?.slug || '').trim();
   const bookingUrl = `${origin}/agendar/${orgSlug}`;
   const queueUrl = `${origin}/fila/${orgSlug}`;
