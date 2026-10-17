@@ -11,72 +11,82 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    // System heartbeat
+    // System heartbeat & metadata
     match /system/{docId} {
       allow get, list, create, update, delete: if true;
     }
 
-    // Organizations collection
+    // Multi-tenant organizations collection
     match /organizations/{orgId} {
       allow get: if isValidId(orgId);
       allow list: if true;
       allow create, update, delete: if isValidId(orgId);
 
       // Subcollections
-      match /services/{serviceId} {
-        allow get, create, update, delete: if isValidId(serviceId);
-        allow list: if true;
-      }
-
-      match /professionals/{profId} {
-        allow get, create, update, delete: if isValidId(profId);
-        allow list: if true;
-      }
-
-      match /queue/{queueId} {
-        allow get, create, update, delete: if isValidId(queueId);
-        allow list: if true;
-      }
-
-      match /appointments/{appointmentId} {
-        allow get, create, update, delete: if isValidId(appointmentId);
-        allow list: if true;
-      }
-
-      match /customers/{customerId} {
-        allow get, create, update, delete: if isValidId(customerId);
+      match /{subcol}/{docId} {
+        allow get, create, update, delete: if isValidId(docId);
         allow list: if true;
       }
     }
 
     // Direct root collections for global multi-tenant access and synchronization
-    match /services/{serviceId} {
-      allow get, create, update, delete: if isValidId(serviceId);
+    match /services/{id} {
+      allow get, create, update, delete: if isValidId(id);
       allow list: if true;
     }
 
-    match /professionals/{profId} {
-      allow get, create, update, delete: if isValidId(profId);
+    match /professionals/{id} {
+      allow get, create, update, delete: if isValidId(id);
       allow list: if true;
     }
 
-    match /queue/{queueId} {
-      allow get, create, update, delete: if isValidId(queueId);
+    match /queue/{id} {
+      allow get, create, update, delete: if isValidId(id);
       allow list: if true;
     }
 
-    match /appointments/{appointmentId} {
-      allow get, create, update, delete: if isValidId(appointmentId);
+    match /appointments/{id} {
+      allow get, create, update, delete: if isValidId(id);
       allow list: if true;
     }
 
-    match /customers/{customerId} {
-      allow get, create, update, delete: if isValidId(customerId);
+    match /customers/{id} {
+      allow get, create, update, delete: if isValidId(id);
       allow list: if true;
     }
 
-    match /sessions/{sessionId} {
-      allow get, create, update, delete: if isValidId(sessionId);
+    match /transactions/{id} {
+      allow get, create, update, delete: if isValidId(id);
+      allow list: if true;
+    }
+
+    match /reviews/{id} {
+      allow get, create, update, delete: if isValidId(id);
+      allow list: if true;
+    }
+
+    match /notifications/{id} {
+      allow get, create, update, delete: if isValidId(id);
+      allow list: if true;
+    }
+
+    match /auditLogs/{id} {
+      allow get, create, update, delete: if isValidId(id);
+      allow list: if true;
+    }
+
+    match /plans/{id} {
+      allow get, create, update, delete: if isValidId(id);
+      allow list: if true;
+    }
+
+    match /sessions/{id} {
+      allow get, create, update, delete: if isValidId(id);
+      allow list: if true;
+    }
+
+    match /config/{id} {
+      allow get, create, update, delete: if isValidId(id);
       allow list: if true;
     }
   }

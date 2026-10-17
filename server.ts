@@ -3,14 +3,17 @@ import http from 'http';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import crypto from 'crypto';
 import webpush from 'web-push';
 import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
 import { fileURLToPath } from 'url';
-import { CloudDBService } from './src/services/cloud-db.ts';
+import { SupabaseDBService } from './src/services/supabase-db.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+export const isVercel = !!process.env.VERCEL || !!process.env.VERCEL_ENV || !!process.env.NOW_REGION;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -29,11 +32,18 @@ app.use((req, res, next) => {
 });
 
 // ---------------------------------------------------------------------------
-// 1. DATA DIRECTORY & PERSISTENCE SETUP
+// 1. DATA DIRECTORY & PERSISTENCE SETUP (Safe on Vercel Read-Only Filesystem)
 // ---------------------------------------------------------------------------
-const DATA_DIR = path.resolve(__dirname, 'data');
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+const DATA_DIR = isVercel
+  ? path.join(os.tmpdir(), 'barberos-data')
+  : path.resolve(__dirname, 'data');
+
+try {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+} catch (e) {
+  console.warn('Filesystem read-only or restricted, using in-memory state:', e);
 }
 
 const DB_FILE = path.join(DATA_DIR, 'db.json');
@@ -45,16 +55,17 @@ const LOGS_FILE = path.join(DATA_DIR, 'push_logs.json');
 // 2. VAPID KEYS SETUP (RFC 8292 standard Web Push / FCM / APNs)
 // ---------------------------------------------------------------------------
 let vapidKeys: { publicKey: string; privateKey: string };
-if (fs.existsSync(VAPID_FILE)) {
-  try {
+try {
+  if (fs.existsSync(VAPID_FILE)) {
     vapidKeys = JSON.parse(fs.readFileSync(VAPID_FILE, 'utf-8'));
-  } catch {
+  } else {
     vapidKeys = webpush.generateVAPIDKeys();
-    fs.writeFileSync(VAPID_FILE, JSON.stringify(vapidKeys, null, 2), 'utf-8');
+    try {
+      fs.writeFileSync(VAPID_FILE, JSON.stringify(vapidKeys, null, 2), 'utf-8');
+    } catch {}
   }
-} else {
+} catch {
   vapidKeys = webpush.generateVAPIDKeys();
-  fs.writeFileSync(VAPID_FILE, JSON.stringify(vapidKeys, null, 2), 'utf-8');
 }
 
 webpush.setVapidDetails(
@@ -253,19 +264,24 @@ function getInitialSeed() {
 
 const DEFAULT_SUPERADMIN_PASSWORD = process.env.SUPERADMIN_PASSWORD || 'Anna123!@';
 
+let globalMemoryDB: any = null;
+
 function readDB(): any {
+  if (globalMemoryDB) {
+    return globalMemoryDB;
+  }
   let db: any;
-  if (!fs.existsSync(DB_FILE)) {
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      db = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
+    }
+  } catch (e) {
+    console.warn('Could not read DB_FILE, initializing from seed:', e);
+  }
+
+  if (!db) {
     db = getInitialSeed();
     db.config = { superAdminPassword: DEFAULT_SUPERADMIN_PASSWORD };
-    writeDB(db);
-    return db;
-  }
-  try {
-    db = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
-  } catch (e) {
-    console.error('Error reading db.json, recreating from seed:', e);
-    db = getInitialSeed();
   }
 
   // Ensure sessions collection
@@ -273,30 +289,36 @@ function readDB(): any {
     db.sessions = [];
   }
 
-  // Ensure config & SaaS Owner Super Admin password Anna123!@
+  // Ensure config & SaaS Owner Super Admin password
   if (!db.config) db.config = {};
   if (!db.config.superAdminPassword || db.config.superAdminPassword === 'admin123') {
     db.config.superAdminPassword = DEFAULT_SUPERADMIN_PASSWORD;
-    writeDB(db);
   }
 
+  globalMemoryDB = db;
   return db;
 }
 
 function writeDB(data: any): void {
+  globalMemoryDB = data;
   try {
     const tempPath = `${DB_FILE}.${Date.now()}.${Math.random().toString(36).substr(2, 5)}.tmp`;
     fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
     fs.renameSync(tempPath, DB_FILE);
   } catch (err) {
-    // Direct write fallback
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    try {
+      fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    } catch (e) {
+      // In serverless read-only filesystem, in-memory cache handles local state safely
+    }
   }
 
-  // Asynchronously synchronize changes to Google Cloud Firestore
-  CloudDBService.syncAllToCloud(data).catch((err) => {
-    console.warn('Cloud Firestore sync background warning:', err);
-  });
+  // Asynchronously synchronize changes to Supabase (PostgreSQL) if configured
+  if (SupabaseDBService.isConfigured()) {
+    SupabaseDBService.syncAllToSupabase(data).catch((err) => {
+      console.warn('Supabase sync background warning:', err);
+    });
+  }
 }
 
 function readSubscriptions(): any[] {
@@ -677,7 +699,7 @@ app.post('/api/db/sync', (req: Request, res: Response) => {
 // ---------------------------------------------------------------------------
 
 // Register new establishment
-app.post('/api/auth/register-organization', (req: Request, res: Response) => {
+app.post('/api/auth/register-organization', async (req: Request, res: Response) => {
   const { organization, initialProfessional, initialService } = req.body;
   if (!organization || !organization.name || !organization.ownerEmail || !organization.ownerPassword) {
     return res.status(400).json({ error: 'Nome do salão, e-mail do proprietário e senha são obrigatórios.' });
@@ -780,6 +802,7 @@ app.post('/api/auth/register-organization', (req: Request, res: Response) => {
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
   const sessionRecord = {
+    id: sessionToken,
     uid,
     userId: uid,
     token: sessionToken,
@@ -799,6 +822,18 @@ app.post('/api/auth/register-organization', (req: Request, res: Response) => {
   db.sessions.push(sessionRecord);
 
   writeDB(db);
+
+  // Synchronize to Supabase if configured
+  if (SupabaseDBService.isConfigured()) {
+    try {
+      await SupabaseDBService.saveOrganization(completeOrg);
+      if (createdProf) await SupabaseDBService.saveProfessional(createdProf);
+      if (createdService) await SupabaseDBService.saveService(createdService);
+    } catch (err: any) {
+      console.warn('Supabase onboarding sync warning:', err);
+    }
+  }
+
   broadcastSSE('ORGANIZATIONS_UPDATED', { orgId });
 
   res.status(201).json({
@@ -1119,45 +1154,81 @@ function sanitizeOrgPublic(org: any): any {
 // ---------------------------------------------------------------------------
 // PUBLIC ESTABLISHMENT RESOLUTION (Pure Isolation, Zero Demo Fallback)
 // ---------------------------------------------------------------------------
-app.get('/api/public/establishment/:slug', (req: Request, res: Response) => {
+app.get('/api/public/establishment/:slug', async (req: Request, res: Response) => {
   const { slug } = req.params;
-  const db = readDB();
   const rawTerm = decodeURIComponent(slug || '').trim().toLowerCase();
-  const normalize = (str: string) =>
-    (str || '')
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)+/g, '');
-  const normTerm = normalize(rawTerm);
-  const orgs = db.organizations || [];
 
-  // Strict match by slug or exact ID
-  const org = orgs.find((o: any) => {
-    if (!o) return false;
-    const oSlug = (o.slug || '').toLowerCase();
-    const oId = (o.id || '').toLowerCase();
-    return oSlug === rawTerm || normalize(oSlug) === normTerm || oId === rawTerm;
-  });
+  try {
+    // 1. Authoritative query directly against Supabase (PostgreSQL) if configured
+    if (SupabaseDBService.isConfigured()) {
+      try {
+        const supabaseData = await SupabaseDBService.getPublicEstablishment(rawTerm);
+        if (supabaseData && supabaseData.organization) {
+          // Sync into memory cache
+          const db = readDB();
+          const orgIdx = (db.organizations || []).findIndex((o: any) => o.id === supabaseData.organization.id);
+          if (orgIdx >= 0) db.organizations[orgIdx] = { ...db.organizations[orgIdx], ...supabaseData.organization };
+          else db.organizations.push(supabaseData.organization);
+          globalMemoryDB = db;
 
-  if (!org) {
+          return res.json({
+            organization: supabaseData.organization,
+            services: supabaseData.services,
+            professionals: supabaseData.professionals,
+            queue: supabaseData.queue
+          });
+        }
+      } catch (err) {
+        console.warn('Supabase establishment lookup error:', err);
+      }
+    }
+
+    // 2. Fallback check memory cache
+    const db = readDB();
+    const normalize = (str: string) =>
+      (str || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)+/g, '');
+    const normTerm = normalize(rawTerm);
+    const orgs = db.organizations || [];
+
+    const org = orgs.find((o: any) => {
+      if (!o) return false;
+      const oSlug = (o.slug || '').toLowerCase();
+      const oId = (o.id || '').toLowerCase();
+      return oSlug === rawTerm || normalize(oSlug) === normTerm || oId === rawTerm;
+    });
+
+    if (org) {
+      const services = (db.services || []).filter((s: any) => s.organizationId === org.id && s.isActive !== false);
+      const professionals = (db.professionals || []).filter((p: any) => p.organizationId === org.id && p.isActive !== false);
+      const queue = (db.queue || []).filter((q: any) => q.organizationId === org.id);
+
+      return res.json({
+        organization: sanitizeOrgPublic(org),
+        services,
+        professionals,
+        queue
+      });
+    }
+
+    // Truly not found anywhere in database
     return res.status(404).json({
       error: 'Estabelecimento não encontrado para este link.',
-      requestedSlug: rawTerm
+      requestedSlug: rawTerm,
+      status: 404
+    });
+  } catch (err: any) {
+    console.error('Erro na consulta pública do estabelecimento:', err);
+    return res.status(500).json({
+      error: 'Erro de comunicação com o banco de dados. Tente novamente em instantes.',
+      status: 500,
+      details: err.message
     });
   }
-
-  const services = (db.services || []).filter((s: any) => s.organizationId === org.id && s.isActive !== false);
-  const professionals = (db.professionals || []).filter((p: any) => p.organizationId === org.id && p.isActive !== false);
-  const queue = (db.queue || []).filter((q: any) => q.organizationId === org.id);
-
-  res.json({
-    organization: sanitizeOrgPublic(org),
-    services,
-    professionals,
-    queue
-  });
 });
 
 // Organization resolution endpoints (Public & Admin)
@@ -1744,7 +1815,7 @@ app.get('/api/queue/item/:id', (req: Request, res: Response) => {
 });
 
 // CLIENT JOINS THE VIRTUAL QUEUE
-app.post('/api/queue/join', (req: Request, res: Response) => {
+app.post('/api/queue/join', async (req: Request, res: Response) => {
   const {
     organizationId,
     customerName,
@@ -1768,6 +1839,16 @@ app.post('/api/queue/join', (req: Request, res: Response) => {
     (o.id && o.id.toLowerCase() === orgClean) ||
     (o.slug && o.slug.toLowerCase() === orgClean)
   );
+
+  if (!org && SupabaseDBService.isConfigured()) {
+    try {
+      const supabaseData = await SupabaseDBService.getPublicEstablishment(orgClean);
+      if (supabaseData && supabaseData.organization) {
+        org = supabaseData.organization;
+        db.organizations.push(org);
+      }
+    } catch {}
+  }
 
   if (!org) {
     return res.status(404).json({ error: 'Barbearia não encontrada para entrar na fila.' });
@@ -1822,6 +1903,13 @@ app.post('/api/queue/join', (req: Request, res: Response) => {
   db.queue.push(newItem);
   writeDB(db);
 
+  // Save to Supabase (PostgreSQL) if configured
+  if (SupabaseDBService.isConfigured()) {
+    SupabaseDBService.saveQueueItem(newItem).catch((err) => {
+      console.warn('Supabase saveQueueItem background warning:', err);
+    });
+  }
+
   // If subscription was sent, save it in subs
   if (subscription) {
     const subs = readSubscriptions();
@@ -1833,7 +1921,7 @@ app.post('/api/queue/join', (req: Request, res: Response) => {
       queueItemId: newItem.id,
       customerPhone: newItem.customerPhone,
       customerName: newItem.customerName,
-      organizationId,
+      organizationId: resolvedOrgId,
       registeredAt: new Date().toISOString(),
       lastActiveAt: new Date().toISOString(),
     });
@@ -2268,6 +2356,48 @@ app.post('/api/queue/reorder', (req: Request, res: Response) => {
   writeDB(db);
   broadcastSSE('QUEUE_UPDATED', { orgId: organizationId });
   res.json({ success: true });
+});
+
+// ---------------------------------------------------------------------------
+// 6.1 SUPABASE (POSTGRESQL) ENDPOINTS
+// ---------------------------------------------------------------------------
+app.get('/api/supabase/status', async (req: Request, res: Response) => {
+  const isConfigured = SupabaseDBService.isConfigured();
+  if (!isConfigured) {
+    return res.json({
+      isConfigured: false,
+      tablesReady: false,
+      message: 'Supabase não configurado. Adicione SUPABASE_URL e SUPABASE_ANON_KEY no arquivo .env ou no painel da Vercel.',
+      instructions: 'Para criar as tabelas no Supabase, execute o script supabase-schema.sql no SQL Editor do painel do Supabase.',
+      schemaScript: 'supabase-schema.sql'
+    });
+  }
+
+  const tablesReady = await SupabaseDBService.checkTablesReady(true);
+  res.json({
+    isConfigured: true,
+    tablesReady,
+    message: tablesReady
+      ? 'Supabase conectado com sucesso e tabelas criadas no PostgreSQL!'
+      : 'Credenciais do Supabase válidas, mas as tabelas ainda não foram criadas. Execute o arquivo supabase-schema.sql no SQL Editor do Supabase.',
+    actionRequired: tablesReady ? null : 'Execute o script supabase-schema.sql no SQL Editor do Supabase.',
+    schemaScript: 'supabase-schema.sql'
+  });
+});
+
+app.post('/api/supabase/sync', async (req: Request, res: Response) => {
+  if (!SupabaseDBService.isConfigured()) {
+    return res.status(400).json({
+      error: 'Supabase não está configurado. Configure SUPABASE_URL e SUPABASE_ANON_KEY primeiro.'
+    });
+  }
+  try {
+    const db = readDB();
+    await SupabaseDBService.syncAllToSupabase(db);
+    return res.json({ success: true, message: 'Todos os dados foram sincronizados com sucesso no Supabase!' });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Erro ao sincronizar dados no Supabase', details: err.message });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -2772,23 +2902,28 @@ app.get('/api/health', (req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
-// CLOUD DATABASE STATUS & SYNC ENDPOINTS (Google Cloud Firestore)
+// CLOUD DATABASE STATUS & SYNC ENDPOINTS (Supabase PostgreSQL)
 // ---------------------------------------------------------------------------
-app.get('/api/cloud/status', (req: Request, res: Response) => {
+app.get('/api/cloud/status', async (req: Request, res: Response) => {
+  const isConfigured = SupabaseDBService.isConfigured();
+  const tablesReady = isConfigured ? await SupabaseDBService.checkTablesReady() : false;
   res.json({
-    configured: CloudDBService.isConfigured(),
-    provider: 'Google Cloud Firestore',
-    databaseId: 'ai-studio-barberosgestosaa-e7ca71ef-951e-4bef-9535-6db663a76ee9',
-    projectId: 'gen-lang-client-0208879192',
+    configured: isConfigured,
+    provider: 'Supabase (PostgreSQL)',
+    tablesReady,
+    url: process.env.SUPABASE_URL || null,
     timestamp: new Date().toISOString()
   });
 });
 
 app.post('/api/cloud/sync', async (req: Request, res: Response) => {
+  if (!SupabaseDBService.isConfigured()) {
+    return res.status(400).json({ error: 'Supabase não está configurado.' });
+  }
   try {
     const db = readDB();
-    await CloudDBService.syncAllToCloud(db);
-    res.json({ success: true, message: 'Dados sincronizados com o Cloud Firestore com sucesso.' });
+    await SupabaseDBService.syncAllToSupabase(db);
+    res.json({ success: true, message: 'Dados sincronizados com o Supabase com sucesso.' });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -2808,45 +2943,44 @@ app.all('/api/*', (req: Request, res: Response) => {
 // 7. VITE DEV SERVER OR STATIC PROD SERVING
 // ---------------------------------------------------------------------------
 async function startServer() {
-  // Bootstrap & merge persistent data from Google Cloud Firestore
-  try {
-    const cloudData = await CloudDBService.loadAllFromCloud();
-    if (cloudData && Array.isArray(cloudData.organizations) && cloudData.organizations.length > 0) {
-      const db = readDB();
-      for (const cloudOrg of cloudData.organizations) {
-        const idx = (db.organizations || []).findIndex((o: any) => o.id === cloudOrg.id);
-        if (idx >= 0) db.organizations[idx] = { ...db.organizations[idx], ...cloudOrg };
-        else db.organizations.push(cloudOrg);
-      }
-      if (Array.isArray(cloudData.services)) {
-        for (const s of cloudData.services) {
-          const idx = (db.services || []).findIndex((x: any) => x.id === s.id);
-          if (idx >= 0) db.services[idx] = { ...db.services[idx], ...s };
-          else db.services.push(s);
+  // Bootstrap & merge persistent data from Supabase (PostgreSQL) if configured
+  if (SupabaseDBService.isConfigured()) {
+    try {
+      const supabaseData = await SupabaseDBService.loadAllFromSupabase();
+      if (supabaseData && Array.isArray(supabaseData.organizations) && supabaseData.organizations.length > 0) {
+        const db = readDB();
+        for (const sOrg of supabaseData.organizations) {
+          const idx = (db.organizations || []).findIndex((o: any) => o.id === sOrg.id);
+          if (idx >= 0) db.organizations[idx] = { ...db.organizations[idx], ...sOrg };
+          else db.organizations.push(sOrg);
         }
-      }
-      if (Array.isArray(cloudData.professionals)) {
-        for (const p of cloudData.professionals) {
-          const idx = (db.professionals || []).findIndex((x: any) => x.id === p.id);
-          if (idx >= 0) db.professionals[idx] = { ...db.professionals[idx], ...p };
-          else db.professionals.push(p);
+        if (Array.isArray(supabaseData.services)) {
+          for (const s of supabaseData.services) {
+            const idx = (db.services || []).findIndex((x: any) => x.id === s.id);
+            if (idx >= 0) db.services[idx] = { ...db.services[idx], ...s };
+            else db.services.push(s);
+          }
         }
-      }
-      if (Array.isArray(cloudData.queue)) {
-        for (const q of cloudData.queue) {
-          const idx = (db.queue || []).findIndex((x: any) => x.id === q.id);
-          if (idx >= 0) db.queue[idx] = { ...db.queue[idx], ...q };
-          else db.queue.push(q);
+        if (Array.isArray(supabaseData.professionals)) {
+          for (const p of supabaseData.professionals) {
+            const idx = (db.professionals || []).findIndex((x: any) => x.id === p.id);
+            if (idx >= 0) db.professionals[idx] = { ...db.professionals[idx], ...p };
+            else db.professionals.push(p);
+          }
         }
+        if (Array.isArray(supabaseData.queue)) {
+          for (const q of supabaseData.queue) {
+            const idx = (db.queue || []).findIndex((x: any) => x.id === q.id);
+            if (idx >= 0) db.queue[idx] = { ...db.queue[idx], ...q };
+            else db.queue.push(q);
+          }
+        }
+        writeDB(db);
+        console.log(`⚡ Supabase: ${supabaseData.organizations.length} estabelecimentos carregados do PostgreSQL.`);
       }
-      writeDB(db);
-      console.log(`☁️ Cloud Firestore: ${cloudData.organizations.length} estabelecimentos carregados com sucesso.`);
-    } else {
-      const db = readDB();
-      await CloudDBService.syncAllToCloud(db);
+    } catch (err) {
+      console.warn('Supabase initial boot warning:', err);
     }
-  } catch (err) {
-    console.warn('CloudDB initial boot error:', err);
   }
 
   const isProd = process.env.NODE_ENV === 'production' && fs.existsSync(path.resolve(__dirname, 'dist'));
@@ -2891,7 +3025,11 @@ async function startServer() {
   }
 }
 
-startServer().catch((err) => {
-  console.error('Fatal server startup error:', err);
-  process.exit(1);
-});
+if (!isVercel && process.env.NODE_ENV !== 'test') {
+  startServer().catch((err) => {
+    console.error('Fatal server startup error:', err);
+    process.exit(1);
+  });
+}
+
+export default app;

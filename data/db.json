@@ -13,151 +13,152 @@
       "ownerPassword": "123",
       "ownerName": "Dono da Barbearia",
       "address": {
-        "state": "SP",
-        "city": "São Paulo",
         "neighborhood": "Centro",
+        "state": "SP",
+        "number": "100",
+        "city": "São Paulo",
         "street": "Rua Principal",
-        "cep": "01310-100",
-        "number": "100"
+        "cep": "01310-100"
       },
       "workingHours": [
         {
-          "dayOfWeek": 0,
-          "openTime": "09:00",
           "isOpen": false,
+          "dayOfWeek": 0,
           "closeTime": "15:00",
-          "dayName": "Domingo"
+          "dayName": "Domingo",
+          "openTime": "09:00"
         },
         {
-          "dayOfWeek": 1,
-          "isOpen": true,
-          "lunchStart": "12:30",
-          "openTime": "09:00",
-          "lunchEnd": "13:30",
           "dayName": "Segunda-feira",
           "hasLunchBreak": true,
-          "closeTime": "20:00"
-        },
-        {
-          "isOpen": true,
-          "closeTime": "20:00",
-          "hasLunchBreak": true,
+          "dayOfWeek": 1,
           "lunchStart": "12:30",
-          "dayName": "Terça-feira",
+          "isOpen": true,
           "openTime": "09:00",
-          "dayOfWeek": 2,
+          "closeTime": "20:00",
           "lunchEnd": "13:30"
         },
         {
+          "openTime": "09:00",
+          "closeTime": "20:00",
+          "hasLunchBreak": true,
+          "dayOfWeek": 2,
+          "isOpen": true,
+          "lunchEnd": "13:30",
+          "dayName": "Terça-feira",
+          "lunchStart": "12:30"
+        },
+        {
+          "openTime": "09:00",
           "closeTime": "20:00",
           "dayOfWeek": 3,
-          "dayName": "Quarta-feira",
           "lunchStart": "12:30",
-          "openTime": "09:00",
+          "dayName": "Quarta-feira",
           "lunchEnd": "13:30",
           "hasLunchBreak": true,
           "isOpen": true
         },
         {
-          "lunchEnd": "13:30",
-          "dayName": "Quinta-feira",
-          "lunchStart": "12:30",
-          "dayOfWeek": 4,
           "openTime": "09:00",
           "isOpen": true,
+          "lunchStart": "12:30",
+          "lunchEnd": "13:30",
+          "dayOfWeek": 4,
           "hasLunchBreak": true,
-          "closeTime": "20:00"
+          "closeTime": "20:00",
+          "dayName": "Quinta-feira"
         },
         {
-          "isOpen": true,
-          "dayOfWeek": 5,
-          "lunchStart": "12:30",
           "hasLunchBreak": true,
           "dayName": "Sexta-feira",
+          "dayOfWeek": 5,
+          "isOpen": true,
+          "lunchStart": "12:30",
           "openTime": "08:30",
           "closeTime": "21:00",
           "lunchEnd": "13:30"
         },
         {
-          "openTime": "08:00",
           "dayName": "Sábado",
+          "openTime": "08:00",
           "hasLunchBreak": false,
+          "dayOfWeek": 6,
           "isOpen": true,
-          "closeTime": "19:00",
-          "dayOfWeek": 6
+          "closeTime": "19:00"
         }
       ],
       "settings": {
+        "welcomeMessage": "Bem-vindo! Entre na nossa fila virtual pelo celular ou agende seu horário.",
         "isOpenNow": true,
         "queueMode": "SINGLE",
-        "whatsappApiConfigured": false,
-        "allowToleranceRequest": true,
-        "welcomeMessage": "Bem-vindo! Entre na nossa fila virtual pelo celular ou agende seu horário.",
-        "callToleranceMinutes": 3,
         "autoNotifyAheadCount": 3,
+        "allowToleranceRequest": true,
+        "whatsappApiConfigured": false,
         "maxLateMinutes": 15,
+        "callToleranceMinutes": 3,
         "primaryColor": "#f59e0b",
         "cancellationHoursLimit": 2,
         "secondaryColor": "#0f172a"
       },
       "planId": "premium",
       "subscription": {
-        "nextBillingDate": "2026-11-10",
-        "currentPreferenceId": "1129833850-bd0db504-0120-40d1-906a-0746c660f548",
-        "planName": "Plano Pro Barbearia (R$ 79,90/mês)",
-        "status": "PENDENTE",
-        "trialDaysRemaining": 0,
+        "currentPaymentId": "182558640993",
         "invoices": [
           {
             "mpQrCode": "00020126330014br.gov.bcb.pix0111121490134445204000053039865406838.805802BR5916WA202502161439326004Juru62250521mpqrinter182558640993630496D1",
-            "paymentMethod": "PIX",
-            "mpQrCodeBase64": "iVBORw0KGgoAAAANSUhEUgAABRQAAAUUAQMAAACUKAyrAAAABlBMVEX///8AAABVwtN+AAAI10lEQVR42uzdwXHrOBIGYKh80FEhOBSFJoWmUByCjjq4hK21TbIbgCx653lma/j9l53iE8mPvvWi0SgiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIv8nOdQ+bx//cqo1/+jy3//cffznbbp2/rr2Pv3u40dletK1lNflufOP3ko5Dt57ZmRkZGRkZGRkZGRkZGQcG9/ShX26sAuej9y7Gz+uvUykshg/Sa8f7lP7Rzguf4HPHBkZGRkZGRkZGRkZGRn/OeNpqS730yO6O47JWKaydPyqXahdL0shvE/GXahxGRkZGRkZGRkZGRkZGRl/ZiypJJ5fFR5bpxtDYT6/qquv848KIyMjIyMjIyMjIyMjI+Mfqq9zf3BNP6rpxuZV03rxqGe4MDIyMjIyMjIyMjIyMjL+D8aurzlsR43G89fe1rlMzvV1/W7z7PSwYPxrvdeMjIyMjIyMjIyMjIyM2zGOHhvK5H1qT/6sm2+hMC/JPaqvp77meOMfmCfFyMjIyMjIyMjIyMjI+AeM32ba3hpm+Ja8bbWrXS+D4b/59V21/NfCyMjIyMjIyMjIyMjIuAXjazpGJq+73ttXxTbf0vYM1+X8me7GEorwz5o7NCBfGRkZGRkZGRkZGRkZGRlX5iV09YZXlbRtNc5vynOZwo2f12ItnT+upL9Krt4ZGRkZGRkZGRkZGRkZGWMOaYn3JZTJ3ZzhUF93fc1x5FL+kLLU4e/5jJya9sCumSfFyMjIyMjIyMjIyMjIuGFjWbbR3kIt/fH6W+hrnvbk1jSraTfV14elTN7lDb41ne9alwvzPt2n9TUjIyMjIyMjIyMjIyPjLxnr0h/8klt/84/yrKayrLvGG2taiz083AN7addd182TYmRkZGRkZGRkZGRkZNygsaQO3jrV15d2SXX02LfUHzz64LBgO+pIjs3GR0ZGRkZGRkZGRkZGRkbGJz3DXX19erQ2XMIe2HNaB+62spZkjDd2Bfya/a6MjIyMjIyMjIyMjIyMmzTOT+kun9J21Fwmzy3L04/i+a516XX+k2fkMDIyMjIyMjIyMjIyMm7e2GVqT76Fx+a+5pL6lfPacA0fMv0u3nhsD4b9vq+ZkZGRkZGRkZGRkZGR8ZeMo1lNOfv0yntX4I6WT0PPcC6Eo/uHa8OMjIyMjIyMjIyMjIyMWzWGNJOT6mC80intbQ2vegm9xefS9AxP7nlxNryxazZmZGRkZGRkZGRkZGRkZBwmtP6W8Rk5b8vvovE0bjbueoZHTcnTxzEyMjIyMjIyMjIyMjIyPgO+pmNt9uFI1mkp+DBdOy9F+HVwRs7j/a4h16nm/sksZEZGRkZGRkZGRkZGRkbGwXJumDNcxu3JNXn2y0E6pVvzDXtyD+2NjIyMjIyMjIyMjIyMjP+g8ZCOQO1mNd3DOanHdoZvfTjkaVpSvYbXh8FPIfHQVUZGRkZGRkZGRkZGRkbGx8bcMxyq3V0YrxQq4HndtQ7GBXf9weHjbmmj7G5yr6mvGRkZGRkZGRkZGRkZGTdsrOOe4Yf1dWn3uzZDnqYbm4FOob5++zojZ/3aMCMjIyMjIyMjIyMjI+O2jaHafVBfz7X0OY0G7urr66Awr+n4m/mDyzc/YmRkZGRkZGRkZGRkZGTs9+Q+aE8OS7dlmd/0/nCT7nW51gx5ql97cke5PetrZmRkZGRkZGRkZGRkZNy2Me/JfW89NfQ155L4OhhEFbJrb2yany/LAnIuzBkZGRkZGRkZGRkZGRn/VuNcgn78b1NddgVut2311K67lsEHT3lpC+F7uMbIyMjIyMjIyMjIyMjI+GzdtXtKd0bOcbBUmpdPy2K8P/m4sIi7pr5mZGRkZGRkZGRkZGRk3LwxHGtT06ym+d2vbVdvd7jOLfUR33Oxfn70V1kZRkZGRkZGRkZGRkZGxg0bD2kd+CWXyVN9fZhakU+pJA4bZWOZXNMI4dd2VtM1XXv8IYyMjIyMjIyMjIyMjIyMXZk875Adrfm+JmMuzFfsyT21A51yX/Nh3SxkRkZGRkZGRkZGRkZGxl8yntq9rZfUM3xYqstd6Bnu9ruGAveeF3G7wU/57NQ1M3wZGRkZGRkZGRkZGRkZt2rMPcOfr5pHA4djZGrathrnDIe5TGEP7D284DhoNj6OT7xhZGRkZGRkZGRkZGRkZHxgDK2/c07t2nB+d/a8jGc1HdLQ4mZW01RfxwHFjIyMjIyMjIyMjIyMjIxP6utmVlNYGw7tye95UTnPHs5rw92780E6j4twRkZGRkZGRkZGRkZGRsY+ub4+DiYBd0u8dTCrKRTm76Ew787IKe2i8qU8DyMjIyMjIyMjIyMjI+NvGLvatbatvw9q1/rVM3zvbuw+5LycU1PbqcE/7GtmZGRkZGRkZGRkZGRk3Kbx4RbVXdjbWsdbVIPxmor1eOHU3nhJk42vK9aGGRkZGRkZGRkZGRkZGbdqPLQl8T71DHdrw/MW1dr2DM/vLkuxfh0crtMtKpcVZ+QwMjIyMjIyMjIyMjIybtj4IN/td6353JzwcdelIfrzWw7tUvD8caWUn5yRw8jIyMjIyMjIyMjIyLhh42Gw4PvWLudek3t+VU2euCc3P/3SvnF0vuua/w+AkZGRkZGRkZGRkZGR8TeMb+nCPhnv07tfl6e85DNpntSub4OPC7Xr/Ef4vmeYkZGRkZGRkZGRkZGRcfPGMBo49gyHR7y2K6OjwvyaBhSP5jft21vWnJ3KyMjIyMjIyMjIyMjIyDgwllQBj9aGHxyBOl2rXX09NRvPTcnjLmVGRkZGRkZGRkZGRkZGxtXG02CL6mjkUml7naeNss1hsXnI0zFNNl7T18zIyMjIyMjIyMjIyMi4bWPX13xcVm9v4R9P6Vib3NccfhRHCOdF5bw2fO+KdUZGRkZGRkZGRkZGRsa/37h2VlOuXctS4O7CvZfxkKc6uNYVuGdGRkZGRkZGRkZGRkZGRhERERERERERERERERERERERERERERERERERERH51+c/AQAA//+qCaKkMw94iQAAAABJRU5ErkJggg==",
-            "mpPaymentId": "182558640993",
-            "amount": 838.8,
-            "mpStatusDetail": "pending_waiting_transfer",
-            "description": "Plano BarberOS Pro Anual (12x R$ 69,90) (Mercado Pago ID #182558640993)",
+            "mpStatus": "pending",
             "date": "2026-10-11",
-            "id": "inv_mp_182558640993",
-            "status": "PENDENTE",
             "receiptUrl": "https://www.mercadopago.com.br/payments/182558640993/ticket?caller_id=3045962049&hash=3c7b7deb-bc8b-4773-ac10-e188cc2b9f67",
-            "mpStatus": "pending"
+            "id": "inv_mp_182558640993",
+            "mpQrCodeBase64": "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",
+            "status": "PENDENTE",
+            "mpStatusDetail": "pending_waiting_transfer",
+            "amount": 838.8,
+            "description": "Plano BarberOS Pro Anual (12x R$ 69,90) (Mercado Pago ID #182558640993)",
+            "paymentMethod": "PIX",
+            "mpPaymentId": "182558640993"
           },
           {
-            "paymentMethod": "PIX",
-            "status": "PENDENTE",
-            "mpQrCode": "00020126330014br.gov.bcb.pix011112149013444520400005303986540579.905802BR5916WA202502161439326004Juru62250521mpqrinter18357785450063049A73",
+            "date": "2026-10-11",
             "mpPaymentId": "183577854500",
             "id": "inv_mp_183577854500",
-            "mpQrCodeBase64": "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",
-            "receiptUrl": "https://www.mercadopago.com.br/payments/183577854500/ticket?caller_id=3045962049&hash=04635ccb-123a-4fcb-a662-bb4f2fdbf765",
-            "mpStatusDetail": "pending_waiting_transfer",
-            "amount": 79.9,
             "description": "Plano BarberOS Pro Mensal (R$ 79,90/mês) (Mercado Pago ID #183577854500)",
-            "date": "2026-10-11",
-            "mpStatus": "pending"
+            "paymentMethod": "PIX",
+            "status": "PENDENTE",
+            "receiptUrl": "https://www.mercadopago.com.br/payments/183577854500/ticket?caller_id=3045962049&hash=04635ccb-123a-4fcb-a662-bb4f2fdbf765",
+            "mpStatus": "pending",
+            "amount": 79.9,
+            "mpQrCode": "00020126330014br.gov.bcb.pix011112149013444520400005303986540579.905802BR5916WA202502161439326004Juru62250521mpqrinter18357785450063049A73",
+            "mpStatusDetail": "pending_waiting_transfer",
+            "mpQrCodeBase64": "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"
           },
           {
-            "mpPaymentId": "182559070275",
+            "mpQrCodeBase64": "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",
+            "mpStatus": "pending",
+            "receiptUrl": "https://www.mercadopago.com.br/payments/182559070275/ticket?caller_id=3045962049&hash=bd501a37-ead3-4140-9125-49436a6a71e1",
+            "mpStatusDetail": "pending_waiting_transfer",
+            "status": "PENDENTE",
             "mpQrCode": "00020126330014br.gov.bcb.pix0111121490134445204000053039865406838.805802BR5916WA202502161439326004Juru62250521mpqrinter1825590702756304166A",
             "amount": 838.8,
-            "mpQrCodeBase64": "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",
-            "date": "2026-10-11",
-            "paymentMethod": "PIX",
-            "mpStatus": "pending",
-            "description": "Plano BarberOS Pro Anual (12x R$ 69,90) (Mercado Pago ID #182559070275)",
             "id": "inv_mp_182559070275",
-            "status": "PENDENTE",
-            "mpStatusDetail": "pending_waiting_transfer",
-            "receiptUrl": "https://www.mercadopago.com.br/payments/182559070275/ticket?caller_id=3045962049&hash=bd501a37-ead3-4140-9125-49436a6a71e1"
+            "date": "2026-10-11",
+            "mpPaymentId": "182559070275",
+            "description": "Plano BarberOS Pro Anual (12x R$ 69,90) (Mercado Pago ID #182559070275)",
+            "paymentMethod": "PIX"
           }
         ],
+        "planName": "Plano Pro Barbearia (R$ 79,90/mês)",
         "isPaid": false,
+        "status": "PENDENTE",
+        "trialDaysRemaining": 0,
         "priceMonthly": 79.9,
-        "currentPaymentId": "182558640993"
+        "nextBillingDate": "2026-11-10",
+        "currentPreferenceId": "1129833850-bd0db504-0120-40d1-906a-0746c660f548"
       },
       "isActive": true,
       "createdAt": "2026-01-10T10:00:00.000Z",
-      "_syncedAt": "2026-10-16T02:29:42.964Z"
+      "_syncedAt": "2026-10-17T22:17:53.791Z",
+      "_updatedAt": "2026-10-17T22:47:44.770Z"
     },
     {
       "name": "Barbearia Imperial",
@@ -169,8 +170,8 @@
       "ownerPassword": "MinhaSenhaForte123",
       "ownerName": "Carlos Imperial",
       "address": {
-        "state": "SP",
-        "city": "São Paulo"
+        "city": "São Paulo",
+        "state": "SP"
       },
       "workingHours": [],
       "settings": {
@@ -180,15 +181,16 @@
       "isActive": true,
       "createdAt": "2026-10-13T21:55:23.248Z",
       "subscription": {
-        "trialDaysRemaining": 0,
-        "invoices": [],
         "nextBillingDate": "2026-11-12",
-        "planName": "Plano Pro Barbearia (R$ 79,90/mês)",
-        "status": "PENDENTE",
         "isPaid": false,
-        "priceMonthly": 79.9
+        "priceMonthly": 79.9,
+        "trialDaysRemaining": 0,
+        "status": "PENDENTE",
+        "invoices": [],
+        "planName": "Plano Pro Barbearia (R$ 79,90/mês)"
       },
-      "_syncedAt": "2026-10-16T02:29:43.433Z"
+      "_syncedAt": "2026-10-17T22:17:53.849Z",
+      "_updatedAt": "2026-10-17T22:47:44.822Z"
     },
     {
       "name": "Barbearia Teste",
@@ -202,107 +204,108 @@
       "ownerPassword": "123456",
       "ownerName": "Barbearia Teste",
       "address": {
-        "state": "SP",
+        "neighborhood": "",
         "street": "",
+        "state": "SP",
         "number": "",
         "cep": "",
-        "city": "",
-        "neighborhood": ""
+        "city": ""
       },
       "workingHours": [
         {
           "closeTime": "15:00",
-          "openTime": "09:00",
+          "dayOfWeek": 0,
           "dayName": "Domingo",
-          "isOpen": false,
-          "dayOfWeek": 0
+          "openTime": "09:00",
+          "isOpen": false
         },
         {
-          "hasLunchBreak": true,
-          "closeTime": "20:00",
-          "dayName": "Segunda-feira",
           "isOpen": true,
-          "openTime": "09:00",
-          "lunchStart": "12:00",
           "dayOfWeek": 1,
-          "lunchEnd": "13:00"
+          "openTime": "09:00",
+          "dayName": "Segunda-feira",
+          "closeTime": "20:00",
+          "hasLunchBreak": true,
+          "lunchEnd": "13:00",
+          "lunchStart": "12:00"
         },
         {
-          "lunchEnd": "13:00",
+          "openTime": "09:00",
+          "closeTime": "20:00",
+          "isOpen": true,
           "dayOfWeek": 2,
-          "openTime": "09:00",
-          "isOpen": true,
-          "dayName": "Terça-feira",
-          "closeTime": "20:00",
+          "lunchEnd": "13:00",
+          "lunchStart": "12:00",
           "hasLunchBreak": true,
-          "lunchStart": "12:00"
+          "dayName": "Terça-feira"
         },
         {
-          "isOpen": true,
-          "closeTime": "20:00",
-          "dayName": "Quarta-feira",
-          "openTime": "09:00",
-          "lunchEnd": "13:00",
-          "hasLunchBreak": true,
           "dayOfWeek": 3,
-          "lunchStart": "12:00"
-        },
-        {
-          "dayOfWeek": 4,
-          "dayName": "Quinta-feira",
+          "closeTime": "20:00",
+          "lunchEnd": "13:00",
           "isOpen": true,
           "hasLunchBreak": true,
+          "dayName": "Quarta-feira",
           "lunchStart": "12:00",
-          "openTime": "09:00",
-          "closeTime": "20:00",
-          "lunchEnd": "13:00"
+          "openTime": "09:00"
         },
         {
-          "dayOfWeek": 5,
+          "hasLunchBreak": true,
+          "dayName": "Quinta-feira",
+          "lunchEnd": "13:00",
           "isOpen": true,
+          "dayOfWeek": 4,
           "lunchStart": "12:00",
+          "closeTime": "20:00",
+          "openTime": "09:00"
+        },
+        {
+          "lunchStart": "12:00",
+          "dayName": "Sexta-feira",
+          "dayOfWeek": 5,
           "hasLunchBreak": true,
           "lunchEnd": "13:00",
-          "dayName": "Sexta-feira",
-          "openTime": "09:00",
-          "closeTime": "20:00"
+          "closeTime": "20:00",
+          "isOpen": true,
+          "openTime": "09:00"
         },
         {
-          "isOpen": true,
-          "closeTime": "19:00",
           "hasLunchBreak": false,
+          "dayName": "Sábado",
+          "closeTime": "19:00",
           "dayOfWeek": 6,
           "openTime": "08:30",
-          "dayName": "Sábado"
+          "isOpen": true
         }
       ],
       "settings": {
-        "secondaryColor": "#0f172a",
-        "autoNotifyAheadCount": 3,
-        "maxLateMinutes": 15,
-        "whatsappApiConfigured": false,
         "allowToleranceRequest": true,
+        "cancellationHoursLimit": 2,
+        "autoNotifyAheadCount": 3,
+        "welcomeMessage": "Bem-vindo à Barbearia Teste! Entre na nossa fila virtual pelo celular ou agende online.",
+        "secondaryColor": "#0f172a",
         "primaryColor": "#f59e0b",
         "callToleranceMinutes": 3,
-        "isOpenNow": true,
+        "maxLateMinutes": 15,
         "queueMode": "SINGLE",
-        "welcomeMessage": "Bem-vindo à Barbearia Teste! Entre na nossa fila virtual pelo celular ou agende online.",
-        "cancellationHoursLimit": 2
+        "isOpenNow": true,
+        "whatsappApiConfigured": false
       },
       "planId": "premium",
       "id": "org-1791928828381",
       "isActive": true,
       "createdAt": "2026-10-13T22:00:28.381Z",
       "subscription": {
-        "status": "ATIVA",
-        "nextBillingDate": "2026-11-12",
-        "planName": "Plano Pro Barbearia (R$ 79,90/mês)",
-        "trialDaysRemaining": 0,
         "priceMonthly": 79.9,
-        "isPaid": true,
-        "invoices": []
+        "status": "ATIVA",
+        "trialDaysRemaining": 0,
+        "nextBillingDate": "2026-11-12",
+        "invoices": [],
+        "planName": "Plano Pro Barbearia (R$ 79,90/mês)",
+        "isPaid": true
       },
-      "_syncedAt": "2026-10-16T02:29:43.527Z"
+      "_syncedAt": "2026-10-17T22:17:53.905Z",
+      "_updatedAt": "2026-10-17T22:47:44.871Z"
     }
   ],
   "professionals": [
@@ -336,7 +339,8 @@
         6
       ],
       "createdAt": "2026-01-11T10:00:00.000Z",
-      "_syncedAt": "2026-10-16T02:29:44.883Z"
+      "_syncedAt": "2026-10-17T22:17:54.176Z",
+      "_updatedAt": "2026-10-17T22:47:45.158Z"
     },
     {
       "name": "Carlos Barbeiro",
@@ -347,7 +351,8 @@
       "serviceIds": [
         "srv-1791928523248"
       ],
-      "_syncedAt": "2026-10-16T02:29:45.038Z"
+      "_syncedAt": "2026-10-17T22:17:54.226Z",
+      "_updatedAt": "2026-10-17T22:47:45.202Z"
     },
     {
       "name": "Teste",
@@ -376,7 +381,8 @@
       "id": "prof-1791928828381",
       "organizationId": "org-1791928828381",
       "createdAt": "2026-10-13T22:00:28.381Z",
-      "_syncedAt": "2026-10-16T02:29:45.105Z"
+      "_syncedAt": "2026-10-17T22:17:54.268Z",
+      "_updatedAt": "2026-10-17T22:47:45.250Z"
     }
   ],
   "services": [
@@ -393,7 +399,8 @@
       ],
       "isActive": true,
       "createdAt": "2026-01-10T11:00:00.000Z",
-      "_syncedAt": "2026-10-16T02:29:43.634Z"
+      "_syncedAt": "2026-10-17T22:17:53.949Z",
+      "_updatedAt": "2026-10-17T22:47:44.919Z"
     },
     {
       "id": "srv-2",
@@ -408,7 +415,8 @@
       ],
       "isActive": true,
       "createdAt": "2026-01-10T11:00:00.000Z",
-      "_syncedAt": "2026-10-16T02:29:44.011Z"
+      "_syncedAt": "2026-10-17T22:17:53.993Z",
+      "_updatedAt": "2026-10-17T22:47:44.965Z"
     },
     {
       "id": "srv-3",
@@ -423,7 +431,8 @@
       ],
       "isActive": true,
       "createdAt": "2026-01-10T11:00:00.000Z",
-      "_syncedAt": "2026-10-16T02:29:44.370Z"
+      "_syncedAt": "2026-10-17T22:17:54.036Z",
+      "_updatedAt": "2026-10-17T22:47:45.013Z"
     },
     {
       "name": "Corte Moderno",
@@ -435,7 +444,8 @@
       ],
       "isActive": true,
       "createdAt": "2026-10-13T21:55:23.248Z",
-      "_syncedAt": "2026-10-16T02:29:44.711Z"
+      "_syncedAt": "2026-10-17T22:17:54.085Z",
+      "_updatedAt": "2026-10-17T22:47:45.055Z"
     },
     {
       "name": "Corte Padrão",
@@ -450,7 +460,8 @@
         "prof-1791928828381"
       ],
       "createdAt": "2026-10-13T22:00:28.381Z",
-      "_syncedAt": "2026-10-16T02:29:44.795Z"
+      "_syncedAt": "2026-10-17T22:17:54.130Z",
+      "_updatedAt": "2026-10-17T22:47:45.105Z"
     }
   ],
   "customers": [],
@@ -468,7 +479,8 @@
       "joinedAt": "2026-10-11T01:09:46.559Z",
       "estimatedWaitMinutes": 5,
       "notifiedNext": true,
-      "_syncedAt": "2026-10-16T02:29:45.319Z"
+      "_syncedAt": "2026-10-17T22:17:54.319Z",
+      "_updatedAt": "2026-10-17T22:47:45.305Z"
     },
     {
       "id": "q-seed-2",
@@ -481,7 +493,8 @@
       "status": "AGUARDANDO",
       "joinedAt": "2026-10-11T01:19:46.559Z",
       "estimatedWaitMinutes": 20,
-      "_syncedAt": "2026-10-16T02:29:45.415Z"
+      "_syncedAt": "2026-10-17T22:17:54.364Z",
+      "_updatedAt": "2026-10-17T22:47:45.351Z"
     },
     {
       "id": "q-seed-3",
@@ -494,7 +507,8 @@
       "status": "AGUARDANDO",
       "joinedAt": "2026-10-11T01:29:46.559Z",
       "estimatedWaitMinutes": 40,
-      "_syncedAt": "2026-10-16T02:29:45.503Z"
+      "_syncedAt": "2026-10-17T22:17:54.409Z",
+      "_updatedAt": "2026-10-17T22:47:45.395Z"
     },
     {
       "id": "queue_1791683400933_jzp1kx",
@@ -509,7 +523,8 @@
       "estimatedWaitMinutes": 80,
       "notificationToken": "dev_1791683400933",
       "pushDeliveryStatus": "NOT_ATTEMPTED",
-      "_syncedAt": "2026-10-16T02:29:45.608Z"
+      "_syncedAt": "2026-10-17T22:17:54.454Z",
+      "_updatedAt": "2026-10-17T22:47:45.447Z"
     },
     {
       "id": "queue_1792039117622_n4lahd",
@@ -524,7 +539,8 @@
       "estimatedWaitMinutes": 100,
       "notificationToken": "dev_1792039117622",
       "pushDeliveryStatus": "NOT_ATTEMPTED",
-      "_syncedAt": "2026-10-16T02:29:45.680Z"
+      "_syncedAt": "2026-10-17T22:17:54.499Z",
+      "_updatedAt": "2026-10-17T22:47:45.488Z"
     },
     {
       "id": "queue_1792040702777_7ndwxt",
@@ -547,7 +563,8 @@
       "pushDeliveryTime": "2026-10-16T02:20:26.556Z",
       "onChairAt": "2026-10-16T02:20:31.842Z",
       "finishedAt": "2026-10-16T02:20:37.935Z",
-      "_syncedAt": "2026-10-16T02:29:45.766Z"
+      "_syncedAt": "2026-10-17T22:17:54.545Z",
+      "_updatedAt": "2026-10-17T22:47:45.534Z"
     },
     {
       "id": "queue_1792110269067_tt4d7d",
@@ -566,12 +583,15 @@
       "onChairAt": "2026-10-16T02:20:33.540Z",
       "assignedProfessionalId": "prof-1791928828381",
       "finishedAt": "2026-10-16T02:20:40.756Z",
-      "_syncedAt": "2026-10-16T02:29:45.838Z"
+      "_syncedAt": "2026-10-17T22:17:54.594Z",
+      "_updatedAt": "2026-10-17T22:47:45.581Z"
     },
     {
       "id": "test_item_1",
       "name": "Teste",
-      "time": "2026-10-16T02:27:59.158Z"
+      "time": "2026-10-16T02:27:59.158Z",
+      "_syncedAt": "2026-10-17T22:17:54.642Z",
+      "_updatedAt": "2026-10-17T22:47:45.623Z"
     },
     {
       "id": "queue_1792117986701_geuwlu",
@@ -581,10 +601,74 @@
       "customerPhone": "11988889999",
       "serviceId": "srv-1791928828381",
       "serviceName": "Corte Padrão",
-      "status": "PROXIMO",
+      "status": "FINALIZADO",
       "joinedAt": "2026-10-16T02:33:06.701Z",
       "estimatedWaitMinutes": 5,
       "notificationToken": "dev_1792117986701",
+      "pushDeliveryStatus": "NOT_ATTEMPTED",
+      "onChairAt": "2026-10-16T02:49:34.923Z",
+      "_syncedAt": "2026-10-17T22:17:54.684Z",
+      "finishedAt": "2026-10-16T02:49:37.783Z",
+      "assignedProfessionalId": "prof-1791928828381",
+      "_updatedAt": "2026-10-17T22:47:45.665Z"
+    },
+    {
+      "id": "queue_1792275417045_bz91fx",
+      "ticketNumber": 1,
+      "organizationId": "org-1791928523248",
+      "customerName": "Cliente Remoto Imperial",
+      "customerPhone": "11977776666",
+      "serviceId": "srv-1791928523248",
+      "serviceName": "Corte Moderno",
+      "status": "PROXIMO",
+      "joinedAt": "2026-10-17T22:16:57.045Z",
+      "estimatedWaitMinutes": 5,
+      "notificationToken": "dev_1792275417045",
+      "pushDeliveryStatus": "NOT_ATTEMPTED",
+      "_syncedAt": "2026-10-17T22:17:54.725Z",
+      "_updatedAt": "2026-10-17T22:47:45.709Z"
+    },
+    {
+      "id": "queue_1792277252541_txfep2",
+      "ticketNumber": 4,
+      "organizationId": "org-1791928828381",
+      "customerName": "Cliente Teste Sem Erros",
+      "customerPhone": "11988887777",
+      "serviceId": "srv-1791928828381",
+      "serviceName": "Corte Padrão",
+      "status": "PROXIMO",
+      "joinedAt": "2026-10-17T22:47:32.542Z",
+      "estimatedWaitMinutes": 5,
+      "notificationToken": "dev_1792277252542",
+      "pushDeliveryStatus": "NOT_ATTEMPTED",
+      "_updatedAt": "2026-10-17T22:47:45.752Z"
+    },
+    {
+      "id": "queue_1792277740664_djunxy",
+      "ticketNumber": 5,
+      "organizationId": "org-1791928828381",
+      "customerName": "Cliente 100% Supabase",
+      "customerPhone": "11966665555",
+      "serviceId": "srv-1791928828381",
+      "serviceName": "Corte Padrão",
+      "status": "AGUARDANDO",
+      "joinedAt": "2026-10-17T22:55:40.664Z",
+      "estimatedWaitMinutes": 40,
+      "notificationToken": "dev_1792277740664",
+      "pushDeliveryStatus": "NOT_ATTEMPTED"
+    },
+    {
+      "id": "queue_1792278093847_c4s53n",
+      "ticketNumber": 6,
+      "organizationId": "org-1791928828381",
+      "customerName": "Cliente Supabase Conectado",
+      "customerPhone": "11988880000",
+      "serviceId": "srv-1791928828381",
+      "serviceName": "Corte Padrão",
+      "status": "AGUARDANDO",
+      "joinedAt": "2026-10-17T23:01:33.847Z",
+      "estimatedWaitMinutes": 60,
+      "notificationToken": "dev_1792278093847",
       "pushDeliveryStatus": "NOT_ATTEMPTED"
     }
   ],
@@ -667,8 +751,8 @@
       "userName": "Super Administrador (Dono da SaaS)",
       "createdAt": "2026-10-15T03:25:55.708Z",
       "loggedAt": "2026-10-15T03:25:55.708Z",
-      "lastActiveAt": "2026-10-16T00:25:15.748Z",
-      "expiresAt": "2026-11-15T00:25:15.748Z",
+      "lastActiveAt": "2026-10-17T22:56:12.904Z",
+      "expiresAt": "2026-11-16T22:56:12.904Z",
       "isAuthenticated": true
     },
     {

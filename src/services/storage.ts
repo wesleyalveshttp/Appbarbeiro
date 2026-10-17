@@ -509,17 +509,39 @@ export class StorageService {
   }
 
   // Authoritative fetch of establishment, services, professionals, and queue for public pages (/fila/:slug, /agendar/:slug, /b/:slug)
-  static async fetchPublicEstablishment(slug: string): Promise<{
-    organization: Organization;
-    services: Service[];
-    professionals: Professional[];
-    queue: WaitingQueueItem[];
-  } | null> {
-    if (!slug) return null;
+  static async fetchPublicEstablishmentFull(slug: string): Promise<{
+    status: 'SUCCESS' | 'NOT_FOUND' | 'SERVER_ERROR' | 'NETWORK_ERROR';
+    data?: {
+      organization: Organization;
+      services: Service[];
+      professionals: Professional[];
+      queue: WaitingQueueItem[];
+    };
+    error?: string;
+    statusCode?: number;
+  }> {
+    if (!slug) return { status: 'NOT_FOUND', error: 'Endereço da barbearia não informado.', statusCode: 404 };
     const clean = decodeURIComponent(slug).trim().toLowerCase();
     try {
       const res = await fetch(`/api/public/establishment/${encodeURIComponent(clean)}`);
       const contentType = res.headers.get('content-type') || '';
+
+      if (res.status === 404) {
+        return {
+          status: 'NOT_FOUND',
+          statusCode: 404,
+          error: 'Estabelecimento não encontrado para este link.'
+        };
+      }
+
+      if (res.status >= 500) {
+        return {
+          status: 'SERVER_ERROR',
+          statusCode: res.status,
+          error: 'Instabilidade temporária no servidor ou banco de dados.'
+        };
+      }
+
       if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
         if (data.organization) {
@@ -547,22 +569,37 @@ export class StorageService {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
           } catch {}
 
-          return data;
+          return {
+            status: 'SUCCESS',
+            statusCode: 200,
+            data
+          };
         }
       }
-    } catch (err) {
-      console.warn('Network error fetching public establishment:', err);
-    }
 
-    // Local cache fallback ONLY IF exact match exists
-    const localOrg = this.getOrganizationBySlug(clean);
-    if (localOrg) {
       return {
-        organization: localOrg,
-        services: this.getServices(localOrg.id),
-        professionals: this.getProfessionals(localOrg.id),
-        queue: this.getQueue(localOrg.id)
+        status: 'SERVER_ERROR',
+        statusCode: res.status,
+        error: 'Resposta inesperada do servidor ao carregar barbearia.'
       };
+    } catch (err: any) {
+      console.warn('Network error fetching public establishment:', err);
+      return {
+        status: 'NETWORK_ERROR',
+        error: 'Não foi possível conectar ao servidor. Verifique sua conexão com a internet e tente novamente.'
+      };
+    }
+  }
+
+  static async fetchPublicEstablishment(slug: string): Promise<{
+    organization: Organization;
+    services: Service[];
+    professionals: Professional[];
+    queue: WaitingQueueItem[];
+  } | null> {
+    const result = await this.fetchPublicEstablishmentFull(slug);
+    if (result.status === 'SUCCESS' && result.data) {
+      return result.data;
     }
     return null;
   }
@@ -1262,36 +1299,41 @@ export class StorageService {
     notificationToken?: string;
     subscription?: any;
   }): Promise<WaitingQueueItem> {
-    try {
-      const res = await fetch('/api/queue/join', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && json.item) {
-          // Immediately persist to local cache
-          const db = this.getDB();
-          if (!Array.isArray(db.queue)) db.queue = [];
-          const existingIdx = db.queue.findIndex(q => q.id === json.item.id);
-          if (existingIdx >= 0) {
-            db.queue[existingIdx] = json.item;
-          } else {
-            db.queue.push(json.item);
-          }
-          try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-          } catch {}
+    const res = await fetch('/api/queue/join', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
 
-          broadcastEvent('QUEUE_UPDATED', { orgId: json.item.organizationId, queueItemId: json.item.id });
-          return json.item;
-        }
-      }
-    } catch (e) {
-      console.warn('API join error, using local fallback:', e);
+    if (!res.ok) {
+      let errorMsg = 'Não foi possível entrar na fila. Tente novamente.';
+      try {
+        const json = await res.json();
+        if (json.error) errorMsg = json.error;
+      } catch {}
+      throw new Error(errorMsg);
     }
-    return this.joinQueueLocal(data);
+
+    const json = await res.json();
+    if (!json.success || !json.item) {
+      throw new Error('O servidor não confirmou sua entrada na fila. Tente novamente.');
+    }
+
+    // Persist confirmed item to local cache
+    const db = this.getDB();
+    if (!Array.isArray(db.queue)) db.queue = [];
+    const existingIdx = db.queue.findIndex(q => q.id === json.item.id);
+    if (existingIdx >= 0) {
+      db.queue[existingIdx] = json.item;
+    } else {
+      db.queue.push(json.item);
+    }
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+    } catch {}
+
+    broadcastEvent('QUEUE_UPDATED', { orgId: json.item.organizationId, queueItemId: json.item.id });
+    return json.item;
   }
 
   static joinQueueLocal(data: {

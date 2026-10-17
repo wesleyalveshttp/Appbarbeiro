@@ -65,44 +65,46 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
 
   const [isLoading, setIsLoading] = useState(true);
   const [orgNotFound, setOrgNotFound] = useState(false);
+  const [errorType, setErrorType] = useState<'NOT_FOUND' | 'SERVER_ERROR' | 'NETWORK_ERROR' | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const loadData = async () => {
     if (!slug) {
       setOrgNotFound(true);
+      setErrorType('NOT_FOUND');
+      setErrorMessage('Endereço da barbearia não informado.');
       setIsLoading(false);
       return;
     }
     try {
-      // 1. Authoritative fetch of establishment, services, professionals, and queue
-      const data = await StorageService.fetchPublicEstablishment(slug);
-      if (data && data.organization) {
-        setOrganization(data.organization);
+      // Authoritative fetch of establishment, services, professionals, and queue directly from Cloud DB
+      const result = await StorageService.fetchPublicEstablishmentFull(slug);
+      if (result.status === 'SUCCESS' && result.data?.organization) {
+        setOrganization(result.data.organization);
         setOrgNotFound(false);
-        setServices(data.services || []);
-        setProfessionals(data.professionals || []);
-        setQueue(data.queue || []);
-        if (!selectedServiceId && data.services?.length > 0) {
-          setSelectedServiceId(data.services[0].id);
+        setErrorType(null);
+        setErrorMessage(null);
+        setServices(result.data.services || []);
+        setProfessionals(result.data.professionals || []);
+        setQueue(result.data.queue || []);
+        if (!selectedServiceId && result.data.services?.length > 0) {
+          setSelectedServiceId(result.data.services[0].id);
         }
-      } else {
-        // Fallback to local storage if present
-        const localOrg = StorageService.getOrganizationBySlug(slug);
-        if (localOrg) {
-          setOrganization(localOrg);
-          setOrgNotFound(false);
-          const srvs = StorageService.getServices(localOrg.id).filter(s => s.isActive);
-          const profs = StorageService.getProfessionals(localOrg.id).filter(p => p.isActive);
-          setServices(srvs);
-          setProfessionals(profs);
-          const q = await StorageService.fetchQueue(localOrg.id);
-          setQueue(q || []);
-          if (!selectedServiceId && srvs.length > 0) setSelectedServiceId(srvs[0].id);
-        } else {
-          setOrgNotFound(true);
-        }
+      } else if (result.status === 'NOT_FOUND') {
+        setOrgNotFound(true);
+        setErrorType('NOT_FOUND');
+        setErrorMessage(result.error || 'Estabelecimento não encontrado para este link.');
+      } else if (result.status === 'SERVER_ERROR') {
+        setErrorType('SERVER_ERROR');
+        setErrorMessage(result.error || 'Instabilidade temporária no servidor ou banco de dados.');
+      } else if (result.status === 'NETWORK_ERROR') {
+        setErrorType('NETWORK_ERROR');
+        setErrorMessage(result.error || 'Falha de conexão com a internet. Verifique sua rede e tente novamente.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Erro ao carregar dados da fila pública:', err);
+      setErrorType('NETWORK_ERROR');
+      setErrorMessage('Falha ao conectar com o servidor. Tente novamente.');
     } finally {
       setIsLoading(false);
     }
@@ -309,11 +311,52 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
     );
   }
 
-  if (orgNotFound || !organization) {
+  if (errorType === 'SERVER_ERROR' || errorType === 'NETWORK_ERROR') {
     return (
       <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center">
         <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 space-y-4 shadow-2xl">
           <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-400 border border-amber-500/30 mx-auto">
+            <RefreshCw className="h-7 w-7" />
+          </div>
+          <div>
+            <h2 className="text-xl font-black text-white">
+              {errorType === 'NETWORK_ERROR' ? 'Falha de Conexão' : 'Instabilidade Temporária'}
+            </h2>
+            <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+              {errorMessage || 'Não foi possível carregar as informações da fila no momento.'}
+            </p>
+            <p className="text-[11px] text-slate-500 mt-1">
+              Seus dados e sua posição na fila continuam preservados no banco de dados.
+            </p>
+          </div>
+          <div className="space-y-2 pt-2">
+            <button
+              onClick={() => {
+                setIsLoading(true);
+                loadData();
+              }}
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 py-3 text-xs font-bold text-slate-950 transition cursor-pointer shadow-lg shadow-amber-500/20"
+            >
+              <RefreshCw className="h-4 w-4" />
+              <span>Tentar Novamente</span>
+            </button>
+            <button
+              onClick={onBackToHome}
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-800 hover:bg-slate-700 py-2.5 text-xs font-semibold text-slate-300 transition cursor-pointer border border-slate-700"
+            >
+              <span>Voltar para o Início</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (orgNotFound || !organization) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center">
+        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 space-y-4 shadow-2xl">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-red-500/10 text-red-400 border border-red-500/30 mx-auto">
             <AlertCircle className="h-7 w-7" />
           </div>
           <div>

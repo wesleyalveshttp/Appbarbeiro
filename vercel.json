@@ -1,7 +1,16 @@
 {
+  "version": 2,
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/api",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/((?!assets/|images/|icon\\.svg|favicon\\.ico|manifest\\.webmanifest|sw\\.js|registerSW\\.js|workbox-.*\\.js).*)",
       "destination": "/index.html"
     }
   ]
