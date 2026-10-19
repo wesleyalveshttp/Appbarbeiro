@@ -536,7 +536,15 @@ export class StorageService {
         return {
           status: 'NOT_FOUND',
           statusCode: 404,
-          error: data?.error || 'Estabelecimento não encontrado para este link.'
+          error: data?.error || `Estabelecimento "${clean}" não encontrado no banco de dados.`
+        };
+      }
+
+      if (res.status === 401 || res.status === 403) {
+        return {
+          status: 'SERVER_ERROR',
+          statusCode: res.status,
+          error: data?.error || 'Falha de permissão de acesso ao banco de dados Supabase.'
         };
       }
 
@@ -583,9 +591,9 @@ export class StorageService {
       }
 
       return {
-        status: 'SERVER_ERROR',
+        status: res.status === 404 ? 'NOT_FOUND' : 'SERVER_ERROR',
         statusCode: res.status,
-        error: 'Resposta inesperada do servidor ao carregar barbearia.'
+        error: data?.error || `Não foi possível carregar as informações de "${clean}".`
       };
     } catch (err: any) {
       console.warn('Network error fetching public establishment:', err);

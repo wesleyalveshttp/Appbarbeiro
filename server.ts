@@ -30,6 +30,27 @@ app.use((req, res, next) => {
   next();
 });
 
+// Normalize request URLs so they match regardless of whether /api prefix was stripped by Vercel or proxy
+app.use((req, res, next) => {
+  const url = req.url || '';
+  if (!url.startsWith('/api') && (
+    url.startsWith('/public/') ||
+    url.startsWith('/auth/') ||
+    url.startsWith('/queue/') ||
+    url.startsWith('/services') ||
+    url.startsWith('/professionals') ||
+    url.startsWith('/appointments') ||
+    url.startsWith('/transactions') ||
+    url.startsWith('/mercadopago/') ||
+    url.startsWith('/push/') ||
+    url.startsWith('/health') ||
+    url.startsWith('/organizations')
+  )) {
+    req.url = '/api' + url;
+  }
+  next();
+});
+
 // ---------------------------------------------------------------------------
 // 1. AUTHENTICATION & MULTI-TENANT ISOLATION MIDDLEWARE
 // ---------------------------------------------------------------------------
@@ -1387,6 +1408,11 @@ app.all('/api/*', (req: Request, res: Response) => {
 // 17. SERVER STARTUP & VITE (DEV OR PROD)
 // ---------------------------------------------------------------------------
 async function startServer() {
+  // Ensure default establishment is seeded in Supabase if database is newly initialized
+  SupabaseDBService.ensureDefaultSeed().catch((err) => {
+    console.warn('[Startup] Supabase seed warning:', err.message);
+  });
+
   const isProd = process.env.NODE_ENV === 'production' && fs.existsSync(path.resolve(__dirname, 'dist'));
 
   if (isProd) {

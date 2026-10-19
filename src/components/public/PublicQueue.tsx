@@ -320,7 +320,13 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
           </div>
           <div>
             <h2 className="text-xl font-black text-white">
-              {errorType === 'NETWORK_ERROR' ? 'Falha de Conexão' : 'Instabilidade Temporária'}
+              {errorType === 'NETWORK_ERROR'
+                ? 'Falha de Conexão'
+                : errorMessage?.includes('não configurado')
+                ? 'Configuração Necessária'
+                : errorMessage?.includes('Tabelas')
+                ? 'Inicialização do Banco de Dados'
+                : 'Aviso do Servidor'}
             </h2>
             <p className="text-xs text-slate-400 mt-2 leading-relaxed">
               {errorMessage || 'Não foi possível carregar as informações da fila no momento.'}

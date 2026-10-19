@@ -113,7 +113,13 @@ export const PublicBooking: React.FC<PublicBookingProps> = ({
           </div>
           <div>
             <h2 className="text-xl font-black text-white">
-              {fetchErrorType === 'NETWORK_ERROR' ? 'Falha de Conexão' : 'Instabilidade Temporária'}
+              {fetchErrorType === 'NETWORK_ERROR'
+                ? 'Falha de Conexão'
+                : fetchErrorMessage?.includes('não configurado')
+                ? 'Configuração Necessária'
+                : fetchErrorMessage?.includes('Tabelas')
+                ? 'Inicialização do Banco de Dados'
+                : 'Aviso do Servidor'}
             </h2>
             <p className="text-xs text-slate-400 mt-2 leading-relaxed">
               {fetchErrorMessage || 'Não foi possível carregar a página de agendamento no momento.'}

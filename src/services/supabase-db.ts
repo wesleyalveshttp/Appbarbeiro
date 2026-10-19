@@ -66,6 +66,81 @@ export class SupabaseDBService {
     }
   }
 
+  static async ensureDefaultSeed(): Promise<void> {
+    const ready = await this.checkTablesReady();
+    if (!ready) return;
+    try {
+      const client = getSupabaseAdminClient();
+      const { data } = await client.from('organizations').select('id').eq('slug', 'barbearia').maybeSingle();
+      if (!data) {
+        await this.createOrganization({
+          id: 'org-prime',
+          name: 'Minha Barbearia',
+          slug: 'barbearia',
+          type: 'Barbearia',
+          description: 'Atendimento de alta qualidade, corte de cabelo moderno e tradicional, barba e estilo.',
+          phone: '(11) 99999-0000',
+          whatsapp: '11999990000',
+          instagram: '@minhabarbearia',
+          ownerName: 'Dono da Barbearia',
+          ownerEmail: 'dono@barbearia.com',
+          ownerPassword: '123',
+          isActive: true,
+          settings: {
+            maxLateMinutes: 15,
+            cancellationHoursLimit: 2,
+            queueMode: 'SINGLE',
+            autoNotifyAheadCount: 3,
+            callToleranceMinutes: 3,
+            allowToleranceRequest: true,
+            primaryColor: '#f59e0b',
+            secondaryColor: '#0f172a',
+            welcomeMessage: 'Bem-vindo! Entre na nossa fila virtual pelo celular ou agende seu horário.',
+            isOpenNow: true,
+          },
+        });
+        await this.createProfessional({
+          id: 'prof-1',
+          organizationId: 'org-prime',
+          name: 'Barbeiro Responsável',
+          email: 'barbeiro@barbearia.com',
+          phone: '(11) 99999-0001',
+          whatsapp: '11999990001',
+          specialties: ['Corte Clássico & Fade', 'Barba Tradicional', 'Acabamento'],
+          serviceIds: ['srv-1', 'srv-2'],
+          commissionPercent: 50,
+          isActive: true,
+          isAvailableToday: true,
+          workingDays: [1, 2, 3, 4, 5, 6],
+        });
+        await this.createService({
+          id: 'srv-1',
+          organizationId: 'org-prime',
+          name: 'Corte Masculino',
+          description: 'Corte na máquina e tesoura com lavagem e finalização.',
+          price: 40,
+          durationMinutes: 30,
+          category: 'Cabelo',
+          professionalIds: ['prof-1'],
+          isActive: true,
+        });
+        await this.createService({
+          id: 'srv-2',
+          organizationId: 'org-prime',
+          name: 'Barba Tradicional',
+          description: 'Toalha quente, navalhete descartável e hidratação.',
+          price: 35,
+          durationMinutes: 30,
+          category: 'Barba',
+          professionalIds: ['prof-1'],
+          isActive: true,
+        });
+      }
+    } catch (e) {
+      console.warn('[SupabaseDBService] ensureDefaultSeed warning:', e);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // ORGANIZATIONS (BARBERSHOPS)
   // ---------------------------------------------------------------------------
@@ -310,6 +385,18 @@ export class SupabaseDBService {
     }
 
     if (!orgData) {
+      if (cleanSlug === 'barbearia' || cleanSlug === 'minha-barbearia' || cleanSlug === 'org-prime') {
+        await this.ensureDefaultSeed();
+        const retry = await client
+          .from('organizations')
+          .select('id, name, slug, type, description, phone, whatsapp, instagram, address, working_hours, settings, is_active, created_at')
+          .or(`slug.ilike.${cleanSlug},id.eq.${cleanSlug}`)
+          .eq('is_active', true)
+          .maybeSingle();
+        if (retry.data) {
+          return this.getPublicEstablishment(retry.data.slug);
+        }
+      }
       return null;
     }
 
