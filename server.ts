@@ -1,6 +1,5 @@
 import express, { Request, Response } from 'express';
 import http from 'http';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -1434,6 +1433,8 @@ async function startServer() {
     });
 
     const httpServer = http.createServer(app);
+    const vitePkg = 'vite';
+    const { createServer: createViteServer } = await import(vitePkg);
     const vite = await createViteServer({
       server: {
         middlewareMode: true,

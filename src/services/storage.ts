@@ -16,6 +16,7 @@ import {
   AuthSession
 } from '../types';
 import { NotificationService } from './notificationService';
+import { supabase } from '../lib/supabase';
 
 const STORAGE_KEY = 'barberos_saas_data_v7_real';
 const CURRENT_ORG_KEY = 'barberos_current_org_id';
@@ -521,6 +522,94 @@ export class StorageService {
   }> {
     if (!slug) return { status: 'NOT_FOUND', error: 'Endereço da barbearia não informado.', statusCode: 404 };
     const clean = decodeURIComponent(slug).trim().toLowerCase();
+    // Direct Supabase public view query as high-availability fallback
+    const queryDirectSupabase = async () => {
+      if (!supabase) return null;
+      try {
+        const { data: orgData } = await supabase
+          .from('public_establishments')
+          .select('*')
+          .or(`slug.ilike.${clean},id.eq.${clean}`)
+          .maybeSingle();
+
+        if (!orgData) return null;
+
+        const orgId = orgData.id;
+        const [srvRes, profRes, queueRes] = await Promise.all([
+          supabase.from('public_services').select('*').eq('organization_id', orgId).order('price', { ascending: true }),
+          supabase.from('public_professionals').select('*').eq('organization_id', orgId).order('name', { ascending: true }),
+          supabase.from('public_queue').select('*').eq('organization_id', orgId).order('ticket_number', { ascending: true })
+        ]);
+
+        const organization: Organization = {
+          id: orgData.id,
+          name: orgData.name,
+          slug: orgData.slug,
+          type: orgData.type || 'Barbearia',
+          description: orgData.description || '',
+          phone: orgData.phone || '',
+          whatsapp: orgData.whatsapp || '',
+          instagram: orgData.instagram || '',
+          address: orgData.address || {},
+          workingHours: orgData.working_hours || [],
+          settings: orgData.settings || {},
+          isActive: orgData.is_active !== false,
+          createdAt: orgData.created_at,
+        };
+
+        const services: Service[] = (srvRes.data || []).map((s: any) => ({
+          id: s.id,
+          organizationId: s.organization_id,
+          name: s.name,
+          description: s.description || '',
+          price: Number(s.price || 0),
+          durationMinutes: Number(s.duration_minutes || 30),
+          category: s.category || 'Cabelo',
+          professionalIds: s.professional_ids || [],
+          isActive: s.is_active !== false,
+          createdAt: s.created_at,
+        }));
+
+        const professionals: Professional[] = (profRes.data || []).map((p: any) => ({
+          id: p.id,
+          organizationId: p.organization_id,
+          name: p.name,
+          phone: p.phone || '',
+          whatsapp: p.whatsapp || '',
+          avatarUrl: p.avatar_url || '',
+          specialties: p.specialties || [],
+          serviceIds: p.service_ids || [],
+          commissionPercent: 50,
+          isAvailableToday: p.is_available_today !== false,
+          workingDays: p.working_days || [1, 2, 3, 4, 5, 6],
+          isActive: p.is_active !== false,
+          createdAt: p.created_at,
+        }));
+
+        const queue: WaitingQueueItem[] = (queueRes.data || []).map((q: any) => ({
+          id: q.id,
+          ticketNumber: q.ticket_number,
+          organizationId: q.organization_id,
+          customerName: q.customer_name,
+          serviceId: q.service_id,
+          serviceName: q.service_name,
+          preferredProfessionalId: q.preferred_professional_id,
+          status: q.status,
+          joinedAt: q.joined_at,
+          estimatedWaitMinutes: q.estimated_wait_minutes || 15,
+          calledAt: q.called_at,
+          calledToleranceExpiresAt: q.called_tolerance_expires_at,
+          onChairAt: q.on_chair_at,
+          finishedAt: q.finished_at,
+        }));
+
+        return { organization, services, professionals, queue };
+      } catch (e) {
+        console.warn('Fallback direct Supabase query warning:', e);
+        return null;
+      }
+    };
+
     try {
       const res = await fetch(`/api/public/establishment/${encodeURIComponent(clean)}`);
       const contentType = res.headers.get('content-type') || '';
@@ -532,7 +621,44 @@ export class StorageService {
         } catch {}
       }
 
+      if (res.ok && data && data.organization) {
+        const db = this.getDB();
+        const orgIdx = db.organizations.findIndex(o => o.id === data.organization.id);
+        if (orgIdx >= 0) {
+          db.organizations[orgIdx] = { ...db.organizations[orgIdx], ...data.organization };
+        } else {
+          db.organizations.push(data.organization);
+        }
+
+        if (Array.isArray(data.services)) {
+          const otherServices = db.services.filter(s => s.organizationId !== data.organization.id);
+          db.services = [...otherServices, ...data.services];
+        }
+        if (Array.isArray(data.professionals)) {
+          const otherProfs = db.professionals.filter(p => p.organizationId !== data.organization.id);
+          db.professionals = [...otherProfs, ...data.professionals];
+        }
+        if (Array.isArray(data.queue)) {
+          const otherQueue = db.queue.filter(q => q.organizationId !== data.organization.id);
+          db.queue = [...otherQueue, ...data.queue];
+        }
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+        } catch {}
+
+        return {
+          status: 'SUCCESS',
+          statusCode: 200,
+          data
+        };
+      }
+
+      // If backend gave 404, verify with direct Supabase before declaring not found
       if (res.status === 404) {
+        const direct = await queryDirectSupabase();
+        if (direct) {
+          return { status: 'SUCCESS', statusCode: 200, data: direct };
+        }
         return {
           status: 'NOT_FOUND',
           statusCode: 404,
@@ -540,54 +666,10 @@ export class StorageService {
         };
       }
 
-      if (res.status === 401 || res.status === 403) {
-        return {
-          status: 'SERVER_ERROR',
-          statusCode: res.status,
-          error: data?.error || 'Falha de permissão de acesso ao banco de dados Supabase.'
-        };
-      }
-
-      if (res.status === 503 || res.status >= 500) {
-        return {
-          status: 'SERVER_ERROR',
-          statusCode: res.status,
-          error: data?.error || 'Instabilidade no servidor ou banco de dados Supabase.'
-        };
-      }
-
-      if (res.ok && data && data.organization) {
-        if (data.organization) {
-          const db = this.getDB();
-          const orgIdx = db.organizations.findIndex(o => o.id === data.organization.id);
-          if (orgIdx >= 0) {
-            db.organizations[orgIdx] = { ...db.organizations[orgIdx], ...data.organization };
-          } else {
-            db.organizations.push(data.organization);
-          }
-
-          if (Array.isArray(data.services)) {
-            const otherServices = db.services.filter(s => s.organizationId !== data.organization.id);
-            db.services = [...otherServices, ...data.services];
-          }
-          if (Array.isArray(data.professionals)) {
-            const otherProfs = db.professionals.filter(p => p.organizationId !== data.organization.id);
-            db.professionals = [...otherProfs, ...data.professionals];
-          }
-          if (Array.isArray(data.queue)) {
-            const otherQueue = db.queue.filter(q => q.organizationId !== data.organization.id);
-            db.queue = [...otherQueue, ...data.queue];
-          }
-          try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-          } catch {}
-
-          return {
-            status: 'SUCCESS',
-            statusCode: 200,
-            data
-          };
-        }
+      // For 500, 503, or any backend gateway failure, try direct Supabase
+      const directFallback = await queryDirectSupabase();
+      if (directFallback) {
+        return { status: 'SUCCESS', statusCode: 200, data: directFallback };
       }
 
       return {
@@ -596,7 +678,12 @@ export class StorageService {
         error: data?.error || `Não foi possível carregar as informações de "${clean}".`
       };
     } catch (err: any) {
-      console.warn('Network error fetching public establishment:', err);
+      console.warn('Network error on API, attempting direct Supabase fallback:', err);
+      const direct = await queryDirectSupabase();
+      if (direct) {
+        return { status: 'SUCCESS', statusCode: 200, data: direct };
+      }
+
       return {
         status: 'NETWORK_ERROR',
         error: 'Não foi possível conectar ao servidor. Verifique sua conexão com a internet e tente novamente.'

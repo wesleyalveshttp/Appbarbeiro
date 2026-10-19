@@ -18,13 +18,13 @@ const publicSupabaseUrl =
   getEnvVar('NEXT_PUBLIC_SUPABASE_URL') ||
   getEnvVar('VITE_SUPABASE_URL') ||
   getEnvVar('SUPABASE_URL') ||
-  '';
+  'https://xsmcfrualbyswoccyicl.supabase.co';
 
 const publicSupabaseKey =
   getEnvVar('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY') ||
   getEnvVar('VITE_SUPABASE_ANON_KEY') ||
   getEnvVar('SUPABASE_ANON_KEY') ||
-  '';
+  'sb_publishable_cO9Vc1J2pX7WE8LnyywbVQ_RhlD2AD8';
 
 export const isSupabaseConfigured = (): boolean => {
   return Boolean(publicSupabaseUrl && publicSupabaseKey && publicSupabaseUrl.startsWith('http'));
