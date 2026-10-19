@@ -2,12 +2,12 @@
   "version": 2,
   "rewrites": [
     {
-      "source": "/api",
-      "destination": "/api/index"
+      "source": "/api/(.*)",
+      "destination": "/api"
     },
     {
-      "source": "/api/(.*)",
-      "destination": "/api/index"
+      "source": "/api",
+      "destination": "/api"
     },
     {
       "source": "/((?!assets/|images/|icon\\.svg|favicon\\.ico|manifest\\.webmanifest|sw\\.js|registerSW\\.js|workbox-.*\\.js).*)",

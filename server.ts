@@ -3,12 +3,11 @@ import http from 'http';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
-import os from 'os';
 import crypto from 'crypto';
 import webpush from 'web-push';
 import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
 import { fileURLToPath } from 'url';
-import { SupabaseDBService } from './src/services/supabase-db.ts';
+import { SupabaseDBService, hashPassword, verifyPassword } from './src/services/supabase-db.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,7 +23,7 @@ app.use(express.json());
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-session-token');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
@@ -32,52 +31,95 @@ app.use((req, res, next) => {
 });
 
 // ---------------------------------------------------------------------------
-// 1. DATA DIRECTORY & PERSISTENCE SETUP (Safe on Vercel Read-Only Filesystem)
+// 1. AUTHENTICATION & MULTI-TENANT ISOLATION MIDDLEWARE
 // ---------------------------------------------------------------------------
-const DATA_DIR = isVercel
-  ? path.join(os.tmpdir(), 'barberos-data')
-  : path.resolve(__dirname, 'data');
-
-try {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+export function extractToken(req: Request): string | null {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.substring(7).trim();
   }
-} catch (e) {
-  console.warn('Filesystem read-only or restricted, using in-memory state:', e);
+  const customHeader = req.headers['x-session-token'];
+  if (typeof customHeader === 'string' && customHeader) {
+    return customHeader.trim();
+  }
+  return null;
 }
 
-const DB_FILE = path.join(DATA_DIR, 'db.json');
-const VAPID_FILE = path.join(DATA_DIR, 'vapid.json');
-const SUBS_FILE = path.join(DATA_DIR, 'subscriptions.json');
-const LOGS_FILE = path.join(DATA_DIR, 'push_logs.json');
+export async function requireTenantAuth(req: Request, res: Response, next: any) {
+  const token = extractToken(req);
+  if (!token) {
+    return res.status(401).json({ error: 'Token de autenticação ausente. Faça login novamente.' });
+  }
+
+  try {
+    const session = await SupabaseDBService.getSession(token);
+    if (!session) {
+      return res.status(401).json({ error: 'Sessão inválida ou expirada. Faça login novamente.' });
+    }
+
+    (req as any).session = session;
+
+    if (session.role === 'SUPERADMIN') {
+      return next();
+    }
+
+    // Determine target organization ID from params, query, or body
+    const targetOrgId =
+      req.params.orgId ||
+      req.body.organizationId ||
+      (req.query.orgId as string) ||
+      (req.query.organizationId as string);
+
+    if (targetOrgId && session.organizationId && session.organizationId !== targetOrgId) {
+      return res.status(403).json({
+        error: 'Acesso negado: você não tem permissão para acessar os dados deste estabelecimento.'
+      });
+    }
+
+    next();
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Erro ao validar autorização: ' + err.message });
+  }
+}
+
+export async function requireSuperAdminAuth(req: Request, res: Response, next: any) {
+  const token = extractToken(req);
+  if (!token) {
+    return res.status(401).json({ error: 'Autenticação de administrador necessária.' });
+  }
+
+  try {
+    const session = await SupabaseDBService.getSession(token);
+    if (!session || session.role !== 'SUPERADMIN') {
+      return res.status(403).json({ error: 'Acesso restrito ao Administrador Geral da plataforma.' });
+    }
+
+    (req as any).session = session;
+    next();
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Erro ao validar administrador: ' + err.message });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 2. VAPID KEYS SETUP (RFC 8292 standard Web Push / FCM / APNs)
 // ---------------------------------------------------------------------------
-let vapidKeys: { publicKey: string; privateKey: string };
+const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U';
+const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || 'UUxI4n9MmZf45V9B3f2c5jKlMnoPqrStUvWxYz12345';
+
 try {
-  if (fs.existsSync(VAPID_FILE)) {
-    vapidKeys = JSON.parse(fs.readFileSync(VAPID_FILE, 'utf-8'));
-  } else {
-    vapidKeys = webpush.generateVAPIDKeys();
-    try {
-      fs.writeFileSync(VAPID_FILE, JSON.stringify(vapidKeys, null, 2), 'utf-8');
-    } catch {}
-  }
-} catch {
-  vapidKeys = webpush.generateVAPIDKeys();
+  webpush.setVapidDetails(
+    'mailto:suporte@barberos.app',
+    vapidPublicKey,
+    vapidPrivateKey
+  );
+  console.log('🔑 Web Push VAPID inicializado com sucesso.');
+} catch (err) {
+  console.warn('⚠️ Web Push VAPID init warning:', err);
 }
 
-webpush.setVapidDetails(
-  'mailto:suporte@barberos.app',
-  vapidKeys.publicKey,
-  vapidKeys.privateKey
-);
-
-console.log('🔑 Web Push VAPID initialized.');
-
 // ---------------------------------------------------------------------------
-// 2.1 MERCADO PAGO SDK INITIALIZATION
+// 3. MERCADO PAGO SDK INITIALIZATION
 // ---------------------------------------------------------------------------
 const MP_ACCESS_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN || '';
 const MP_WEBHOOK_SECRET = process.env.MERCADOPAGO_WEBHOOK_SECRET || '';
@@ -94,273 +136,6 @@ if (MP_ACCESS_TOKEN) {
   } catch (err) {
     console.warn('⚠️ Erro ao inicializar Mercado Pago SDK:', err);
   }
-} else {
-  console.log('ℹ️ MERCADOPAGO_ACCESS_TOKEN não configurado no ambiente. Endpoints informarão configuração pendente.');
-}
-function getInitialSeed() {
-  return {
-    organizations: [
-      {
-        id: 'org-prime',
-        name: 'Minha Barbearia',
-        slug: 'barbearia',
-        type: 'Barbearia',
-        description: 'Atendimento de alta qualidade, corte de cabelo moderno e tradicional, barba e estilo.',
-        phone: '(11) 99999-0000',
-        whatsapp: '11999990000',
-        instagram: '@minhabarbearia',
-        ownerEmail: 'dono@barbearia.com',
-        ownerPassword: '123',
-        ownerName: 'Dono da Barbearia',
-        address: {
-          cep: '01310-100',
-          street: 'Rua Principal',
-          number: '100',
-          neighborhood: 'Centro',
-          city: 'São Paulo',
-          state: 'SP'
-        },
-        workingHours: [
-          { dayOfWeek: 0, dayName: 'Domingo', isOpen: false, openTime: '09:00', closeTime: '15:00' },
-          { dayOfWeek: 1, dayName: 'Segunda-feira', isOpen: true, openTime: '09:00', closeTime: '20:00', hasLunchBreak: true, lunchStart: '12:30', lunchEnd: '13:30' },
-          { dayOfWeek: 2, dayName: 'Terça-feira', isOpen: true, openTime: '09:00', closeTime: '20:00', hasLunchBreak: true, lunchStart: '12:30', lunchEnd: '13:30' },
-          { dayOfWeek: 3, dayName: 'Quarta-feira', isOpen: true, openTime: '09:00', closeTime: '20:00', hasLunchBreak: true, lunchStart: '12:30', lunchEnd: '13:30' },
-          { dayOfWeek: 4, dayName: 'Quinta-feira', isOpen: true, openTime: '09:00', closeTime: '20:00', hasLunchBreak: true, lunchStart: '12:30', lunchEnd: '13:30' },
-          { dayOfWeek: 5, dayName: 'Sexta-feira', isOpen: true, openTime: '08:30', closeTime: '21:00', hasLunchBreak: true, lunchStart: '12:30', lunchEnd: '13:30' },
-          { dayOfWeek: 6, dayName: 'Sábado', isOpen: true, openTime: '08:00', closeTime: '19:00', hasLunchBreak: false }
-        ],
-        settings: {
-          maxLateMinutes: 15,
-          cancellationHoursLimit: 2,
-          queueMode: 'SINGLE',
-          autoNotifyAheadCount: 3,
-          callToleranceMinutes: 3,
-          allowToleranceRequest: true,
-          primaryColor: '#f59e0b',
-          secondaryColor: '#0f172a',
-          welcomeMessage: 'Bem-vindo! Entre na nossa fila virtual pelo celular ou agende seu horário.',
-          isOpenNow: true,
-          whatsappApiConfigured: false
-        },
-        planId: 'premium',
-        subscription: {
-          status: 'PENDENTE',
-          planName: 'Plano Pro Barbearia (R$ 79,90/mês)',
-          priceMonthly: 79.9,
-          trialDaysRemaining: 0,
-          nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-          isPaid: false,
-          invoices: []
-        },
-        isActive: true,
-        createdAt: '2026-01-10T10:00:00.000Z'
-      }
-    ],
-    professionals: [
-      {
-        id: 'prof-1',
-        organizationId: 'org-prime',
-        name: 'Barbeiro Responsável',
-        email: 'barbeiro@barbearia.com',
-        phone: '(11) 99999-0001',
-        whatsapp: '11999990001',
-        avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
-        specialties: ['Corte Clássico & Fade', 'Barba Tradicional', 'Acabamento'],
-        serviceIds: ['srv-1', 'srv-2', 'srv-3'],
-        commissionPercent: 50,
-        isActive: true,
-        isAvailableToday: true,
-        workingDays: [1, 2, 3, 4, 5, 6],
-        createdAt: '2026-01-11T10:00:00.000Z'
-      }
-    ],
-    services: [
-      {
-        id: 'srv-1',
-        organizationId: 'org-prime',
-        name: 'Corte Masculino',
-        description: 'Corte na máquina e tesoura com lavagem e finalização.',
-        price: 40,
-        durationMinutes: 30,
-        category: 'Cabelo',
-        professionalIds: ['prof-1'],
-        isActive: true,
-        createdAt: '2026-01-10T11:00:00.000Z'
-      },
-      {
-        id: 'srv-2',
-        organizationId: 'org-prime',
-        name: 'Barba Tradicional',
-        description: 'Toalha quente, navalhete descartável e hidratação.',
-        price: 35,
-        durationMinutes: 30,
-        category: 'Barba',
-        professionalIds: ['prof-1'],
-        isActive: true,
-        createdAt: '2026-01-10T11:00:00.000Z'
-      },
-      {
-        id: 'srv-3',
-        organizationId: 'org-prime',
-        name: 'Combo Corte + Barba',
-        description: 'Corte completo e barba alinhada com toalha quente.',
-        price: 70,
-        durationMinutes: 50,
-        category: 'Combos',
-        professionalIds: ['prof-1'],
-        isActive: true,
-        createdAt: '2026-01-10T11:00:00.000Z'
-      }
-    ],
-    customers: [],
-    appointments: [],
-    queue: [
-      {
-        id: 'q-seed-1',
-        ticketNumber: 1,
-        organizationId: 'org-prime',
-        customerName: 'Lucas Oliveira',
-        customerPhone: '(11) 98888-1111',
-        serviceId: 'srv-1',
-        serviceName: 'Corte Masculino',
-        status: 'PROXIMO',
-        joinedAt: new Date(Date.now() - 25 * 60000).toISOString(),
-        estimatedWaitMinutes: 5,
-        notifiedNext: true
-      },
-      {
-        id: 'q-seed-2',
-        ticketNumber: 2,
-        organizationId: 'org-prime',
-        customerName: 'Matheus Santos',
-        customerPhone: '(11) 97777-2222',
-        serviceId: 'srv-3',
-        serviceName: 'Combo Corte + Barba',
-        status: 'AGUARDANDO',
-        joinedAt: new Date(Date.now() - 15 * 60000).toISOString(),
-        estimatedWaitMinutes: 20
-      },
-      {
-        id: 'q-seed-3',
-        ticketNumber: 3,
-        organizationId: 'org-prime',
-        customerName: 'Gabriel Costa',
-        customerPhone: '(11) 96666-3333',
-        serviceId: 'srv-2',
-        serviceName: 'Barba Tradicional',
-        status: 'AGUARDANDO',
-        joinedAt: new Date(Date.now() - 5 * 60000).toISOString(),
-        estimatedWaitMinutes: 40
-      }
-    ],
-    transactions: [],
-    reviews: [],
-    notifications: [],
-    auditLogs: [],
-    plans: [],
-    sessions: []
-  };
-}
-
-const DEFAULT_SUPERADMIN_PASSWORD = process.env.SUPERADMIN_PASSWORD || 'Anna123!@';
-
-let globalMemoryDB: any = null;
-
-function readDB(): any {
-  if (globalMemoryDB) {
-    return globalMemoryDB;
-  }
-  let db: any;
-  try {
-    if (fs.existsSync(DB_FILE)) {
-      db = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
-    }
-  } catch (e) {
-    console.warn('Could not read DB_FILE, initializing from seed:', e);
-  }
-
-  if (!db) {
-    db = getInitialSeed();
-    db.config = { superAdminPassword: DEFAULT_SUPERADMIN_PASSWORD };
-  }
-
-  // Ensure sessions collection
-  if (!Array.isArray(db.sessions)) {
-    db.sessions = [];
-  }
-
-  // Ensure config & SaaS Owner Super Admin password
-  if (!db.config) db.config = {};
-  if (!db.config.superAdminPassword || db.config.superAdminPassword === 'admin123') {
-    db.config.superAdminPassword = DEFAULT_SUPERADMIN_PASSWORD;
-  }
-
-  globalMemoryDB = db;
-  return db;
-}
-
-function writeDB(data: any): void {
-  globalMemoryDB = data;
-  try {
-    const tempPath = `${DB_FILE}.${Date.now()}.${Math.random().toString(36).substr(2, 5)}.tmp`;
-    fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
-    fs.renameSync(tempPath, DB_FILE);
-  } catch (err) {
-    try {
-      fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
-    } catch (e) {
-      // In serverless read-only filesystem, in-memory cache handles local state safely
-    }
-  }
-
-  // Asynchronously synchronize changes to Supabase (PostgreSQL) if configured
-  if (SupabaseDBService.isConfigured()) {
-    SupabaseDBService.syncAllToSupabase(data).catch((err) => {
-      console.warn('Supabase sync background warning:', err);
-    });
-  }
-}
-
-function readSubscriptions(): any[] {
-  if (!fs.existsSync(SUBS_FILE)) {
-    return [];
-  }
-  try {
-    return JSON.parse(fs.readFileSync(SUBS_FILE, 'utf-8'));
-  } catch {
-    return [];
-  }
-}
-
-function writeSubscriptions(subs: any[]): void {
-  fs.writeFileSync(SUBS_FILE, JSON.stringify(subs, null, 2), 'utf-8');
-}
-
-function readLogs(): any[] {
-  if (!fs.existsSync(LOGS_FILE)) {
-    return [];
-  }
-  try {
-    return JSON.parse(fs.readFileSync(LOGS_FILE, 'utf-8'));
-  } catch {
-    return [];
-  }
-}
-
-function writeLogs(logs: any[]): void {
-  // Keep last 200 logs
-  const trimmed = logs.slice(-200);
-  fs.writeFileSync(LOGS_FILE, JSON.stringify(trimmed, null, 2), 'utf-8');
-}
-
-function addLog(log: any) {
-  const logs = readLogs();
-  logs.push({
-    id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-    timestamp: new Date().toISOString(),
-    ...log,
-  });
-  writeLogs(logs);
 }
 
 // ---------------------------------------------------------------------------
@@ -405,1416 +180,152 @@ app.get('/api/events', (req: Request, res: Response) => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// 5. WEB PUSH DISPATCHER HELPER
-// ---------------------------------------------------------------------------
-interface PushSendResult {
-  success: boolean;
-  httpStatus?: number;
-  error?: string;
-  invalidToken?: boolean;
+// Helper for Web Push dispatch
+async function sendWebPush(subscription: any, payload: any): Promise<boolean> {
+  try {
+    await webpush.sendNotification(subscription, JSON.stringify(payload));
+    return true;
+  } catch (err) {
+    console.warn('Erro ao disparar Web Push:', err);
+    return false;
+  }
 }
 
-async function sendWebPush(subscription: any, payload: any): Promise<PushSendResult> {
-  if (!subscription || !subscription.endpoint || !subscription.keys) {
-    return { success: false, error: 'Inscrição push inválida ou incompleta' };
+async function sendQueuePushNotification(orgId: string, token: string, title: string, body: string) {
+  try {
+    const subscriptions = await SupabaseDBService.getPushSubscriptionsForOrg(orgId);
+    const sub = subscriptions.find((s: any) => s.notification_token === token);
+    if (sub && sub.subscription_data) {
+      await sendWebPush(sub.subscription_data, { title, body, tag: `ticket-${Date.now()}` });
+    }
+  } catch {}
+}
+
+// ---------------------------------------------------------------------------
+// 5. PUBLIC WEB PUSH & HEALTH ENDPOINTS
+// ---------------------------------------------------------------------------
+app.get('/api/push/vapid-public-key', (req: Request, res: Response) => {
+  res.json({ publicKey: vapidPublicKey });
+});
+
+app.post('/api/push/subscribe', async (req: Request, res: Response) => {
+  const { organizationId, token, subscription } = req.body;
+  if (!organizationId || !token || !subscription) {
+    return res.status(400).json({ error: 'Parâmetros de inscrição push incompletos.' });
   }
 
   try {
-    const response = await webpush.sendNotification(
-      subscription,
-      JSON.stringify(payload),
-      {
-        TTL: 60 * 20, // 20 minutes
-        urgency: payload.type === 'CALLED' ? 'high' : 'normal',
-      }
-    );
-    return {
-      success: true,
-      httpStatus: response.statusCode || 201,
-    };
+    await SupabaseDBService.savePushSubscription(organizationId, token, subscription);
+    res.json({ success: true });
   } catch (err: any) {
-    const statusCode = err?.statusCode || err?.code;
-    const isExpired = statusCode === 410 || statusCode === 404;
-    return {
-      success: false,
-      httpStatus: statusCode,
-      error: err?.message || 'Falha ao despachar notificação push',
-      invalidToken: isExpired,
-    };
+    res.status(500).json({ error: err.message });
   }
-}
+});
 
-// ---------------------------------------------------------------------------
-// 6. REST API ENDPOINTS
-// ---------------------------------------------------------------------------
-
-// Public VAPID Key for browser PushManager.subscribe()
-app.get('/api/push/vapid-public-key', (req: Request, res: Response) => {
+app.get('/api/health', (req: Request, res: Response) => {
   res.json({
-    publicKey: vapidKeys.publicKey,
-    status: 'ACTIVE',
+    status: 'ok',
+    name: 'BarberOS',
+    version: '2.0.0-supabase-postgres',
+    supabaseConfigured: SupabaseDBService.isConfigured(),
+    mercadopagoConfigured: !!MP_ACCESS_TOKEN,
   });
 });
 
-// Register / associate device push subscription
-app.post('/api/push/subscribe', (req: Request, res: Response) => {
-  const {
-    subscription,
-    deviceToken,
-    queueItemId,
-    customerPhone,
-    customerName,
-    organizationId,
-    userAgent,
-  } = req.body;
-
-  if (!subscription || !subscription.endpoint) {
-    return res.status(400).json({ error: 'Push subscription endpoint é obrigatório' });
+app.get('/api/supabase/status', async (req: Request, res: Response) => {
+  const isConfigured = SupabaseDBService.isConfigured();
+  if (!isConfigured) {
+    return res.json({
+      isConfigured: false,
+      tablesReady: false,
+      message: 'Supabase não configurado. Defina SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no ambiente ou na Vercel.',
+      schemaScript: 'supabase-schema.sql'
+    });
   }
 
-  const subs = readSubscriptions();
-  // Find existing by endpoint or deviceToken
-  const existingIndex = subs.findIndex(
-    (s) =>
-      s.endpoint === subscription.endpoint ||
-      (deviceToken && s.deviceToken === deviceToken)
-  );
-
-  const newSubRecord = {
-    id: existingIndex >= 0 ? subs[existingIndex].id : `sub_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-    endpoint: subscription.endpoint,
-    keys: subscription.keys,
-    deviceToken: deviceToken || `dev_${Date.now()}`,
-    queueItemId: queueItemId || null,
-    customerPhone: customerPhone || null,
-    customerName: customerName || null,
-    organizationId: organizationId || 'org-prime',
-    userAgent: userAgent || null,
-    registeredAt: existingIndex >= 0 ? subs[existingIndex].registeredAt : new Date().toISOString(),
-    lastActiveAt: new Date().toISOString(),
-  };
-
-  if (existingIndex >= 0) {
-    subs[existingIndex] = { ...subs[existingIndex], ...newSubRecord };
-  } else {
-    subs.push(newSubRecord);
-  }
-  writeSubscriptions(subs);
-
-  // If queueItemId provided, link it in DB as well
-  if (queueItemId) {
-    const db = readDB();
-    const item = db.queue.find((q: any) => q.id === queueItemId);
-    if (item) {
-      item.pushSubscriptionData = subscription;
-      item.deviceRegisteredAt = new Date().toISOString();
-      item.notificationToken = newSubRecord.deviceToken;
-      writeDB(db);
-      broadcastSSE('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId });
-    }
-  }
-
-  console.log(`📱 Push subscription registered for device: ${newSubRecord.deviceToken.slice(0, 15)}...`);
+  const tablesReady = await SupabaseDBService.checkTablesReady(true);
   res.json({
-    success: true,
-    subscriptionId: newSubRecord.id,
-    deviceToken: newSubRecord.deviceToken,
+    isConfigured: true,
+    tablesReady,
+    instructions: tablesReady
+      ? 'Banco de dados Supabase (PostgreSQL) conectado e tabelas verificadas.'
+      : 'Tabelas não encontradas no schema cache. Execute supabase-schema.sql no SQL Editor do Supabase.',
+    schemaScript: 'supabase-schema.sql'
   });
-});
-
-// Test push dispatch directly to device
-app.post('/api/push/test', async (req: Request, res: Response) => {
-  const { subscription, deviceToken } = req.body;
-
-  let targetSub = subscription;
-  if (!targetSub && deviceToken) {
-    const subs = readSubscriptions();
-    const found = subs.find((s) => s.deviceToken === deviceToken);
-    if (found) targetSub = found;
-  }
-
-  if (!targetSub) {
-    return res.status(400).json({
-      success: false,
-      status: 'NO_DEVICE_REGISTERED',
-      message: 'Nenhum dispositivo encontrado para envio do teste.',
-    });
-  }
-
-  const payload = {
-    title: '✂️ Teste de Notificação — BarberOS',
-    body: 'Teste concluído! O envio remoto funcionou perfeitamente no seu aparelho.',
-    type: 'CALLED',
-    ticketNumber: 0,
-    url: '/',
-    vibratePattern: [300, 150, 300, 150, 600],
-    tag: `test-push-${Date.now()}`,
-  };
-
-  const result = await sendWebPush(targetSub, payload);
-
-  addLog({
-    organizationId: 'org-prime',
-    customerName: 'Dispositivo Teste',
-    ticketNumber: 0,
-    type: 'TEST',
-    status: result.success ? 'DELIVERED_TO_PUSH_SERVICE' : 'PUSH_SERVICE_ERROR',
-    httpStatus: result.httpStatus,
-    endpointDomain: targetSub.endpoint ? new URL(targetSub.endpoint).hostname : 'unknown',
-    message: result.success
-      ? 'Teste entregue ao servidor push remoto (HTTP ' + result.httpStatus + ')'
-      : result.error,
-  });
-
-  if (result.success) {
-    res.json({
-      success: true,
-      status: 'DELIVERED_TO_PUSH_SERVICE',
-      httpStatus: result.httpStatus,
-      message: `Notificação push de teste enviada com sucesso (HTTP ${result.httpStatus})!`,
-    });
-  } else {
-    res.status(500).json({
-      success: false,
-      status: 'PUSH_SERVICE_ERROR',
-      httpStatus: result.httpStatus,
-      message: result.error,
-    });
-  }
-});
-
-// Push dispatch logs
-app.get('/api/push/logs/:orgId', (req: Request, res: Response) => {
-  const { orgId } = req.params;
-  const logs = readLogs();
-  const filtered = logs.filter((l) => !orgId || l.organizationId === orgId).reverse();
-  res.json({ logs: filtered });
-});
-
-// Complete Database Read & Sync
-app.get('/api/db', (req: Request, res: Response) => {
-  res.json(readDB());
-});
-
-app.post('/api/db/sync', (req: Request, res: Response) => {
-  const incoming = req.body;
-  if (!incoming) return res.status(400).json({ error: 'Payload vazio' });
-  const db = readDB();
-
-  // Smart merge organizations by ID to never erase registered accounts
-  if (Array.isArray(incoming.organizations)) {
-    const orgs = db.organizations || [];
-    for (const inOrg of incoming.organizations) {
-      const idx = orgs.findIndex((o: any) => o.id === inOrg.id);
-      if (idx >= 0) {
-        orgs[idx] = { ...orgs[idx], ...inOrg };
-      } else {
-        orgs.push(inOrg);
-      }
-    }
-    db.organizations = orgs;
-  }
-
-  // Merge professionals by ID
-  if (Array.isArray(incoming.professionals)) {
-    const profs = db.professionals || [];
-    for (const inProf of incoming.professionals) {
-      const idx = profs.findIndex((p: any) => p.id === inProf.id);
-      if (idx >= 0) {
-        profs[idx] = { ...profs[idx], ...inProf };
-      } else {
-        profs.push(inProf);
-      }
-    }
-    db.professionals = profs;
-  }
-
-  // Merge services by ID
-  if (Array.isArray(incoming.services)) {
-    const srvs = db.services || [];
-    for (const inSrv of incoming.services) {
-      const idx = srvs.findIndex((s: any) => s.id === inSrv.id);
-      if (idx >= 0) {
-        srvs[idx] = { ...srvs[idx], ...inSrv };
-      } else {
-        srvs.push(inSrv);
-      }
-    }
-    db.services = srvs;
-  }
-
-  // Smart merge queue by ID to never erase active queue items created by clients
-  if (Array.isArray(incoming.queue)) {
-    const currentQueue = db.queue || [];
-    for (const inQ of incoming.queue) {
-      const idx = currentQueue.findIndex((q: any) => q.id === inQ.id);
-      if (idx >= 0) {
-        currentQueue[idx] = { ...currentQueue[idx], ...inQ };
-      } else {
-        currentQueue.push(inQ);
-      }
-    }
-    db.queue = currentQueue;
-  }
-
-  // Smart merge appointments by ID
-  if (Array.isArray(incoming.appointments)) {
-    const currentApts = db.appointments || [];
-    for (const inApt of incoming.appointments) {
-      const idx = currentApts.findIndex((a: any) => a.id === inApt.id);
-      if (idx >= 0) {
-        currentApts[idx] = { ...currentApts[idx], ...inApt };
-      } else {
-        currentApts.push(inApt);
-      }
-    }
-    db.appointments = currentApts;
-  }
-
-  // Smart merge customers by ID
-  if (Array.isArray(incoming.customers)) {
-    const currentCusts = db.customers || [];
-    for (const inCust of incoming.customers) {
-      const idx = currentCusts.findIndex((c: any) => c.id === inCust.id);
-      if (idx >= 0) {
-        currentCusts[idx] = { ...currentCusts[idx], ...inCust };
-      } else {
-        currentCusts.push(inCust);
-      }
-    }
-    db.customers = currentCusts;
-  }
-
-  if (Array.isArray(incoming.transactions)) db.transactions = incoming.transactions;
-  if (Array.isArray(incoming.reviews)) db.reviews = incoming.reviews;
-  if (Array.isArray(incoming.notifications)) db.notifications = incoming.notifications;
-
-  writeDB(db);
-  res.json({ success: true, updated: new Date().toISOString() });
 });
 
 // ---------------------------------------------------------------------------
-// 5. AUTHENTICATION & ACCOUNT REGISTRATION ENDPOINTS (DURABLE & SECURE)
-// ---------------------------------------------------------------------------
-
-// Register new establishment
-app.post('/api/auth/register-organization', async (req: Request, res: Response) => {
-  const { organization, initialProfessional, initialService } = req.body;
-  if (!organization || !organization.name || !organization.ownerEmail || !organization.ownerPassword) {
-    return res.status(400).json({ error: 'Nome do salão, e-mail do proprietário e senha são obrigatórios.' });
-  }
-
-  const db = readDB();
-  if (!Array.isArray(db.organizations)) db.organizations = [];
-  if (!Array.isArray(db.professionals)) db.professionals = [];
-  if (!Array.isArray(db.services)) db.services = [];
-
-  const emailClean = organization.ownerEmail.trim().toLowerCase();
-
-  // Check if owner email is already registered in any establishment
-  const existingOrg = db.organizations.find(
-    (o: any) => o.ownerEmail && o.ownerEmail.toLowerCase() === emailClean
-  );
-  if (existingOrg) {
-    return res.status(409).json({
-      error: `O e-mail "${organization.ownerEmail}" já está cadastrado no salão "${existingOrg.name}". Por favor, acesse sua conta pelo login ou utilize outro e-mail.`
-    });
-  }
-
-  // Generate unique slug
-  let baseSlug = organization.slug
-    ? organization.slug.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '')
-    : organization.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
-  if (!baseSlug) baseSlug = `salao-${Date.now()}`;
-
-  let finalSlug = baseSlug;
-  let counter = 1;
-  while (db.organizations.some((o: any) => o.slug.toLowerCase() === finalSlug.toLowerCase())) {
-    finalSlug = `${baseSlug}-${counter++}`;
-  }
-
-  const orgId = organization.id || `org-${Date.now()}`;
-  const completeOrg = {
-    ...organization,
-    id: orgId,
-    slug: finalSlug,
-    ownerEmail: emailClean,
-    ownerPassword: organization.ownerPassword.trim(),
-    ownerName: organization.ownerName || organization.name,
-    isActive: true,
-    createdAt: new Date().toISOString(),
-    subscription: organization.subscription || {
-      status: 'PENDENTE',
-      planName: 'Plano Pro Barbearia (R$ 79,90/mês)',
-      priceMonthly: 79.9,
-      trialDaysRemaining: 0,
-      nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      isPaid: false,
-      invoices: []
-    }
-  };
-
-  db.organizations.push(completeOrg);
-
-  let createdProf = null;
-  if (initialProfessional) {
-    createdProf = {
-      ...initialProfessional,
-      id: initialProfessional.id || `prof-${Date.now()}`,
-      organizationId: orgId,
-      isActive: true,
-      createdAt: new Date().toISOString()
-    };
-    db.professionals.push(createdProf);
-  }
-
-  let createdService = null;
-  if (initialService) {
-    createdService = {
-      ...initialService,
-      id: initialService.id || `srv-${Date.now()}`,
-      organizationId: orgId,
-      professionalIds: createdProf ? [createdProf.id] : [],
-      isActive: true,
-      createdAt: new Date().toISOString()
-    };
-    db.services.push(createdService);
-    if (createdProf) {
-      createdProf.serviceIds = [createdService.id];
-    }
-  }
-
-  // Audit log
-  if (!Array.isArray(db.auditLogs)) db.auditLogs = [];
-  db.auditLogs.push({
-    id: `audit-${Date.now()}`,
-    organizationId: orgId,
-    userName: completeOrg.ownerName,
-    action: `Estabelecimento "${completeOrg.name}" criado com sucesso`,
-    timestamp: new Date().toISOString()
-  });
-
-  // Create and persist initial owner session in backend database
-  const sessionToken = `sess_${crypto.randomBytes(24).toString('hex')}`;
-  const uid = `usr_owner_${orgId}`;
-  const nowIso = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-
-  const sessionRecord = {
-    id: sessionToken,
-    uid,
-    userId: uid,
-    token: sessionToken,
-    sessionId: sessionToken,
-    role: 'OWNER',
-    organizationId: orgId,
-    userEmail: completeOrg.ownerEmail,
-    userName: completeOrg.ownerName || completeOrg.name,
-    createdAt: nowIso,
-    loggedAt: nowIso,
-    lastActiveAt: nowIso,
-    expiresAt,
-    isAuthenticated: true,
-  };
-
-  if (!Array.isArray(db.sessions)) db.sessions = [];
-  db.sessions.push(sessionRecord);
-
-  writeDB(db);
-
-  // Synchronize to Supabase if configured
-  if (SupabaseDBService.isConfigured()) {
-    try {
-      await SupabaseDBService.saveOrganization(completeOrg);
-      if (createdProf) await SupabaseDBService.saveProfessional(createdProf);
-      if (createdService) await SupabaseDBService.saveService(createdService);
-    } catch (err: any) {
-      console.warn('Supabase onboarding sync warning:', err);
-    }
-  }
-
-  broadcastSSE('ORGANIZATIONS_UPDATED', { orgId });
-
-  res.status(201).json({
-    success: true,
-    organization: completeOrg,
-    professional: createdProf,
-    service: createdService,
-    session: sessionRecord
-  });
-});
-
-// Owner Login with Backend Session Generation
-app.post('/api/auth/login-owner', (req: Request, res: Response) => {
-  const { login, password } = req.body;
-  if (!login || !password) {
-    return res.status(400).json({ error: 'Informe seu e-mail/usuário e a senha.' });
-  }
-
-  const db = readDB();
-  const term = login.trim().toLowerCase();
-  const cleanPhone = term.replace(/\D/g, '');
-
-  const org = (db.organizations || []).find((o: any) =>
-    (o.ownerEmail && o.ownerEmail.toLowerCase() === term) ||
-    (o.slug && o.slug.toLowerCase() === term) ||
-    (o.name && o.name.toLowerCase() === term) ||
-    (o.id && o.id.toLowerCase() === term) ||
-    (cleanPhone && o.phone && o.phone.replace(/\D/g, '') === cleanPhone) ||
-    (cleanPhone && o.whatsapp && o.whatsapp.replace(/\D/g, '') === cleanPhone)
-  );
-
-  if (!org) {
-    return res.status(401).json({
-      error: 'Nenhuma barbearia cadastrada com este e-mail ou usuário. Verifique a digitação ou crie sua conta grátis.'
-    });
-  }
-
-  if (org.isActive === false) {
-    return res.status(403).json({
-      error: 'Este estabelecimento está bloqueado pelo administrador da plataforma.'
-    });
-  }
-
-  const expectedPassword = org.ownerPassword || '123';
-  if (password.trim() !== expectedPassword.trim()) {
-    return res.status(401).json({
-      error: 'Senha incorreta para esta barbearia. Verifique sua senha de acesso.'
-    });
-  }
-
-  // Create and persist durable session in backend database
-  const sessionToken = `sess_${crypto.randomBytes(24).toString('hex')}`;
-  const uid = `usr_owner_${org.id}`;
-  const nowIso = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-
-  const sessionRecord = {
-    uid,
-    userId: uid,
-    token: sessionToken,
-    sessionId: sessionToken,
-    role: 'OWNER',
-    organizationId: org.id,
-    userEmail: org.ownerEmail || `${org.slug}@barberos.app`,
-    userName: org.ownerName || org.name,
-    createdAt: nowIso,
-    loggedAt: nowIso,
-    lastActiveAt: nowIso,
-    expiresAt,
-    isAuthenticated: true,
-  };
-
-  if (!Array.isArray(db.sessions)) db.sessions = [];
-  // Keep active sessions fresh
-  db.sessions.push(sessionRecord);
-  writeDB(db);
-
-  const services = (db.services || []).filter((s: any) => s.organizationId === org.id);
-  const professionals = (db.professionals || []).filter((p: any) => p.organizationId === org.id);
-  const appointments = (db.appointments || []).filter((a: any) => a.organizationId === org.id);
-  const customers = (db.customers || []).filter((c: any) => c.organizationId === org.id);
-  const queue = (db.queue || []).filter((q: any) => q.organizationId === org.id);
-
-  res.json({
-    success: true,
-    organization: org,
-    services,
-    professionals,
-    appointments,
-    customers,
-    queue,
-    session: sessionRecord
-  });
-});
-
-// Super Admin (SaaS Owner) Login with Backend Session Generation
-app.post('/api/auth/login-superadmin', (req: Request, res: Response) => {
-  const { password } = req.body;
-  if (!password) {
-    return res.status(400).json({ error: 'Informe a senha do Dono da SaaS.' });
-  }
-
-  const db = readDB();
-  const currentAdminPass = db.config?.superAdminPassword || DEFAULT_SUPERADMIN_PASSWORD;
-
-  if (password.trim() !== currentAdminPass.trim()) {
-    return res.status(401).json({ error: 'Senha do Dono da SaaS (Super Admin) incorreta.' });
-  }
-
-  // Create and persist durable Super Admin session in backend database
-  const sessionToken = `sess_${crypto.randomBytes(24).toString('hex')}`;
-  const uid = `usr_superadmin_master`;
-  const nowIso = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-
-  const sessionRecord = {
-    uid,
-    userId: uid,
-    token: sessionToken,
-    sessionId: sessionToken,
-    role: 'SUPER_ADMIN',
-    userEmail: 'admin@barberos.com.br',
-    userName: 'Super Administrador (Dono da SaaS)',
-    createdAt: nowIso,
-    loggedAt: nowIso,
-    lastActiveAt: nowIso,
-    expiresAt,
-    isAuthenticated: true,
-  };
-
-  if (!Array.isArray(db.sessions)) db.sessions = [];
-  db.sessions.push(sessionRecord);
-  writeDB(db);
-
-  res.json({
-    success: true,
-    role: 'SUPER_ADMIN',
-    session: sessionRecord
-  });
-});
-
-// Save or Update Full User Session to Backend Database
-app.post('/api/auth/session', (req: Request, res: Response) => {
-  const incoming = req.body;
-  if (!incoming || !incoming.role) {
-    return res.status(400).json({ error: 'Sessão inválida: papel (role) é obrigatório.' });
-  }
-
-  const db = readDB();
-  if (!Array.isArray(db.sessions)) db.sessions = [];
-
-  const nowIso = new Date().toISOString();
-  const sessionToken = incoming.token || incoming.sessionId || `sess_${crypto.randomBytes(24).toString('hex')}`;
-  const uid = incoming.uid || incoming.userId || `usr_${incoming.role.toLowerCase()}_${Date.now()}`;
-  const expiresAt = incoming.expiresAt || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-
-  const sessionRecord = {
-    uid,
-    userId: uid,
-    token: sessionToken,
-    sessionId: sessionToken,
-    role: incoming.role,
-    organizationId: incoming.organizationId || undefined,
-    userEmail: incoming.userEmail || undefined,
-    userName: incoming.userName || undefined,
-    createdAt: incoming.createdAt || nowIso,
-    loggedAt: incoming.loggedAt || nowIso,
-    lastActiveAt: nowIso,
-    expiresAt,
-    isAuthenticated: true,
-  };
-
-  const existingIdx = db.sessions.findIndex(
-    (s: any) => s.token === sessionToken || (s.uid === uid && s.role === incoming.role)
-  );
-  if (existingIdx >= 0) {
-    db.sessions[existingIdx] = { ...db.sessions[existingIdx], ...sessionRecord };
-  } else {
-    db.sessions.push(sessionRecord);
-  }
-
-  writeDB(db);
-
-  res.json({
-    success: true,
-    session: sessionRecord
-  });
-});
-
-// Verify Session against Backend Database (Used on page reloads & across browser sessions)
-app.post('/api/auth/session/verify', (req: Request, res: Response) => {
-  const token = req.body?.token || req.headers.authorization?.replace(/^Bearer\s+/i, '');
-  if (!token) {
-    return res.status(400).json({ valid: false, error: 'Token de sessão não fornecido.' });
-  }
-
-  const db = readDB();
-  if (!Array.isArray(db.sessions)) db.sessions = [];
-
-  const session = db.sessions.find((s: any) => s.token === token || s.sessionId === token);
-  if (!session) {
-    return res.status(401).json({ valid: false, error: 'Sessão não encontrada no banco do servidor.' });
-  }
-
-  const now = Date.now();
-  if (session.expiresAt && new Date(session.expiresAt).getTime() < now) {
-    // Expired session: prune it
-    db.sessions = db.sessions.filter((s: any) => s.token !== token && s.sessionId !== token);
-    writeDB(db);
-    return res.status(401).json({ valid: false, error: 'Sessão expirada. Faça login novamente.' });
-  }
-
-  // Sliding expiration window: update lastActiveAt and extend expiration
-  session.lastActiveAt = new Date().toISOString();
-  session.expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  session.isAuthenticated = true;
-  writeDB(db);
-
-  let organization: any = null;
-  let services: any[] = [];
-  let professionals: any[] = [];
-  let appointments: any[] = [];
-  let customers: any[] = [];
-  let queue: any[] = [];
-
-  if (session.organizationId) {
-    organization = (db.organizations || []).find((o: any) => o.id === session.organizationId) || null;
-    if (organization) {
-      services = (db.services || []).filter((s: any) => s.organizationId === organization.id);
-      professionals = (db.professionals || []).filter((p: any) => p.organizationId === organization.id);
-      appointments = (db.appointments || []).filter((a: any) => a.organizationId === organization.id);
-      customers = (db.customers || []).filter((c: any) => c.organizationId === organization.id);
-      queue = (db.queue || []).filter((q: any) => q.organizationId === organization.id);
-    }
-  }
-
-  res.json({
-    valid: true,
-    session,
-    organization,
-    services,
-    professionals,
-    appointments,
-    customers,
-    queue
-  });
-});
-
-// GET Session by Token (Direct query)
-app.get('/api/auth/session/:token', (req: Request, res: Response) => {
-  const { token } = req.params;
-  const db = readDB();
-  if (!Array.isArray(db.sessions)) db.sessions = [];
-
-  const session = db.sessions.find((s: any) => s.token === token || s.sessionId === token);
-  if (!session || (session.expiresAt && new Date(session.expiresAt).getTime() < Date.now())) {
-    return res.status(404).json({ valid: false, error: 'Sessão inválida ou expirada.' });
-  }
-
-  let organization = null;
-  if (session.organizationId) {
-    organization = (db.organizations || []).find((o: any) => o.id === session.organizationId) || null;
-  }
-
-  res.json({ valid: true, session, organization });
-});
-
-// Logout Session from Backend Database
-app.post('/api/auth/session/logout', (req: Request, res: Response) => {
-  const token = req.body?.token || req.headers.authorization?.replace(/^Bearer\s+/i, '');
-  if (token) {
-    const db = readDB();
-    if (Array.isArray(db.sessions)) {
-      db.sessions = db.sessions.filter((s: any) => s.token !== token && s.sessionId !== token);
-      writeDB(db);
-    }
-  }
-  res.json({ success: true, message: 'Sessão encerrada com sucesso no backend.' });
-});
-
-// Update Super Admin Password
-app.post('/api/auth/update-superadmin-password', (req: Request, res: Response) => {
-  const { newPassword } = req.body;
-  if (!newPassword || newPassword.trim().length < 4) {
-    return res.status(400).json({ error: 'A nova senha deve ter pelo menos 4 caracteres.' });
-  }
-
-  const db = readDB();
-  if (!db.config) db.config = {};
-  db.config.superAdminPassword = newPassword.trim();
-  writeDB(db);
-
-  res.json({ success: true, message: 'Senha do Dono da SaaS atualizada com sucesso no servidor.' });
-});
-
-// Helper: Extract validated session from incoming request
-function getSessionFromRequest(req: Request, db: any): any | null {
-  const authHeader = req.headers.authorization;
-  const token =
-    (authHeader && authHeader.replace(/^Bearer\s+/i, '').trim()) ||
-    (req.headers['x-session-token'] as string) ||
-    (req.query.token as string) ||
-    req.body?.sessionToken;
-  if (!token) return null;
-  const session = (db.sessions || []).find((s: any) => s.token === token || s.sessionId === token);
-  if (!session) return null;
-  if (session.expiresAt && new Date(session.expiresAt).getTime() < Date.now()) return null;
-  return session;
-}
-
-// Helper: Sanitize organization for public viewing (strip passwords, emails, financial data)
-function sanitizeOrgPublic(org: any): any {
-  if (!org) return null;
-  const { ownerPassword, ownerEmail, invoices, mercadopagoAccessToken, stripeSecretKey, ...safeOrg } = org;
-  return safeOrg;
-}
-
-// ---------------------------------------------------------------------------
-// PUBLIC ESTABLISHMENT RESOLUTION (Pure Isolation, Zero Demo Fallback)
+// 6. PUBLIC ESTABLISHMENT RESOLUTION (Pure Isolation, Zero Data Leakage)
 // ---------------------------------------------------------------------------
 app.get('/api/public/establishment/:slug', async (req: Request, res: Response) => {
   const { slug } = req.params;
   const rawTerm = decodeURIComponent(slug || '').trim().toLowerCase();
 
-  try {
-    // 1. Authoritative query directly against Supabase (PostgreSQL) if configured
-    if (SupabaseDBService.isConfigured()) {
-      try {
-        const supabaseData = await SupabaseDBService.getPublicEstablishment(rawTerm);
-        if (supabaseData && supabaseData.organization) {
-          // Sync into memory cache
-          const db = readDB();
-          const orgIdx = (db.organizations || []).findIndex((o: any) => o.id === supabaseData.organization.id);
-          if (orgIdx >= 0) db.organizations[orgIdx] = { ...db.organizations[orgIdx], ...supabaseData.organization };
-          else db.organizations.push(supabaseData.organization);
-          globalMemoryDB = db;
-
-          return res.json({
-            organization: supabaseData.organization,
-            services: supabaseData.services,
-            professionals: supabaseData.professionals,
-            queue: supabaseData.queue
-          });
-        }
-      } catch (err) {
-        console.warn('Supabase establishment lookup error:', err);
-      }
-    }
-
-    // 2. Fallback check memory cache
-    const db = readDB();
-    const normalize = (str: string) =>
-      (str || '')
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/(^-|-$)+/g, '');
-    const normTerm = normalize(rawTerm);
-    const orgs = db.organizations || [];
-
-    const org = orgs.find((o: any) => {
-      if (!o) return false;
-      const oSlug = (o.slug || '').toLowerCase();
-      const oId = (o.id || '').toLowerCase();
-      return oSlug === rawTerm || normalize(oSlug) === normTerm || oId === rawTerm;
+  if (!rawTerm) {
+    return res.status(400).json({
+      error: 'Identificador do estabelecimento não informado.',
+      code: 'INVALID_SLUG',
+      status: 400
     });
+  }
 
-    if (org) {
-      const services = (db.services || []).filter((s: any) => s.organizationId === org.id && s.isActive !== false);
-      const professionals = (db.professionals || []).filter((p: any) => p.organizationId === org.id && p.isActive !== false);
-      const queue = (db.queue || []).filter((q: any) => q.organizationId === org.id);
-
-      return res.json({
-        organization: sanitizeOrgPublic(org),
-        services,
-        professionals,
-        queue
+  try {
+    const isConfigured = SupabaseDBService.isConfigured();
+    if (!isConfigured) {
+      return res.status(503).json({
+        error: 'Supabase não configurado. Defina SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no ambiente ou na Vercel.',
+        code: 'SUPABASE_NOT_CONFIGURED',
+        status: 503
       });
     }
 
-    // Truly not found anywhere in database
+    const data = await SupabaseDBService.getPublicEstablishment(rawTerm);
+    if (data && data.organization) {
+      return res.json(data);
+    }
+
+    // Explicit 404: The establishment genuinely does not exist in Supabase
     return res.status(404).json({
-      error: 'Estabelecimento não encontrado para este link.',
-      requestedSlug: rawTerm,
-      status: 404
+      error: `Estabelecimento "${rawTerm}" não encontrado no banco de dados.`,
+      code: 'NOT_FOUND',
+      status: 404,
+      requestedSlug: rawTerm
     });
   } catch (err: any) {
-    console.error('Erro na consulta pública do estabelecimento:', err);
-    return res.status(500).json({
-      error: 'Erro de comunicação com o banco de dados. Tente novamente em instantes.',
-      status: 500,
-      details: err.message
-    });
-  }
-});
+    const msg = err.message || '';
+    console.error('Erro na consulta pública do estabelecimento no Supabase:', msg);
 
-// Organization resolution endpoints (Public & Admin)
-app.get('/api/organizations', (req: Request, res: Response) => {
-  const db = readDB();
-  const session = getSessionFromRequest(req, db);
-
-  // If Super Admin: return all organizations with full management properties
-  if (session && session.role === 'SUPER_ADMIN') {
-    return res.json({ organizations: db.organizations || [] });
-  }
-
-  // If Owner: return ONLY their own authorized organization
-  if (session && session.role === 'OWNER' && session.organizationId) {
-    const myOrg = (db.organizations || []).filter((o: any) => o.id === session.organizationId);
-    return res.json({ organizations: myOrg });
-  }
-
-  // Public / Unauthenticated: return only public summaries without sensitive credentials
-  const publicList = (db.organizations || []).map((o: any) => ({
-    id: o.id,
-    name: o.name,
-    slug: o.slug,
-    type: o.type,
-    isActive: o.isActive
-  }));
-  res.json({ organizations: publicList });
-});
-
-app.get('/api/organizations/slug/:slug', (req: Request, res: Response) => {
-  const { slug } = req.params;
-  const db = readDB();
-  const rawTerm = decodeURIComponent(slug || '').trim().toLowerCase();
-  const normalize = (str: string) =>
-    (str || '')
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)+/g, '');
-
-  const normTerm = normalize(rawTerm);
-  const orgs = db.organizations || [];
-
-  // Strict match by slug or exact ID - NO PREFIX MATCH AND NO FALLBACK
-  const org = orgs.find((o: any) => {
-    if (!o) return false;
-    const oSlug = (o.slug || '').toLowerCase();
-    const oId = (o.id || '').toLowerCase();
-    return oSlug === rawTerm || normalize(oSlug) === normTerm || oId === rawTerm;
-  });
-
-  if (!org) {
-    return res.status(404).json({ error: 'Estabelecimento não encontrado para este link.' });
-  }
-
-  const session = getSessionFromRequest(req, db);
-  const isSuperAdmin = session && session.role === 'SUPER_ADMIN';
-  const isMyOrg = session && session.organizationId === org.id;
-
-  const services = (db.services || []).filter((s: any) => s.organizationId === org.id && s.isActive !== false);
-  const professionals = (db.professionals || []).filter((p: any) => p.organizationId === org.id && p.isActive !== false);
-  const queue = (db.queue || []).filter((q: any) => q.organizationId === org.id);
-
-  res.json({
-    organization: (isSuperAdmin || isMyOrg) ? org : sanitizeOrgPublic(org),
-    services,
-    professionals,
-    queue
-  });
-});
-
-app.get('/api/organizations/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const db = readDB();
-  const org = (db.organizations || []).find((o: any) => o.id === id);
-  if (!org) {
-    return res.status(404).json({ error: 'Organização não encontrada.' });
-  }
-  const session = getSessionFromRequest(req, db);
-  const isAuthorized = session && (session.role === 'SUPER_ADMIN' || session.organizationId === org.id);
-  res.json({ organization: isAuthorized ? org : sanitizeOrgPublic(org) });
-});
-
-// Update Organization (Protected)
-app.put('/api/organizations/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const updates = req.body;
-  const db = readDB();
-  const session = getSessionFromRequest(req, db);
-
-  // Authorize: must be Super Admin or the owner of this organization
-  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== id) {
-    return res.status(403).json({ error: 'Acesso negado: você não tem permissão para alterar este estabelecimento.' });
-  }
-
-  const idx = (db.organizations || []).findIndex((o: any) => o.id === id);
-  if (idx === -1) {
-    return res.status(404).json({ error: 'Organização não encontrada.' });
-  }
-
-  // Prevent modifying the organization id
-  delete updates.id;
-
-  db.organizations[idx] = {
-    ...db.organizations[idx],
-    ...updates,
-    updatedAt: new Date().toISOString()
-  };
-
-  writeDB(db);
-  broadcastSSE('ORGANIZATION_UPDATED', { orgId: id });
-  res.json({ success: true, organization: db.organizations[idx] });
-});
-
-// Delete Organization (Super Admin Only)
-app.delete('/api/organizations/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const db = readDB();
-  const session = getSessionFromRequest(req, db);
-
-  if (session && session.role !== 'SUPER_ADMIN') {
-    return res.status(403).json({ error: 'Acesso restrito ao Dono da SaaS (Super Admin).' });
-  }
-
-  const org = (db.organizations || []).find((o: any) => o.id === id);
-  if (!org) {
-    return res.status(404).json({ error: 'Organização não encontrada.' });
-  }
-
-  // Delete organization and all associated entities permanently
-  db.organizations = (db.organizations || []).filter((o: any) => o.id !== id);
-  db.professionals = (db.professionals || []).filter((p: any) => p.organizationId !== id);
-  db.services = (db.services || []).filter((s: any) => s.organizationId !== id);
-  db.customers = (db.customers || []).filter((c: any) => c.organizationId !== id);
-  db.appointments = (db.appointments || []).filter((a: any) => a.organizationId !== id);
-  db.queue = (db.queue || []).filter((q: any) => q.organizationId !== id);
-  db.transactions = (db.transactions || []).filter((t: any) => t.organizationId !== id);
-  db.reviews = (db.reviews || []).filter((r: any) => r.organizationId !== id);
-
-  writeDB(db);
-  broadcastSSE('ORGANIZATIONS_UPDATED', { orgId: id });
-  res.json({ success: true, message: `Estabelecimento "${org.name}" excluído com sucesso.` });
-});
-
-// ---------------------------------------------------------------------------
-// SERVICES CRUD ENDPOINTS (Multi-tenant Isolated)
-// ---------------------------------------------------------------------------
-app.get('/api/services', (req: Request, res: Response) => {
-  const orgId = req.query.orgId as string;
-  const db = readDB();
-  if (!orgId) {
-    return res.status(400).json({ error: 'Parâmetro orgId é obrigatório.' });
-  }
-  const services = (db.services || []).filter((s: any) => s.organizationId === orgId);
-  res.json({ services });
-});
-
-app.post('/api/services', (req: Request, res: Response) => {
-  const srvData = req.body;
-  if (!srvData.organizationId || !srvData.name) {
-    return res.status(400).json({ error: 'Nome do serviço e organização são obrigatórios.' });
-  }
-  const db = readDB();
-  const session = getSessionFromRequest(req, db);
-  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== srvData.organizationId) {
-    return res.status(403).json({ error: 'Acesso negado para esta organização.' });
-  }
-
-  const newService = {
-    ...srvData,
-    id: srvData.id || `srv-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-    price: Number(srvData.price) || 0,
-    durationMinutes: Number(srvData.durationMinutes) || 30,
-    isActive: srvData.isActive !== false,
-    createdAt: new Date().toISOString()
-  };
-
-  if (!Array.isArray(db.services)) db.services = [];
-  db.services.push(newService);
-  writeDB(db);
-  broadcastSSE('SERVICES_UPDATED', { orgId: srvData.organizationId });
-  res.status(201).json({ success: true, service: newService });
-});
-
-app.put('/api/services/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const updates = req.body;
-  const db = readDB();
-  const idx = (db.services || []).findIndex((s: any) => s.id === id);
-  if (idx === -1) {
-    return res.status(404).json({ error: 'Serviço não encontrado.' });
-  }
-
-  const srv = db.services[idx];
-  const session = getSessionFromRequest(req, db);
-  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== srv.organizationId) {
-    return res.status(403).json({ error: 'Acesso negado para esta organização.' });
-  }
-
-  delete updates.id;
-  delete updates.organizationId;
-
-  db.services[idx] = {
-    ...srv,
-    ...updates,
-    updatedAt: new Date().toISOString()
-  };
-
-  writeDB(db);
-  broadcastSSE('SERVICES_UPDATED', { orgId: srv.organizationId });
-  res.json({ success: true, service: db.services[idx] });
-});
-
-app.delete('/api/services/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const db = readDB();
-  const srv = (db.services || []).find((s: any) => s.id === id);
-  if (!srv) {
-    return res.status(404).json({ error: 'Serviço não encontrado.' });
-  }
-
-  const session = getSessionFromRequest(req, db);
-  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== srv.organizationId) {
-    return res.status(403).json({ error: 'Acesso negado para esta organização.' });
-  }
-
-  db.services = (db.services || []).filter((s: any) => s.id !== id);
-  writeDB(db);
-  broadcastSSE('SERVICES_UPDATED', { orgId: srv.organizationId });
-  res.json({ success: true, message: 'Serviço excluído com sucesso.' });
-});
-
-// ---------------------------------------------------------------------------
-// PROFESSIONALS CRUD ENDPOINTS (Multi-tenant Isolated)
-// ---------------------------------------------------------------------------
-app.get('/api/professionals', (req: Request, res: Response) => {
-  const orgId = req.query.orgId as string;
-  const db = readDB();
-  if (!orgId) {
-    return res.status(400).json({ error: 'Parâmetro orgId é obrigatório.' });
-  }
-  const professionals = (db.professionals || []).filter((p: any) => p.organizationId === orgId);
-  res.json({ professionals });
-});
-
-app.post('/api/professionals', (req: Request, res: Response) => {
-  const profData = req.body;
-  if (!profData.organizationId || !profData.name) {
-    return res.status(400).json({ error: 'Nome do profissional e organização são obrigatórios.' });
-  }
-  const db = readDB();
-  const session = getSessionFromRequest(req, db);
-  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== profData.organizationId) {
-    return res.status(403).json({ error: 'Acesso negado para esta organização.' });
-  }
-
-  const newProf = {
-    ...profData,
-    id: profData.id || `prof-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-    commissionPercent: Number(profData.commissionPercent) || 40,
-    isActive: profData.isActive !== false,
-    isAvailableToday: profData.isAvailableToday !== false,
-    workingDays: Array.isArray(profData.workingDays) ? profData.workingDays : [1, 2, 3, 4, 5, 6],
-    specialties: Array.isArray(profData.specialties) ? profData.specialties : ['Corte'],
-    serviceIds: Array.isArray(profData.serviceIds) ? profData.serviceIds : [],
-    createdAt: new Date().toISOString()
-  };
-
-  if (!Array.isArray(db.professionals)) db.professionals = [];
-  db.professionals.push(newProf);
-  writeDB(db);
-  broadcastSSE('PROFESSIONALS_UPDATED', { orgId: profData.organizationId });
-  res.status(201).json({ success: true, professional: newProf });
-});
-
-app.put('/api/professionals/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const updates = req.body;
-  const db = readDB();
-  const idx = (db.professionals || []).findIndex((p: any) => p.id === id);
-  if (idx === -1) {
-    return res.status(404).json({ error: 'Profissional não encontrado.' });
-  }
-
-  const prof = db.professionals[idx];
-  const session = getSessionFromRequest(req, db);
-  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== prof.organizationId) {
-    return res.status(403).json({ error: 'Acesso negado para esta organização.' });
-  }
-
-  delete updates.id;
-  delete updates.organizationId;
-
-  db.professionals[idx] = {
-    ...prof,
-    ...updates,
-    updatedAt: new Date().toISOString()
-  };
-
-  writeDB(db);
-  broadcastSSE('PROFESSIONALS_UPDATED', { orgId: prof.organizationId });
-  res.json({ success: true, professional: db.professionals[idx] });
-});
-
-app.delete('/api/professionals/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const db = readDB();
-  const prof = (db.professionals || []).find((p: any) => p.id === id);
-  if (!prof) {
-    return res.status(404).json({ error: 'Profissional não encontrado.' });
-  }
-
-  const session = getSessionFromRequest(req, db);
-  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== prof.organizationId) {
-    return res.status(403).json({ error: 'Acesso negado para esta organização.' });
-  }
-
-  db.professionals = (db.professionals || []).filter((p: any) => p.id !== id);
-  writeDB(db);
-  broadcastSSE('PROFESSIONALS_UPDATED', { orgId: prof.organizationId });
-  res.json({ success: true, message: 'Profissional excluído com sucesso.' });
-});
-
-// ---------------------------------------------------------------------------
-// APPOINTMENTS CRUD ENDPOINTS (Multi-tenant Isolated)
-// ---------------------------------------------------------------------------
-app.get('/api/appointments', (req: Request, res: Response) => {
-  const orgId = req.query.orgId as string;
-  const date = req.query.date as string;
-  const db = readDB();
-  if (!orgId) {
-    return res.status(400).json({ error: 'Parâmetro orgId é obrigatório.' });
-  }
-  let appointments = (db.appointments || []).filter((a: any) => a.organizationId === orgId);
-  if (date) {
-    appointments = appointments.filter((a: any) => a.date === date);
-  }
-  res.json({ appointments });
-});
-
-app.post('/api/appointments', (req: Request, res: Response) => {
-  const aptData = req.body;
-  if (!aptData.organizationId || !aptData.customerName || !aptData.date || !aptData.time) {
-    return res.status(400).json({ error: 'Campos obrigatórios de agendamento incompletos.' });
-  }
-  const db = readDB();
-
-  // Check schedule conflict for same professional on same date/time
-  if (aptData.professionalId) {
-    const conflict = (db.appointments || []).find(
-      (a: any) =>
-        a.organizationId === aptData.organizationId &&
-        a.professionalId === aptData.professionalId &&
-        a.date === aptData.date &&
-        a.time === aptData.time &&
-        a.status !== 'CANCELADO'
-    );
-    if (conflict) {
-      return res.status(409).json({ error: 'Este profissional já possui um agendamento neste horário.' });
+    if (msg.includes('PGRST205') || msg.includes('Tabelas do Supabase não encontradas')) {
+      return res.status(503).json({
+        error: 'As tabelas do banco de dados ainda não foram criadas no Supabase. Execute o script supabase-schema.sql no SQL Editor do seu projeto Supabase: https://supabase.com/dashboard/project/xsmcfrualbyswoccyicl/sql',
+        code: 'TABLES_NOT_INITIALIZED',
+        status: 503,
+        schemaScript: 'supabase-schema.sql',
+        details: msg
+      });
     }
-  }
 
-  const newApt = {
-    ...aptData,
-    id: aptData.id || `apt-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-    status: aptData.status || 'CONFIRMADO',
-    createdAt: new Date().toISOString()
-  };
+    if (msg.includes('permission') || msg.includes('row-level security') || msg.includes('JWT') || msg.includes('401') || msg.includes('403')) {
+      return res.status(403).json({
+        error: 'Falha de permissão de acesso ao banco de dados Supabase.',
+        code: 'PERMISSION_DENIED',
+        status: 403,
+        details: msg
+      });
+    }
 
-  if (!Array.isArray(db.appointments)) db.appointments = [];
-  db.appointments.push(newApt);
-
-  // Auto-record customer in CRM
-  if (!Array.isArray(db.customers)) db.customers = [];
-  const cleanPhone = (aptData.customerPhone || '').replace(/\D/g, '');
-  let existingCust = db.customers.find(
-    (c: any) => c.organizationId === aptData.organizationId && c.phone.replace(/\D/g, '') === cleanPhone
-  );
-  if (existingCust) {
-    existingCust.totalAppointments = (existingCust.totalAppointments || 0) + 1;
-    existingCust.lastVisit = aptData.date;
-  } else if (cleanPhone) {
-    db.customers.push({
-      id: `cust-${Date.now()}`,
-      organizationId: aptData.organizationId,
-      name: aptData.customerName,
-      phone: aptData.customerPhone,
-      whatsapp: cleanPhone,
-      email: aptData.customerEmail,
-      totalAppointments: 1,
-      totalSpent: 0,
-      lastVisit: aptData.date,
-      createdAt: new Date().toISOString()
+    return res.status(500).json({
+      error: `Erro ao consultar Supabase: ${msg}`,
+      code: 'DATABASE_ERROR',
+      status: 500,
+      requestedSlug: rawTerm
     });
   }
-
-  writeDB(db);
-  broadcastSSE('APPOINTMENTS_UPDATED', { orgId: aptData.organizationId });
-  res.status(201).json({ success: true, appointment: newApt });
-});
-
-app.put('/api/appointments/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const updates = req.body;
-  const db = readDB();
-  const idx = (db.appointments || []).findIndex((a: any) => a.id === id);
-  if (idx === -1) {
-    return res.status(404).json({ error: 'Agendamento não encontrado.' });
-  }
-
-  const apt = db.appointments[idx];
-  const session = getSessionFromRequest(req, db);
-  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== apt.organizationId) {
-    return res.status(403).json({ error: 'Acesso negado para este agendamento.' });
-  }
-
-  delete updates.id;
-  delete updates.organizationId;
-
-  db.appointments[idx] = {
-    ...apt,
-    ...updates,
-    updatedAt: new Date().toISOString()
-  };
-
-  writeDB(db);
-  broadcastSSE('APPOINTMENTS_UPDATED', { orgId: apt.organizationId });
-  res.json({ success: true, appointment: db.appointments[idx] });
-});
-
-app.delete('/api/appointments/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const db = readDB();
-  const apt = (db.appointments || []).find((a: any) => a.id === id);
-  if (!apt) {
-    return res.status(404).json({ error: 'Agendamento não encontrado.' });
-  }
-
-  const session = getSessionFromRequest(req, db);
-  if (session && session.role !== 'SUPER_ADMIN' && session.organizationId !== apt.organizationId) {
-    return res.status(403).json({ error: 'Acesso negado para este agendamento.' });
-  }
-
-  db.appointments = (db.appointments || []).filter((a: any) => a.id !== id);
-  writeDB(db);
-  broadcastSSE('APPOINTMENTS_UPDATED', { orgId: apt.organizationId });
-  res.json({ success: true, message: 'Agendamento excluído com sucesso.' });
 });
 
 // ---------------------------------------------------------------------------
-// CUSTOMERS CRUD ENDPOINTS
+// 7. PUBLIC VIRTUAL QUEUE JOIN (Strict Validation, Authoritative Supabase Insert)
 // ---------------------------------------------------------------------------
-app.get('/api/customers', (req: Request, res: Response) => {
-  const orgId = req.query.orgId as string;
-  const db = readDB();
-  if (!orgId) return res.status(400).json({ error: 'orgId é obrigatório.' });
-  const customers = (db.customers || []).filter((c: any) => c.organizationId === orgId);
-  res.json({ customers });
-});
-
-app.post('/api/customers', (req: Request, res: Response) => {
-  const custData = req.body;
-  if (!custData.organizationId || !custData.name) {
-    return res.status(400).json({ error: 'Nome e organização são obrigatórios.' });
-  }
-  const db = readDB();
-  const newCust = {
-    ...custData,
-    id: custData.id || `cust-${Date.now()}`,
-    totalAppointments: 0,
-    totalSpent: 0,
-    createdAt: new Date().toISOString()
-  };
-  if (!Array.isArray(db.customers)) db.customers = [];
-  db.customers.push(newCust);
-  writeDB(db);
-  res.status(201).json({ success: true, customer: newCust });
-});
-
-app.put('/api/customers/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const updates = req.body;
-  const db = readDB();
-  const idx = (db.customers || []).findIndex((c: any) => c.id === id);
-  if (idx === -1) return res.status(404).json({ error: 'Cliente não encontrado.' });
-  delete updates.id;
-  delete updates.organizationId;
-  db.customers[idx] = { ...db.customers[idx], ...updates };
-  writeDB(db);
-  res.json({ success: true, customer: db.customers[idx] });
-});
-
-// ---------------------------------------------------------------------------
-// TRANSACTIONS & REVIEWS ENDPOINTS
-// ---------------------------------------------------------------------------
-app.get('/api/transactions', (req: Request, res: Response) => {
-  const orgId = req.query.orgId as string;
-  const db = readDB();
-  if (!orgId) return res.status(400).json({ error: 'orgId é obrigatório.' });
-  const transactions = (db.transactions || []).filter((t: any) => t.organizationId === orgId);
-  res.json({ transactions });
-});
-
-app.post('/api/transactions', (req: Request, res: Response) => {
-  const txData = req.body;
-  if (!txData.organizationId || !txData.amount) {
-    return res.status(400).json({ error: 'organizationId e amount são obrigatórios.' });
-  }
-  const db = readDB();
-  const newTx = {
-    ...txData,
-    id: txData.id || `tx-${Date.now()}`,
-    createdAt: new Date().toISOString()
-  };
-  if (!Array.isArray(db.transactions)) db.transactions = [];
-  db.transactions.push(newTx);
-  writeDB(db);
-  res.status(201).json({ success: true, transaction: newTx });
-});
-
-app.get('/api/reviews', (req: Request, res: Response) => {
-  const orgId = req.query.orgId as string;
-  const db = readDB();
-  if (!orgId) return res.status(400).json({ error: 'orgId é obrigatório.' });
-  const reviews = (db.reviews || []).filter((r: any) => r.organizationId === orgId);
-  res.json({ reviews });
-});
-
-app.post('/api/reviews', (req: Request, res: Response) => {
-  const revData = req.body;
-  if (!revData.organizationId || !revData.rating) {
-    return res.status(400).json({ error: 'organizationId e rating são obrigatórios.' });
-  }
-  const db = readDB();
-  const newRev = {
-    ...revData,
-    id: revData.id || `rev-${Date.now()}`,
-    createdAt: new Date().toISOString()
-  };
-  if (!Array.isArray(db.reviews)) db.reviews = [];
-  db.reviews.push(newRev);
-  writeDB(db);
-  res.status(201).json({ success: true, review: newRev });
-});
-
-// ---------------------------------------------------------------------------
-// PLANS ENDPOINTS
-// ---------------------------------------------------------------------------
-app.get('/api/plans', (req: Request, res: Response) => {
-  const db = readDB();
-  res.json({ plans: db.plans || [] });
-});
-
-app.put('/api/plans/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const updates = req.body;
-  const db = readDB();
-  const session = getSessionFromRequest(req, db);
-  if (session && session.role !== 'SUPER_ADMIN') {
-    return res.status(403).json({ error: 'Apenas o Super Admin pode atualizar planos.' });
-  }
-  const idx = (db.plans || []).findIndex((p: any) => p.id === id);
-  if (idx === -1) return res.status(404).json({ error: 'Plano não encontrado.' });
-  db.plans[idx] = { ...db.plans[idx], ...updates };
-  writeDB(db);
-  res.json({ success: true, plan: db.plans[idx] });
-});
-
-// Organization Queue
-app.get('/api/queue/:orgId', (req: Request, res: Response) => {
-  const { orgId } = req.params;
-  const db = readDB();
-  const queue = (db.queue || []).filter((q: any) => q.organizationId === orgId);
-  res.json({ queue });
-});
-
-app.get('/api/queue/item/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const db = readDB();
-  const item = (db.queue || []).find((q: any) => q.id === id);
-  if (!item) return res.status(404).json({ error: 'Item não encontrado' });
-  res.json({ item });
-});
-
-// CLIENT JOINS THE VIRTUAL QUEUE
 app.post('/api/queue/join', async (req: Request, res: Response) => {
   const {
     organizationId,
@@ -1827,972 +338,995 @@ app.post('/api/queue/join', async (req: Request, res: Response) => {
     subscription,
   } = req.body;
 
-  if (!organizationId || !customerName) {
-    return res.status(400).json({ error: 'Nome do cliente e identificação da barbearia são obrigatórios' });
+  if (!organizationId || typeof organizationId !== 'string') {
+    return res.status(400).json({ error: 'Identificação do estabelecimento é obrigatória.' });
+  }
+  if (!customerName || typeof customerName !== 'string' || customerName.trim().length < 2) {
+    return res.status(400).json({ error: 'Nome do cliente é obrigatório (mínimo 2 caracteres).' });
+  }
+  if (!serviceId || typeof serviceId !== 'string') {
+    return res.status(400).json({ error: 'Serviço é obrigatório.' });
   }
 
-  const db = readDB();
+  try {
+    const newItem = await SupabaseDBService.joinQueue({
+      organizationId,
+      customerName,
+      customerPhone,
+      serviceId,
+      preferredProfessionalId,
+      notes,
+      notificationToken,
+      subscriptionData: subscription,
+    });
 
-  // Robust organization resolution (by ID, Slug, or exact match)
-  const orgClean = String(organizationId).trim().toLowerCase();
-  let org = (db.organizations || []).find((o: any) =>
-    (o.id && o.id.toLowerCase() === orgClean) ||
-    (o.slug && o.slug.toLowerCase() === orgClean)
-  );
+    broadcastSSE('QUEUE_UPDATED', { orgId: newItem.organizationId, queueItemId: newItem.id });
 
-  if (!org && SupabaseDBService.isConfigured()) {
+    // Send push notification if customer registered device
     try {
-      const supabaseData = await SupabaseDBService.getPublicEstablishment(orgClean);
-      if (supabaseData && supabaseData.organization) {
-        org = supabaseData.organization;
-        db.organizations.push(org);
-      }
+      await sendQueuePushNotification(
+        newItem.organizationId,
+        newItem.notificationToken,
+        'Você entrou na fila!',
+        `Sua senha é #${newItem.ticketNumber}. Tempo estimado: ${newItem.estimatedWaitMinutes} min.`
+      );
     } catch {}
+
+    console.log(`👤 Novo cliente na fila (confirmado no Supabase): ${newItem.customerName} (Senha #${newItem.ticketNumber})`);
+    return res.status(201).json({ success: true, item: newItem });
+  } catch (err: any) {
+    console.error('Erro ao registrar cliente na fila no Supabase:', err);
+    return res.status(400).json({ success: false, error: err.message });
   }
-
-  if (!org) {
-    return res.status(404).json({ error: 'Barbearia não encontrada para entrar na fila.' });
-  }
-  const resolvedOrgId = org.id;
-
-  // Robust service resolution
-  let service = (db.services || []).find((s: any) => s.id === serviceId);
-  if (!service) {
-    service = (db.services || []).find((s: any) => s.organizationId === resolvedOrgId && s.isActive) ||
-      (db.services || []).find((s: any) => s.organizationId === resolvedOrgId) || {
-        id: serviceId || `srv-${Date.now()}`,
-        name: 'Atendimento Geral',
-        price: 45.0,
-        durationMinutes: 30,
-      };
-  }
-
-  // Calculate ticket number
-  const orgQueue = (db.queue || []).filter((q: any) => q.organizationId === resolvedOrgId);
-  const maxTicket = orgQueue.reduce((max: number, q: any) => Math.max(max, q.ticketNumber || 0), 0);
-  const ticketNumber = maxTicket + 1;
-
-  // Active waiting
-  const waitingCount = orgQueue.filter(
-    (q: any) => q.status === 'AGUARDANDO' || q.status === 'PROXIMO'
-  ).length;
-
-  const isInitialNext = waitingCount === 0;
-  const estimatedWaitMinutes = isInitialNext ? 5 : (waitingCount + 1) * 20;
-
-  const newItem: any = {
-    id: `queue_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-    ticketNumber,
-    organizationId: resolvedOrgId,
-    customerName: customerName.trim(),
-    customerPhone: customerPhone ? customerPhone.trim() : '(Celular Web)',
-    serviceId: service.id,
-    serviceName: service.name,
-    preferredProfessionalId: preferredProfessionalId || undefined,
-    status: isInitialNext ? 'PROXIMO' : 'AGUARDANDO',
-    joinedAt: new Date().toISOString(),
-    notes: notes ? notes.trim() : undefined,
-    estimatedWaitMinutes,
-    notificationToken: notificationToken || `dev_${Date.now()}`,
-    deviceRegisteredAt: subscription ? new Date().toISOString() : undefined,
-    pushSubscriptionData: subscription || undefined,
-    pushDeliveryStatus: 'NOT_ATTEMPTED',
-  };
-
-  if (!Array.isArray(db.queue)) db.queue = [];
-  db.queue.push(newItem);
-  writeDB(db);
-
-  // Save to Supabase (PostgreSQL) if configured
-  if (SupabaseDBService.isConfigured()) {
-    SupabaseDBService.saveQueueItem(newItem).catch((err) => {
-      console.warn('Supabase saveQueueItem background warning:', err);
-    });
-  }
-
-  // If subscription was sent, save it in subs
-  if (subscription) {
-    const subs = readSubscriptions();
-    subs.push({
-      id: `sub_${Date.now()}`,
-      endpoint: subscription.endpoint,
-      keys: subscription.keys,
-      deviceToken: newItem.notificationToken,
-      queueItemId: newItem.id,
-      customerPhone: newItem.customerPhone,
-      customerName: newItem.customerName,
-      organizationId: resolvedOrgId,
-      registeredAt: new Date().toISOString(),
-      lastActiveAt: new Date().toISOString(),
-    });
-    writeSubscriptions(subs);
-  }
-
-  broadcastSSE('QUEUE_UPDATED', { orgId: resolvedOrgId, queueItemId: newItem.id });
-
-  console.log(`👤 Novo cliente na fila: ${newItem.customerName} (Senha #${ticketNumber})`);
-  res.json({ success: true, item: newItem });
 });
 
-// BARBER: CHAMAR PRÓXIMO CLIENTE (Atomic with Concurrency Safety and Real Push)
-app.post('/api/queue/call-next', async (req: Request, res: Response) => {
-  const { organizationId, assignedProfId } = req.body;
+app.get('/api/queue/item/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const item = await SupabaseDBService.getQueueItemById(id);
+    if (!item) return res.status(404).json({ error: 'Item não encontrado na fila.' });
+    res.json({ item });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-  if (!organizationId) {
-    return res.status(400).json({ error: 'organizationId é obrigatório' });
+// ---------------------------------------------------------------------------
+// 8. AUTHENTICATION (REGISTER, LOGIN, SESSIONS)
+// ---------------------------------------------------------------------------
+app.post('/api/auth/register-organization', async (req: Request, res: Response) => {
+  const { organization, initialProfessional, initialService } = req.body;
+  if (!organization || !organization.name || !organization.ownerEmail || !organization.ownerPassword) {
+    return res.status(400).json({ error: 'Nome do salão, e-mail do proprietário e senha são obrigatórios.' });
   }
 
-  const db = readDB();
+  const emailClean = organization.ownerEmail.trim().toLowerCase();
 
-  // Find next eligible customer (order by ticketNumber)
-  const eligibleItem = db.queue
-    .filter(
-      (q: any) =>
-        q.organizationId === organizationId &&
-        (q.status === 'PROXIMO' || q.status === 'AGUARDANDO')
-    )
-    .sort((a: any, b: any) => a.ticketNumber - b.ticketNumber)[0];
+  // Generate unique slug
+  let baseSlug = organization.slug
+    ? organization.slug.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '')
+    : organization.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+  if (!baseSlug) baseSlug = `salao-${Date.now()}`;
 
-  if (!eligibleItem) {
-    return res.json({
-      success: false,
-      error: 'Não há clientes aguardando na fila no momento.',
-    });
-  }
+  const orgId = organization.id || `org-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
 
-  // Prevent concurrency if already called
-  if (eligibleItem.status === 'CHAMADO' || eligibleItem.status === 'NA CADEIRA') {
-    return res.json({
-      success: false,
-      error: 'Este cliente acabou de ser chamado por outro profissional.',
-    });
-  }
-
-  // Identify professional
-  const profId =
-    assignedProfId ||
-    eligibleItem.preferredProfessionalId ||
-    db.professionals.find((p: any) => p.organizationId === organizationId && p.isActive)?.id ||
-    db.professionals[0]?.id;
-
-  const prof = db.professionals.find((p: any) => p.id === profId);
-  const org = db.organizations.find((o: any) => o.id === organizationId);
-  const orgName = org?.name || 'Barbearia';
-  const profName = prof?.name || 'Barbeiro';
-
-  const toleranceMinutes = org?.settings?.callToleranceMinutes || 3;
-  const now = new Date();
-  const toleranceExpiry = new Date(now.getTime() + toleranceMinutes * 60 * 1000);
-
-  // Update Item Status
-  eligibleItem.status = 'CHAMADO';
-  eligibleItem.calledAt = now.toISOString();
-  eligibleItem.calledToleranceExpiresAt = toleranceExpiry.toISOString();
-  eligibleItem.assignedProfessionalId = profId;
-  eligibleItem.clientResponse = undefined;
-  eligibleItem.notifiedCalled = true;
-
-  // Real Web Push Dispatch
-  const subs = readSubscriptions();
-  const customerSub =
-    subs.find((s) => s.queueItemId === eligibleItem.id) ||
-    subs.find((s) => s.deviceToken && s.deviceToken === eligibleItem.notificationToken) ||
-    (eligibleItem.pushSubscriptionData ? { ...eligibleItem.pushSubscriptionData } : null);
-
-  let pushDeliveryStatus: any = 'NO_DEVICE_REGISTERED';
-  let pushMessage = 'Cliente não registrou dispositivo para push remoto (sem permissão ativada).';
-  let pushHttpStatus: number | undefined = undefined;
-
-  const pushPayload = {
-    title: `✂️ CHEGOU SUA VEZ! — ${orgName}`,
-    body: `Seu barbeiro ${profName} está pronto para atender você (${eligibleItem.serviceName}). Dirija-se à cadeira agora! (Senha #${eligibleItem.ticketNumber})`,
-    type: 'CALLED',
-    ticketNumber: eligibleItem.ticketNumber,
-    url: `/fila/${org?.slug || 'barbearia'}?ticket=${eligibleItem.id}`,
-    tag: `called-${eligibleItem.ticketNumber}`,
-    vibratePattern: [400, 150, 400, 150, 800, 200, 800],
+  const completeOrg = {
+    ...organization,
+    id: orgId,
+    slug: baseSlug,
+    ownerEmail: emailClean,
+    ownerPassword: organization.ownerPassword.trim(),
+    ownerName: organization.ownerName || organization.name,
+    isActive: true,
   };
 
-  if (customerSub && customerSub.endpoint) {
-    const pushResult = await sendWebPush(customerSub, pushPayload);
-    if (pushResult.success) {
-      pushDeliveryStatus = 'DELIVERED_TO_PUSH_SERVICE';
-      pushHttpStatus = pushResult.httpStatus || 201;
-      pushMessage = `Push entregue com sucesso aos servidores de push (Google FCM / Apple APNs - HTTP ${pushHttpStatus}).`;
-    } else if (pushResult.invalidToken) {
-      pushDeliveryStatus = 'INVALID_TOKEN_PURGED';
-      pushHttpStatus = pushResult.httpStatus;
-      pushMessage = 'Token push expirou ou foi desinstalado no aparelho do cliente. Inscrição removida.';
-      // Purge invalid subscription
-      const updatedSubs = subs.filter((s) => s.endpoint !== customerSub.endpoint);
-      writeSubscriptions(updatedSubs);
-    } else {
-      pushDeliveryStatus = 'PUSH_SERVICE_ERROR';
-      pushHttpStatus = pushResult.httpStatus;
-      pushMessage = `Erro no envio remoto: ${pushResult.error}`;
+  const sessionToken = `sess_${crypto.randomBytes(24).toString('hex')}`;
+  const uid = `usr_owner_${orgId}`;
+  const nowIso = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const sessionRecord = {
+    id: sessionToken,
+    userId: uid,
+    token: sessionToken,
+    role: 'OWNER',
+    organizationId: orgId,
+    userEmail: completeOrg.ownerEmail,
+    userName: completeOrg.ownerName || completeOrg.name,
+    createdAt: nowIso,
+    expiresAt,
+  };
+
+  try {
+    // 1. Authoritative insert to Supabase
+    const savedOrg = await SupabaseDBService.createOrganization(completeOrg);
+
+    // 2. Initial professional if provided
+    let savedProf = null;
+    if (initialProfessional) {
+      savedProf = await SupabaseDBService.createProfessional({
+        ...initialProfessional,
+        id: initialProfessional.id || `prof-${Date.now()}`,
+        organizationId: orgId,
+        isActive: true,
+      });
     }
-  }
 
-  eligibleItem.pushDeliveryStatus = pushDeliveryStatus;
-  eligibleItem.pushDeliveryMessage = pushMessage;
-  eligibleItem.pushDeliveryTime = now.toISOString();
-  eligibleItem.pushHttpStatus = pushHttpStatus;
-
-  // Log Push Dispatch
-  addLog({
-    organizationId,
-    queueItemId: eligibleItem.id,
-    customerName: eligibleItem.customerName,
-    ticketNumber: eligibleItem.ticketNumber,
-    type: 'CALLED',
-    status: pushDeliveryStatus,
-    httpStatus: pushHttpStatus,
-    endpointDomain: customerSub?.endpoint ? new URL(customerSub.endpoint).hostname : 'none',
-    message: pushMessage,
-  });
-
-  // Promote remaining queue items: Position 1 becomes PROXIMO, and send Avisos
-  const remainingWaiting = db.queue
-    .filter(
-      (q: any) =>
-        q.organizationId === organizationId &&
-        (q.status === 'AGUARDANDO' || q.status === 'PROXIMO') &&
-        q.id !== eligibleItem.id
-    )
-    .sort((a: any, b: any) => a.ticketNumber - b.ticketNumber);
-
-  for (let idx = 0; idx < remainingWaiting.length; idx++) {
-    const item = remainingWaiting[idx];
-    const pos = idx + 1;
-
-    if (pos === 1) {
-      item.status = 'PROXIMO';
-      item.estimatedWaitMinutes = 5;
-
-      // Aviso 2 Push: Você é o próximo
-      if (!item.notifiedNext) {
-        item.notifiedNext = true;
-        const sub = subs.find((s) => s.queueItemId === item.id || s.deviceToken === item.notificationToken);
-        if (sub) {
-          sendWebPush(sub, {
-            title: `Você é o próximo da fila! 💈`,
-            body: `Você é o próximo da fila na ${orgName}! Prepare-se para o atendimento (Senha #${item.ticketNumber}).`,
-            type: 'NEXT',
-            ticketNumber: item.ticketNumber,
-            url: `/fila/${org?.slug || 'barbearia'}`,
-            vibratePattern: [300, 150, 300, 150, 300],
-            tag: `next-${item.ticketNumber}`,
-          }).then((res) => {
-            addLog({
-              organizationId,
-              queueItemId: item.id,
-              customerName: item.customerName,
-              ticketNumber: item.ticketNumber,
-              type: 'NEXT',
-              status: res.success ? 'DELIVERED_TO_PUSH_SERVICE' : 'PUSH_SERVICE_ERROR',
-              httpStatus: res.httpStatus,
-              message: res.success ? 'Aviso 2 entregue com sucesso' : res.error,
-            });
-          }).catch(() => {});
-        }
-      }
-    } else {
-      item.status = 'AGUARDANDO';
-      item.estimatedWaitMinutes = pos * 15;
-
-      // Aviso 1 Push: Faltam 3 pessoas
-      if (pos <= 3 && !item.notifiedStep3) {
-        item.notifiedStep3 = true;
-        const sub = subs.find((s) => s.queueItemId === item.id || s.deviceToken === item.notificationToken);
-        if (sub) {
-          sendWebPush(sub, {
-            title: `Aviso da Fila — ${orgName}`,
-            body: `Está chegando sua vez! Faltam poucas pessoas à sua frente na ${orgName} (Senha #${item.ticketNumber}).`,
-            type: 'STEP_3',
-            ticketNumber: item.ticketNumber,
-            url: `/fila/${org?.slug || 'barbearia'}`,
-            vibratePattern: [250, 100, 250],
-            tag: `step3-${item.ticketNumber}`,
-          }).then((res) => {
-            addLog({
-              organizationId,
-              queueItemId: item.id,
-              customerName: item.customerName,
-              ticketNumber: item.ticketNumber,
-              type: 'STEP_3',
-              status: res.success ? 'DELIVERED_TO_PUSH_SERVICE' : 'PUSH_SERVICE_ERROR',
-              httpStatus: res.httpStatus,
-              message: res.success ? 'Aviso 1 entregue com sucesso' : res.error,
-            });
-          }).catch(() => {});
-        }
+    // 3. Initial service if provided
+    let savedService = null;
+    if (initialService) {
+      savedService = await SupabaseDBService.createService({
+        ...initialService,
+        id: initialService.id || `srv-${Date.now()}`,
+        organizationId: orgId,
+        professionalIds: savedProf ? [savedProf.id] : [],
+        isActive: true,
+      });
+      if (savedProf) {
+        await SupabaseDBService.updateProfessional(savedProf.id, orgId, {
+          serviceIds: [savedService.id],
+        });
       }
     }
+
+    // 4. Session in Supabase
+    await SupabaseDBService.createSession(sessionRecord);
+
+    broadcastSSE('ORGANIZATIONS_UPDATED', { orgId });
+
+    return res.status(201).json({
+      success: true,
+      organization: savedOrg,
+      professional: savedProf,
+      service: savedService,
+      session: sessionRecord,
+    });
+  } catch (err: any) {
+    console.error('Falha de persistência no Supabase durante cadastro:', err);
+    return res.status(500).json({
+      success: false,
+      error: `Falha ao salvar no banco de dados Supabase: ${err.message}`,
+    });
+  }
+});
+
+app.post('/api/auth/login-owner', async (req: Request, res: Response) => {
+  const { login, password } = req.body;
+  if (!login || !password) {
+    return res.status(400).json({ error: 'Informe seu e-mail/usuário e a senha.' });
   }
 
-  writeDB(db);
+  try {
+    const org = await SupabaseDBService.getOrganizationByLogin(String(login));
 
-  // Broadcast to all devices via SSE
-  broadcastSSE('QUEUE_UPDATED', {
-    orgId: organizationId,
-    queueItemId: eligibleItem.id,
-    calledItem: eligibleItem,
-    pushDeliveryStatus,
-  });
+    if (!org) {
+      return res.status(401).json({
+        error: 'Nenhuma barbearia cadastrada com este e-mail ou identificador. Verifique os dados digitados.',
+      });
+    }
 
-  console.log(`📢 Cliente chamado: ${eligibleItem.customerName} (Status push: ${pushDeliveryStatus})`);
+    if (org.isActive === false) {
+      return res.status(403).json({
+        error: 'Este estabelecimento está bloqueado pelo administrador da plataforma.',
+      });
+    }
+
+    if (!org.ownerPasswordHash || !org.ownerSalt) {
+      return res.status(401).json({
+        error: 'Credenciais de acesso não configuradas para esta barbearia.',
+      });
+    }
+
+    const isMatch = verifyPassword(String(password).trim(), org.ownerPasswordHash, org.ownerSalt);
+    if (!isMatch) {
+      return res.status(401).json({
+        error: 'Senha incorreta para esta barbearia. Verifique sua senha de acesso.',
+      });
+    }
+
+    // Create durable session in Supabase
+    const sessionToken = `sess_${crypto.randomBytes(24).toString('hex')}`;
+    const uid = `usr_owner_${org.id}`;
+    const nowIso = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const sessionRecord = {
+      id: sessionToken,
+      userId: uid,
+      token: sessionToken,
+      role: 'OWNER',
+      organizationId: org.id,
+      userEmail: org.ownerEmail,
+      userName: org.ownerName || org.name,
+      createdAt: nowIso,
+      expiresAt,
+    };
+
+    await SupabaseDBService.createSession(sessionRecord);
+
+    const [services, professionals, appointments, customers, queue] = await Promise.all([
+      SupabaseDBService.getServicesForOrg(org.id),
+      SupabaseDBService.getProfessionalsForOrg(org.id),
+      SupabaseDBService.getAppointmentsForOrg(org.id),
+      SupabaseDBService.getCustomersForOrg(org.id),
+      SupabaseDBService.getQueueForOrganization(org.id),
+    ]);
+
+    const { ownerPasswordHash, ownerSalt, ...safeOrg } = org;
+
+    return res.json({
+      success: true,
+      organization: safeOrg,
+      services,
+      professionals,
+      appointments,
+      customers,
+      queue,
+      session: sessionRecord,
+    });
+  } catch (err: any) {
+    console.error('Erro no login do proprietário:', err);
+    return res.status(500).json({ error: `Erro no login: ${err.message}` });
+  }
+});
+
+app.post('/api/auth/login-superadmin', async (req: Request, res: Response) => {
+  const { password } = req.body;
+  if (!password) {
+    return res.status(400).json({ error: 'Informe a senha de Administrador Geral.' });
+  }
+
+  const superAdminPassword = process.env.SUPERADMIN_PASSWORD;
+  if (!superAdminPassword) {
+    return res.status(503).json({
+      error: 'SUPERADMIN_PASSWORD não configurada no servidor. Defina a variável de ambiente na Vercel.',
+    });
+  }
+
+  if (String(password).trim() !== superAdminPassword.trim()) {
+    return res.status(401).json({ error: 'Senha de administrador incorreta.' });
+  }
+
+  const sessionToken = `sess_superadmin_${crypto.randomBytes(24).toString('hex')}`;
+  const nowIso = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const sessionRecord = {
+    id: sessionToken,
+    userId: 'usr_superadmin',
+    token: sessionToken,
+    role: 'SUPERADMIN',
+    userEmail: 'admin@barberos.app',
+    userName: 'Super Administrador',
+    createdAt: nowIso,
+    expiresAt,
+  };
+
+  try {
+    await SupabaseDBService.createSession(sessionRecord);
+  } catch {}
 
   res.json({
     success: true,
-    item: eligibleItem,
-    pushResult: {
-      status: pushDeliveryStatus,
-      httpStatus: pushHttpStatus,
-      message: pushMessage,
-      timestamp: now.toISOString(),
-      recipient: eligibleItem.customerName,
-    },
+    role: 'SUPERADMIN',
+    session: sessionRecord,
   });
 });
 
-// CALL SPECIFIC CUSTOMER
-app.post('/api/queue/call-specific', async (req: Request, res: Response) => {
-  const { queueId, assignedProfessionalId } = req.body;
-  if (!queueId) return res.status(400).json({ error: 'queueId obrigatório' });
+app.post('/api/auth/session/verify', async (req: Request, res: Response) => {
+  const token = extractToken(req) || req.body.token;
+  if (!token) return res.status(401).json({ valid: false, error: 'Token ausente' });
 
-  const db = readDB();
-  const item = db.queue.find((q: any) => q.id === queueId);
-  if (!item) return res.status(404).json({ error: 'Item não encontrado' });
-
-  const org = db.organizations.find((o: any) => o.id === item.organizationId);
-  const prof = db.professionals.find((p: any) => p.id === assignedProfessionalId) || db.professionals[0];
-  const orgName = org?.name || 'Barbearia';
-  const profName = prof?.name || 'Barbeiro';
-
-  const now = new Date();
-  const toleranceMinutes = org?.settings?.callToleranceMinutes || 3;
-  const toleranceExpiry = new Date(now.getTime() + toleranceMinutes * 60 * 1000);
-
-  item.status = 'CHAMADO';
-  item.calledAt = now.toISOString();
-  item.calledToleranceExpiresAt = toleranceExpiry.toISOString();
-  item.assignedProfessionalId = prof?.id;
-  item.clientResponse = undefined;
-  item.notifiedCalled = true;
-
-  const subs = readSubscriptions();
-  const customerSub =
-    subs.find((s) => s.queueItemId === item.id) ||
-    subs.find((s) => s.deviceToken && s.deviceToken === item.notificationToken) ||
-    item.pushSubscriptionData;
-
-  let pushDeliveryStatus = 'NO_DEVICE_REGISTERED';
-  let pushMessage = 'Cliente não registrou dispositivo para push remoto.';
-  let pushHttpStatus: number | undefined = undefined;
-
-  if (customerSub && customerSub.endpoint) {
-    const pushResult = await sendWebPush(customerSub, {
-      title: `✂️ CHEGOU SUA VEZ! — ${orgName}`,
-      body: `Seu barbeiro ${profName} está pronto para atender você (${item.serviceName}). Dirija-se à cadeira agora! (Senha #${item.ticketNumber})`,
-      type: 'CALLED',
-      ticketNumber: item.ticketNumber,
-      url: `/fila/${org?.slug || 'barbearia'}?ticket=${item.id}`,
-      tag: `called-${item.ticketNumber}`,
-      vibratePattern: [400, 150, 400, 150, 800, 200, 800],
-    });
-
-    if (pushResult.success) {
-      pushDeliveryStatus = 'DELIVERED_TO_PUSH_SERVICE';
-      pushHttpStatus = pushResult.httpStatus || 201;
-      pushMessage = `Push entregue ao serviço de notificações remotas (HTTP ${pushHttpStatus}).`;
-    } else {
-      pushDeliveryStatus = pushResult.invalidToken ? 'INVALID_TOKEN_PURGED' : 'PUSH_SERVICE_ERROR';
-      pushHttpStatus = pushResult.httpStatus;
-      pushMessage = pushResult.error || 'Erro no envio push';
-    }
+  try {
+    const session = await SupabaseDBService.getSession(token);
+    if (!session) return res.status(401).json({ valid: false, error: 'Sessão inválida ou expirada' });
+    res.json({ valid: true, session });
+  } catch (err: any) {
+    res.status(500).json({ valid: false, error: err.message });
   }
-
-  item.pushDeliveryStatus = pushDeliveryStatus;
-  item.pushDeliveryMessage = pushMessage;
-  item.pushDeliveryTime = now.toISOString();
-  item.pushHttpStatus = pushHttpStatus;
-
-  writeDB(db);
-
-  addLog({
-    organizationId: item.organizationId,
-    queueItemId: item.id,
-    customerName: item.customerName,
-    ticketNumber: item.ticketNumber,
-    type: 'CALLED',
-    status: pushDeliveryStatus,
-    httpStatus: pushHttpStatus,
-    message: pushMessage,
-  });
-
-  broadcastSSE('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id });
-
-  res.json({
-    success: true,
-    item,
-    pushResult: {
-      status: pushDeliveryStatus,
-      httpStatus: pushHttpStatus,
-      message: pushMessage,
-      timestamp: now.toISOString(),
-    },
-  });
 });
 
-// CLIENT RESPONSE: "Estou indo", "Mais alguns minutos", "Não posso"
-app.post('/api/queue/respond', (req: Request, res: Response) => {
-  const { queueId, response } = req.body;
-  if (!queueId || !response) return res.status(400).json({ error: 'Dados incompletos' });
-
-  const db = readDB();
-  const item = db.queue.find((q: any) => q.id === queueId);
-  if (!item) return res.status(404).json({ error: 'Item não encontrado' });
-
-  const now = new Date();
-  item.clientResponse = response;
-  item.clientResponseTime = now.toISOString();
-
-  if (response === 'A_CAMINHO') {
-    item.status = 'A_CAMINHO';
-  } else if (response === 'PEDIU_TOLERANCIA') {
-    item.status = 'PEDIU_TOLERANCIA';
-    item.toleranceExtraMinutes = 5;
-    // Add 5 min to tolerance expiry
-    const curExpiry = item.calledToleranceExpiresAt ? new Date(item.calledToleranceExpiresAt).getTime() : now.getTime();
-    item.calledToleranceExpiresAt = new Date(curExpiry + 5 * 60000).toISOString();
-  } else if (response === 'NAO_PODE') {
-    item.status = 'DESISTIU';
-    item.notes = (item.notes ? item.notes + ' | ' : '') + 'Cliente informou que não pode comparecer';
+app.get('/api/auth/session/:token', async (req: Request, res: Response) => {
+  const { token } = req.params;
+  try {
+    const session = await SupabaseDBService.getSession(token);
+    if (!session) return res.status(404).json({ error: 'Sessão não encontrada' });
+    res.json({ session });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
-
-  writeDB(db);
-  broadcastSSE('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id, response });
-
-  console.log(`📲 Resposta do cliente ${item.customerName}: ${response}`);
-  res.json({ success: true, item });
 });
 
-// MOVE TO CHAIR
-app.post('/api/queue/to-chair', (req: Request, res: Response) => {
-  const { queueId, professionalId } = req.body;
-  const db = readDB();
-  const item = db.queue.find((q: any) => q.id === queueId);
-  if (!item) return res.status(404).json({ error: 'Item não encontrado' });
-
-  item.status = 'NA CADEIRA';
-  item.onChairAt = new Date().toISOString();
-  if (professionalId) item.assignedProfessionalId = professionalId;
-
-  writeDB(db);
-  broadcastSSE('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id });
-  res.json({ success: true, item });
-});
-
-// FINISH ATTENDANCE
-app.post('/api/queue/finish', (req: Request, res: Response) => {
-  const { queueId, paymentMethod } = req.body;
-  const db = readDB();
-  const item = db.queue.find((q: any) => q.id === queueId);
-  if (!item) return res.status(404).json({ error: 'Item não encontrado' });
-
-  item.status = 'FINALIZADO';
-  item.finishedAt = new Date().toISOString();
-
-  writeDB(db);
-  broadcastSSE('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id });
-  res.json({ success: true, item });
-});
-
-// CANCEL / REMOVE FROM QUEUE
-app.post('/api/queue/cancel', (req: Request, res: Response) => {
-  const { queueId, reason } = req.body;
-  const db = readDB();
-  const item = db.queue.find((q: any) => q.id === queueId);
-  if (!item) return res.status(404).json({ error: 'Item não encontrado' });
-
-  item.status = 'CANCELADO';
-  item.notes = (item.notes ? item.notes + ' | ' : '') + (reason || 'Cancelado');
-
-  writeDB(db);
-  broadcastSSE('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id });
-  res.json({ success: true, item });
-});
-
-// MARK NO-SHOW
-app.post('/api/queue/mark-noshow', (req: Request, res: Response) => {
-  const { queueId } = req.body;
-  const db = readDB();
-  const item = db.queue.find((q: any) => q.id === queueId);
-  if (!item) return res.status(404).json({ error: 'Item não encontrado' });
-
-  item.status = 'NAO_COMPARECEU';
-  writeDB(db);
-  broadcastSSE('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id });
-  res.json({ success: true, item });
-});
-
-// REORDER QUEUE
-app.post('/api/queue/reorder', (req: Request, res: Response) => {
-  const { organizationId, orderedIds } = req.body;
-  if (!organizationId || !Array.isArray(orderedIds)) {
-    return res.status(400).json({ error: 'Parâmetros inválidos' });
+app.post('/api/auth/session/logout', async (req: Request, res: Response) => {
+  const token = extractToken(req) || req.body.token;
+  if (token) {
+    await SupabaseDBService.deleteSession(token);
   }
-
-  const db = readDB();
-  orderedIds.forEach((id: string, index: number) => {
-    const item = db.queue.find((q: any) => q.id === id);
-    if (item && (item.status === 'AGUARDANDO' || item.status === 'PROXIMO')) {
-      item.ticketNumber = index + 1;
-      item.status = index === 0 ? 'PROXIMO' : 'AGUARDANDO';
-      item.estimatedWaitMinutes = (index + 1) * 15;
-    }
-  });
-
-  writeDB(db);
-  broadcastSSE('QUEUE_UPDATED', { orgId: organizationId });
   res.json({ success: true });
 });
 
 // ---------------------------------------------------------------------------
-// 6.1 SUPABASE (POSTGRESQL) ENDPOINTS
+// 9. ORGANIZATIONS MANAGEMENT (TENANT ISOLATED)
 // ---------------------------------------------------------------------------
-app.get('/api/supabase/status', async (req: Request, res: Response) => {
-  const isConfigured = SupabaseDBService.isConfigured();
-  if (!isConfigured) {
-    return res.json({
-      isConfigured: false,
-      tablesReady: false,
-      message: 'Supabase não configurado. Adicione SUPABASE_URL e SUPABASE_ANON_KEY no arquivo .env ou no painel da Vercel.',
-      instructions: 'Para criar as tabelas no Supabase, execute o script supabase-schema.sql no SQL Editor do painel do Supabase.',
-      schemaScript: 'supabase-schema.sql'
-    });
+app.get('/api/organizations', async (req: Request, res: Response) => {
+  const token = extractToken(req);
+  let session: any = null;
+  if (token) {
+    session = await SupabaseDBService.getSession(token);
   }
 
-  const tablesReady = await SupabaseDBService.checkTablesReady(true);
-  res.json({
-    isConfigured: true,
-    tablesReady,
-    message: tablesReady
-      ? 'Supabase conectado com sucesso e tabelas criadas no PostgreSQL!'
-      : 'Credenciais do Supabase válidas, mas as tabelas ainda não foram criadas. Execute o arquivo supabase-schema.sql no SQL Editor do Supabase.',
-    actionRequired: tablesReady ? null : 'Execute o script supabase-schema.sql no SQL Editor do Supabase.',
-    schemaScript: 'supabase-schema.sql'
-  });
-});
-
-app.post('/api/supabase/sync', async (req: Request, res: Response) => {
-  if (!SupabaseDBService.isConfigured()) {
-    return res.status(400).json({
-      error: 'Supabase não está configurado. Configure SUPABASE_URL e SUPABASE_ANON_KEY primeiro.'
-    });
-  }
   try {
-    const db = readDB();
-    await SupabaseDBService.syncAllToSupabase(db);
-    return res.json({ success: true, message: 'Todos os dados foram sincronizados com sucesso no Supabase!' });
+    if (session && session.role === 'SUPERADMIN') {
+      const orgs = await SupabaseDBService.getAllOrganizations();
+      return res.json({ organizations: orgs });
+    }
+
+    if (session && session.role === 'OWNER' && session.organizationId) {
+      const org = await SupabaseDBService.getOrganizationById(session.organizationId);
+      return res.json({ organizations: org ? [org] : [] });
+    }
+
+    // Public / Unauthenticated: return only active public summaries
+    const orgs = await SupabaseDBService.getAllOrganizations();
+    const publicList = orgs
+      .filter((o) => o.isActive !== false)
+      .map((o) => ({
+        id: o.id,
+        name: o.name,
+        slug: o.slug,
+        type: o.type,
+        isActive: o.isActive,
+      }));
+    res.json({ organizations: publicList });
   } catch (err: any) {
-    return res.status(500).json({ error: 'Erro ao sincronizar dados no Supabase', details: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/organizations/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const token = extractToken(req);
+  let session: any = null;
+  if (token) {
+    session = await SupabaseDBService.getSession(token);
+  }
+
+  try {
+    const org = await SupabaseDBService.getOrganizationById(id);
+    if (!org) return res.status(404).json({ error: 'Organização não encontrada.' });
+
+    const isAuthorized = session && (session.role === 'SUPERADMIN' || session.organizationId === org.id);
+    if (isAuthorized) {
+      const { ownerPasswordHash, ownerSalt, ...safeOrg } = org;
+      return res.json({ organization: safeOrg });
+    }
+
+    return res.json({
+      organization: {
+        id: org.id,
+        name: org.name,
+        slug: org.slug,
+        type: org.type,
+        description: org.description,
+        phone: org.phone,
+        whatsapp: org.whatsapp,
+        address: org.address,
+        workingHours: org.workingHours,
+        settings: org.settings,
+        isActive: org.isActive,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/organizations/:id', requireTenantAuth, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const updates = req.body;
+  delete updates.id;
+
+  try {
+    const updated = await SupabaseDBService.updateOrganization(id, updates);
+    broadcastSSE('ORGANIZATION_UPDATED', { orgId: id });
+    res.json({ success: true, organization: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/organizations/:id', requireSuperAdminAuth, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    await SupabaseDBService.deleteOrganization(id);
+    broadcastSSE('ORGANIZATIONS_UPDATED', { orgId: id });
+    res.json({ success: true, message: 'Organização excluída com sucesso.' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
 // ---------------------------------------------------------------------------
-// 6.2 MERCADO PAGO INTEGRATION ENDPOINTS (Official SDK & Real Webhook)
+// 10. QUEUE OPERATIONS (TENANT ISOLATED & PROTECTED)
 // ---------------------------------------------------------------------------
-
-// Check Mercado Pago configuration status
-app.get('/api/mercadopago/config-status', (req: Request, res: Response) => {
-  res.json({
-    isConfigured: !!MP_ACCESS_TOKEN,
-    hasWebhookSecret: !!MP_WEBHOOK_SECRET,
-    appUrl: APP_URL,
-    configuredMessage: MP_ACCESS_TOKEN
-      ? 'Mercado Pago pronto para pagamentos reais.'
-      : 'Credenciais do Mercado Pago não configuradas. Adicione MERCADOPAGO_ACCESS_TOKEN na seção Secrets do Google AI Studio.',
-  });
+app.get('/api/queue/:orgId', requireTenantAuth, async (req: Request, res: Response) => {
+  const { orgId } = req.params;
+  try {
+    const queue = await SupabaseDBService.getQueueForOrganization(orgId);
+    res.json({ queue });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro ao carregar fila do Supabase: ' + err.message });
+  }
 });
 
-// Helper to determine pricing
-function getPlanDetails(planType: 'MONTHLY' | 'ANNUAL') {
-  if (planType === 'ANNUAL') {
-    return {
-      title: 'Plano BarberOS Pro Anual (R$ 838,80 - 12 Meses)',
-      amount: 838.80,
-      description: 'Valor integral anual de R$ 838,80 à vista (parcelamento em até 12x com juros por conta do comprador)',
-      frequencyMonths: 12,
-    };
-  }
-  return {
-    title: 'Plano BarberOS Pro Mensal (R$ 79,90/mês)',
-    amount: 79.90,
-    description: 'Acesso completo a todas as ferramentas por 30 dias',
-    frequencyMonths: 1,
-  };
-}
-
-// Helper to sanitize payer data for Mercado Pago requirements (valid email, first/last name)
-function sanitizePayer(rawEmail?: string, rawName?: string) {
-  let email = (rawEmail || '').trim();
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!email || !emailRegex.test(email)) {
-    email = 'suporte@barberos.app';
-  }
-
-  const cleanName = (rawName || 'Assinante BarberOS').replace(/[^\p{L}\s]/gu, '').trim() || 'Assinante BarberOS';
-  const nameParts = cleanName.split(/\s+/).filter(Boolean);
-  const firstName = nameParts[0] || 'Assinante';
-  const lastName = nameParts.slice(1).join(' ') || 'BarberOS';
-
-  return { email, firstName, lastName, fullName: `${firstName} ${lastName}` };
-}
-
-// Helper to parse Mercado Pago API error safely without leaking credentials
-function parseMercadoPagoError(err: any): { status: number; message: string; details: string } {
-  const status = typeof err?.status === 'number' ? err.status : 500;
-  let message = err?.message || 'Falha na comunicação com o Mercado Pago';
-  let details = '';
-
-  if (Array.isArray(err?.causes) && err.causes.length > 0) {
-    details = err.causes.map((c: any) => c.description || c.code || JSON.stringify(c)).join('; ');
-  } else if (err?.error && typeof err.error === 'string') {
-    details = err.error;
-  }
-
-  // Friendly messages for known HTTP error codes
-  if (status === 401) {
-    message = 'Credenciais inválidas ou não autorizadas no Mercado Pago (HTTP 401). Verifique o MERCADOPAGO_ACCESS_TOKEN.';
-  } else if (status === 403) {
-    message = 'Acesso não permitido pela conta do Mercado Pago (HTTP 403). Verifique as permissões da chave.';
-  } else if (status === 400 || status === 422) {
-    message = `Dados da cobrança rejeitados pelo Mercado Pago (HTTP ${status}): ${details || message}`;
-  } else if (status === 404) {
-    message = 'Recurso não encontrado no Mercado Pago (HTTP 404).';
-  } else if (status >= 500) {
-    message = `Erro nos servidores do Mercado Pago (HTTP ${status}). Tente novamente em instantes.`;
-  }
-
-  return { status, message, details };
-}
-
-// 1. Create Checkout (Checkout Pro preference or PIX Payment)
-app.post('/api/mercadopago/create-checkout', async (req: Request, res: Response) => {
-  const { organizationId, planType = 'ANNUAL', paymentMethodType = 'CHECKOUT_PRO', payerEmail, payerName } = req.body;
-
+app.post('/api/queue/call-next', requireTenantAuth, async (req: Request, res: Response) => {
+  const { organizationId, assignedProfId } = req.body;
   if (!organizationId) {
     return res.status(400).json({ error: 'organizationId é obrigatório' });
   }
 
-  const db = readDB();
-  const org = (db.organizations || []).find((o: any) => o.id === organizationId);
-  if (!org) {
-    return res.status(404).json({ error: 'Organização não encontrada no sistema' });
-  }
+  try {
+    const queue = await SupabaseDBService.getQueueForOrganization(organizationId);
+    const eligibleItem = queue
+      .filter((q: any) => q.status === 'PROXIMO' || q.status === 'AGUARDANDO')
+      .sort((a: any, b: any) => a.ticketNumber - b.ticketNumber)[0];
 
-  if (!MP_ACCESS_TOKEN || !mpClient) {
-    return res.status(503).json({
-      error: 'MERCADOPAGO_NOT_CONFIGURED',
-      message: 'MERCADOPAGO_ACCESS_TOKEN não configurado no ambiente. Configure a variável no Google AI Studio (Settings → Secrets).',
-      isConfigured: false,
+    if (!eligibleItem) {
+      return res.json({ success: false, error: 'Não há clientes aguardando na fila no momento.' });
+    }
+
+    const now = new Date();
+    const toleranceExpiry = new Date(now.getTime() + 5 * 60 * 1000);
+
+    const updated = await SupabaseDBService.updateQueueItemStatus(eligibleItem.id, organizationId, {
+      status: 'CHAMADO',
+      calledAt: now.toISOString(),
+      calledToleranceExpiresAt: toleranceExpiry.toISOString(),
+      assignedProfessionalId: assignedProfId || eligibleItem.preferredProfessionalId,
     });
-  }
 
-  const plan = getPlanDetails(planType);
-  const externalReference = `sub_${org.id}_${planType}_${Date.now()}`;
+    // Send push notification to called customer
+    if (eligibleItem.notificationToken) {
+      sendQueuePushNotification(
+        organizationId,
+        eligibleItem.notificationToken,
+        '✂️ Chegou sua vez!',
+        `Dirija-se ao atendimento agora! (Senha #${eligibleItem.ticketNumber})`
+      );
+    }
+
+    // Promote next waiting item to PROXIMO
+    const nextWaiting = queue
+      .filter((q: any) => q.status === 'AGUARDANDO' && q.id !== eligibleItem.id)
+      .sort((a: any, b: any) => a.ticketNumber - b.ticketNumber)[0];
+
+    if (nextWaiting) {
+      await SupabaseDBService.updateQueueItemStatus(nextWaiting.id, organizationId, {
+        status: 'PROXIMO',
+      });
+      if (nextWaiting.notificationToken) {
+        sendQueuePushNotification(
+          organizationId,
+          nextWaiting.notificationToken,
+          'Você é o próximo! 💈',
+          `Prepare-se! Sua senha é #${nextWaiting.ticketNumber}.`
+        );
+      }
+    }
+
+    broadcastSSE('QUEUE_UPDATED', { orgId: organizationId, queueItemId: eligibleItem.id });
+    res.json({ success: true, item: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/queue/to-chair', requireTenantAuth, async (req: Request, res: Response) => {
+  const { queueId, organizationId } = req.body;
+  const targetOrgId = organizationId || (req as any).session?.organizationId;
+  if (!queueId || !targetOrgId) return res.status(400).json({ error: 'Dados incompletos' });
 
   try {
-    const payer = sanitizePayer(payerEmail || org.ownerEmail, payerName || org.ownerName || org.name);
+    const updated = await SupabaseDBService.updateQueueItemStatus(queueId, targetOrgId, {
+      status: 'EM_ATENDIMENTO',
+      onChairAt: new Date().toISOString(),
+    });
+    broadcastSSE('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId });
+    res.json({ success: true, item: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/queue/finish', requireTenantAuth, async (req: Request, res: Response) => {
+  const { queueId, organizationId } = req.body;
+  const targetOrgId = organizationId || (req as any).session?.organizationId;
+  if (!queueId || !targetOrgId) return res.status(400).json({ error: 'Dados incompletos' });
+
+  try {
+    const item = await SupabaseDBService.getQueueItemById(queueId, targetOrgId);
+    const updated = await SupabaseDBService.updateQueueItemStatus(queueId, targetOrgId, {
+      status: 'FINALIZADO',
+      finishedAt: new Date().toISOString(),
+    });
+
+    if (item && item.customerName) {
+      await SupabaseDBService.createOrUpdateCustomer({
+        organizationId: targetOrgId,
+        name: item.customerName,
+        phone: item.customerPhone,
+      });
+    }
+
+    broadcastSSE('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId });
+    res.json({ success: true, item: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/queue/cancel', async (req: Request, res: Response) => {
+  const { queueId, organizationId } = req.body;
+  if (!queueId) return res.status(400).json({ error: 'Identificador do item é obrigatório' });
+
+  try {
+    const item = await SupabaseDBService.getQueueItemById(queueId);
+    if (!item) return res.status(404).json({ error: 'Item não encontrado na fila' });
+
+    const targetOrgId = organizationId || item.organizationId;
+    const updated = await SupabaseDBService.updateQueueItemStatus(queueId, targetOrgId, {
+      status: 'CANCELADO',
+    });
+
+    broadcastSSE('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId });
+    res.json({ success: true, item: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/queue/mark-noshow', requireTenantAuth, async (req: Request, res: Response) => {
+  const { queueId, organizationId } = req.body;
+  const targetOrgId = organizationId || (req as any).session?.organizationId;
+  if (!queueId || !targetOrgId) return res.status(400).json({ error: 'Dados incompletos' });
+
+  try {
+    const updated = await SupabaseDBService.updateQueueItemStatus(queueId, targetOrgId, {
+      status: 'NAO_COMPARECEU',
+    });
+    broadcastSSE('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId });
+    res.json({ success: true, item: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 11. SERVICES CRUD (TENANT ISOLATED & PROTECTED)
+// ---------------------------------------------------------------------------
+app.get('/api/services', requireTenantAuth, async (req: Request, res: Response) => {
+  const orgId = (req.query.orgId as string) || (req as any).session?.organizationId;
+  if (!orgId) return res.status(400).json({ error: 'orgId é obrigatório' });
+
+  try {
+    const services = await SupabaseDBService.getServicesForOrg(orgId);
+    res.json({ services });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/services', requireTenantAuth, async (req: Request, res: Response) => {
+  const srvData = req.body;
+  const orgId = srvData.organizationId || (req as any).session?.organizationId;
+  if (!orgId || !srvData.name) {
+    return res.status(400).json({ error: 'Nome do serviço e organização são obrigatórios.' });
+  }
+
+  try {
+    const newService = await SupabaseDBService.createService({
+      id: srvData.id || `srv-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      organizationId: orgId,
+      name: srvData.name,
+      description: srvData.description,
+      price: srvData.price,
+      durationMinutes: srvData.durationMinutes,
+      category: srvData.category,
+      professionalIds: srvData.professionalIds,
+      isActive: srvData.isActive,
+    });
+    broadcastSSE('SERVICES_UPDATED', { orgId });
+    res.status(201).json({ success: true, service: newService });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/services/:id', requireTenantAuth, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const updates = req.body;
+  const orgId = updates.organizationId || (req as any).session?.organizationId;
+  if (!orgId) return res.status(400).json({ error: 'organizationId é obrigatório' });
+
+  try {
+    const updated = await SupabaseDBService.updateService(id, orgId, updates);
+    broadcastSSE('SERVICES_UPDATED', { orgId });
+    res.json({ success: true, service: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/services/:id', requireTenantAuth, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const orgId = (req.query.orgId as string) || (req as any).session?.organizationId;
+  if (!orgId) return res.status(400).json({ error: 'organizationId é obrigatório' });
+
+  try {
+    await SupabaseDBService.deleteService(id, orgId);
+    broadcastSSE('SERVICES_UPDATED', { orgId });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 12. PROFESSIONALS CRUD (TENANT ISOLATED & PROTECTED)
+// ---------------------------------------------------------------------------
+app.get('/api/professionals', requireTenantAuth, async (req: Request, res: Response) => {
+  const orgId = (req.query.orgId as string) || (req as any).session?.organizationId;
+  if (!orgId) return res.status(400).json({ error: 'orgId é obrigatório' });
+
+  try {
+    const professionals = await SupabaseDBService.getProfessionalsForOrg(orgId);
+    res.json({ professionals });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/professionals', requireTenantAuth, async (req: Request, res: Response) => {
+  const profData = req.body;
+  const orgId = profData.organizationId || (req as any).session?.organizationId;
+  if (!orgId || !profData.name) {
+    return res.status(400).json({ error: 'Nome do profissional e organização são obrigatórios.' });
+  }
+
+  try {
+    const newProf = await SupabaseDBService.createProfessional({
+      id: profData.id || `prof-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      organizationId: orgId,
+      name: profData.name,
+      phone: profData.phone,
+      whatsapp: profData.whatsapp,
+      email: profData.email,
+      avatarUrl: profData.avatarUrl,
+      specialties: profData.specialties,
+      serviceIds: profData.serviceIds,
+      commissionPercent: profData.commissionPercent,
+      isAvailableToday: profData.isAvailableToday,
+      workingDays: profData.workingDays,
+      isActive: profData.isActive,
+    });
+    broadcastSSE('PROFESSIONALS_UPDATED', { orgId });
+    res.status(201).json({ success: true, professional: newProf });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/professionals/:id', requireTenantAuth, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const updates = req.body;
+  const orgId = updates.organizationId || (req as any).session?.organizationId;
+  if (!orgId) return res.status(400).json({ error: 'organizationId é obrigatório' });
+
+  try {
+    const updated = await SupabaseDBService.updateProfessional(id, orgId, updates);
+    broadcastSSE('PROFESSIONALS_UPDATED', { orgId });
+    res.json({ success: true, professional: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/professionals/:id', requireTenantAuth, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const orgId = (req.query.orgId as string) || (req as any).session?.organizationId;
+  if (!orgId) return res.status(400).json({ error: 'organizationId é obrigatório' });
+
+  try {
+    await SupabaseDBService.deleteProfessional(id, orgId);
+    broadcastSSE('PROFESSIONALS_UPDATED', { orgId });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 13. APPOINTMENTS CRUD (TENANT ISOLATED & PROTECTED)
+// ---------------------------------------------------------------------------
+app.get('/api/appointments', requireTenantAuth, async (req: Request, res: Response) => {
+  const orgId = (req.query.orgId as string) || (req as any).session?.organizationId;
+  const date = req.query.date as string | undefined;
+  if (!orgId) return res.status(400).json({ error: 'orgId é obrigatório' });
+
+  try {
+    const appointments = await SupabaseDBService.getAppointmentsForOrg(orgId, date);
+    res.json({ appointments });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/appointments', async (req: Request, res: Response) => {
+  const aptData = req.body;
+  if (!aptData.organizationId || !aptData.customerName || !aptData.date || !aptData.time) {
+    return res.status(400).json({ error: 'Dados do agendamento incompletos.' });
+  }
+
+  try {
+    const newApt = await SupabaseDBService.createAppointment({
+      id: aptData.id || `apt-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      organizationId: aptData.organizationId,
+      customerName: aptData.customerName,
+      customerPhone: aptData.customerPhone,
+      serviceId: aptData.serviceId,
+      serviceName: aptData.serviceName || 'Serviço',
+      professionalId: aptData.professionalId,
+      professionalName: aptData.professionalName || 'Profissional',
+      date: aptData.date,
+      time: aptData.time,
+      status: aptData.status || 'PENDENTE',
+      totalPrice: aptData.totalPrice,
+      notes: aptData.notes,
+    });
+    broadcastSSE('APPOINTMENTS_UPDATED', { orgId: aptData.organizationId });
+    res.status(201).json({ success: true, appointment: newApt });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/appointments/:id', requireTenantAuth, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const updates = req.body;
+  const orgId = updates.organizationId || (req as any).session?.organizationId;
+  if (!orgId) return res.status(400).json({ error: 'organizationId é obrigatório' });
+
+  try {
+    const updated = await SupabaseDBService.updateAppointment(id, orgId, updates);
+    broadcastSSE('APPOINTMENTS_UPDATED', { orgId });
+    res.json({ success: true, appointment: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/appointments/:id', requireTenantAuth, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const orgId = (req.query.orgId as string) || (req as any).session?.organizationId;
+  if (!orgId) return res.status(400).json({ error: 'organizationId é obrigatório' });
+
+  try {
+    await SupabaseDBService.deleteAppointment(id, orgId);
+    broadcastSSE('APPOINTMENTS_UPDATED', { orgId });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 14. CUSTOMERS & TRANSACTIONS (TENANT ISOLATED & PROTECTED)
+// ---------------------------------------------------------------------------
+app.get('/api/customers', requireTenantAuth, async (req: Request, res: Response) => {
+  const orgId = (req.query.orgId as string) || (req as any).session?.organizationId;
+  if (!orgId) return res.status(400).json({ error: 'orgId é obrigatório' });
+
+  try {
+    const customers = await SupabaseDBService.getCustomersForOrg(orgId);
+    res.json({ customers });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/transactions', requireTenantAuth, async (req: Request, res: Response) => {
+  const orgId = (req.query.orgId as string) || (req as any).session?.organizationId;
+  if (!orgId) return res.status(400).json({ error: 'orgId é obrigatório' });
+
+  try {
+    const transactions = await SupabaseDBService.getTransactionsForOrg(orgId);
+    res.json({ transactions });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/transactions', requireTenantAuth, async (req: Request, res: Response) => {
+  const txData = req.body;
+  const orgId = txData.organizationId || (req as any).session?.organizationId;
+  if (!orgId || !txData.description || txData.amount === undefined) {
+    return res.status(400).json({ error: 'Dados da transação incompletos.' });
+  }
+
+  try {
+    const newTx = await SupabaseDBService.createTransaction({
+      id: txData.id || `tx-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      organizationId: orgId,
+      description: txData.description,
+      amount: txData.amount,
+      type: txData.type || 'RECEITA',
+      category: txData.category,
+      paymentMethod: txData.paymentMethod,
+      professionalId: txData.professionalId,
+      date: txData.date,
+    });
+    res.status(201).json({ success: true, transaction: newTx });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 15. MERCADO PAGO INTEGRATION & SUBSCRIPTIONS (PERSISTENT ON SUPABASE)
+// ---------------------------------------------------------------------------
+app.get('/api/mercadopago/config-status', (req: Request, res: Response) => {
+  res.json({
+    configured: !!MP_ACCESS_TOKEN,
+    webhookConfigured: !!MP_WEBHOOK_SECRET,
+    mode: MP_ACCESS_TOKEN.startsWith('TEST-') ? 'sandbox' : 'production',
+  });
+});
+
+app.get('/api/subscription/status/:orgId', requireTenantAuth, async (req: Request, res: Response) => {
+  const { orgId } = req.params;
+  try {
+    const [org, sub] = await Promise.all([
+      SupabaseDBService.getOrganizationById(orgId),
+      SupabaseDBService.getSubscriptionForOrg(orgId),
+    ]);
+    if (!org) return res.status(404).json({ error: 'Organização não encontrada' });
+
+    res.json({
+      organizationId: org.id,
+      organizationName: org.name,
+      subscription: sub || org.subscription || {
+        status: 'PENDENTE',
+        planName: 'Plano Pro BarberOS',
+        priceMonthly: 79.9,
+        isPaid: false,
+      },
+      mercadopagoConfigured: !!MP_ACCESS_TOKEN,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/mercadopago/create-checkout', async (req: Request, res: Response) => {
+  const { organizationId, planType = 'ANNUAL', paymentMethodType = 'CHECKOUT_PRO', payerEmail, payerName } = req.body;
+  if (!organizationId) {
+    return res.status(400).json({ error: 'organizationId é obrigatório' });
+  }
+
+  try {
+    const org = await SupabaseDBService.getOrganizationById(organizationId);
+    if (!org) return res.status(404).json({ error: 'Organização não encontrada no Supabase' });
+
+    if (!MP_ACCESS_TOKEN || !mpClient) {
+      return res.status(503).json({
+        error: 'MERCADOPAGO_NOT_CONFIGURED',
+        message: 'MERCADOPAGO_ACCESS_TOKEN não configurado.',
+      });
+    }
+
+    const amount = planType === 'ANNUAL' ? 838.80 : 79.90;
+    const title = planType === 'ANNUAL' ? 'Plano Anual BarberOS' : 'Plano Mensal BarberOS';
+    const externalReference = `sub_${org.id}_${planType}_${Date.now()}`;
 
     if (paymentMethodType === 'PIX') {
-      // Create transparent PIX Payment via Payments API
       const payment = new Payment(mpClient);
-
       const paymentResponse = await payment.create({
         body: {
-          transaction_amount: plan.amount,
-          description: plan.title,
+          transaction_amount: amount,
+          description: title,
           payment_method_id: 'pix',
           external_reference: externalReference,
           notification_url: `${APP_URL}/api/mercadopago/webhook`,
           payer: {
-            email: payer.email,
-            first_name: payer.firstName,
-            last_name: payer.lastName,
+            email: payerEmail || org.ownerEmail,
+            first_name: payerName || org.ownerName || org.name,
           },
         },
       });
 
       const pointOfInteraction = paymentResponse.point_of_interaction?.transaction_data;
-      const qrCode = pointOfInteraction?.qr_code;
-      const qrCodeBase64 = pointOfInteraction?.qr_code_base64;
-      const ticketUrl = pointOfInteraction?.ticket_url;
 
-      // Register invoice pending in organization
-      if (!org.subscription) {
-        org.subscription = {
-          status: 'PENDENTE',
-          planName: plan.title,
-          priceMonthly: planType === 'ANNUAL' ? 69.90 : 79.90,
-          isPaid: false,
-          invoices: [],
-        };
-      }
-      org.subscription.currentPaymentId = String(paymentResponse.id);
-
-      const invoice = {
-        id: `inv_mp_${paymentResponse.id}`,
-        date: new Date().toISOString().split('T')[0],
-        amount: plan.amount,
-        status: (paymentResponse.status === 'approved' ? 'PAGO' : 'PENDENTE') as any,
-        paymentMethod: 'PIX' as const,
-        description: `${plan.title} (Mercado Pago ID #${paymentResponse.id})`,
-        mpPaymentId: String(paymentResponse.id),
-        mpStatus: paymentResponse.status,
-        mpStatusDetail: paymentResponse.status_detail,
-        mpQrCode: qrCode,
-        mpQrCodeBase64: qrCodeBase64,
-        receiptUrl: ticketUrl,
-      };
-
-      org.subscription.invoices = org.subscription.invoices || [];
-      org.subscription.invoices.unshift(invoice);
-
-      writeDB(db);
-      broadcastSSE('SUBSCRIPTION_UPDATED', { orgId: org.id, status: org.subscription.status });
+      await SupabaseDBService.saveSubscription({
+        id: `sub_${paymentResponse.id}`,
+        organizationId: org.id,
+        planId: planType === 'ANNUAL' ? 'pro_annual' : 'pro_monthly',
+        status: 'PENDENTE',
+        payerEmail: payerEmail || org.ownerEmail,
+        paymentId: String(paymentResponse.id),
+        amount,
+        metadata: {
+          qrCode: pointOfInteraction?.qr_code,
+          ticketUrl: pointOfInteraction?.ticket_url,
+        },
+      });
 
       return res.json({
         success: true,
         type: 'PIX',
         paymentId: paymentResponse.id,
         status: paymentResponse.status,
-        statusDetail: paymentResponse.status_detail,
-        qrCode,
-        qrCodeBase64,
-        ticketUrl,
-        externalReference,
-        amount: plan.amount,
-        planTitle: plan.title,
+        qrCode: pointOfInteraction?.qr_code,
+        qrCodeBase64: pointOfInteraction?.qr_code_base64,
+        ticketUrl: pointOfInteraction?.ticket_url,
+        amount,
+        planTitle: title,
+      });
+    } else {
+      const preference = new Preference(mpClient);
+      const prefResponse = await preference.create({
+        body: {
+          items: [
+            {
+              id: planType === 'ANNUAL' ? 'pro_annual' : 'pro_monthly',
+              title,
+              unit_price: amount,
+              quantity: 1,
+              currency_id: 'BRL',
+            },
+          ],
+          payer: {
+            email: payerEmail || org.ownerEmail,
+            name: payerName || org.ownerName || org.name,
+          },
+          external_reference: externalReference,
+          notification_url: `${APP_URL}/api/mercadopago/webhook`,
+          back_urls: {
+            success: `${APP_URL}/dashboard?checkout=success`,
+            pending: `${APP_URL}/dashboard?checkout=pending`,
+            failure: `${APP_URL}/dashboard?checkout=failure`,
+          },
+          auto_return: 'approved',
+        },
+      });
+
+      await SupabaseDBService.saveSubscription({
+        id: `sub_pref_${prefResponse.id}`,
+        organizationId: org.id,
+        planId: planType === 'ANNUAL' ? 'pro_annual' : 'pro_monthly',
+        status: 'PENDENTE',
+        payerEmail: payerEmail || org.ownerEmail,
+        preferenceId: prefResponse.id,
+        amount,
+      });
+
+      return res.json({
+        success: true,
+        type: 'CHECKOUT_PRO',
+        preferenceId: prefResponse.id,
+        initPoint: prefResponse.init_point,
+        sandboxInitPoint: prefResponse.sandbox_init_point,
       });
     }
-
-    // Default: Checkout Pro Preference (supports credit card, installments, PIX, boleto)
-    const preference = new Preference(mpClient);
-    const prefResponse = await preference.create({
-      body: {
-        items: [
-          {
-            id: `plan_${planType.toLowerCase()}`,
-            title: plan.title,
-            description: plan.description,
-            quantity: 1,
-            unit_price: plan.amount,
-            currency_id: 'BRL',
-          },
-        ],
-        payer: {
-          name: payer.fullName,
-          email: payer.email,
-          phone: {
-            area_code: '11',
-            number: (org.phone || '999990000').replace(/\D/g, '').slice(-8) || '99990000',
-          },
-        },
-        back_urls: {
-          success: `${APP_URL}/?mp_status=success&org_id=${org.id}`,
-          pending: `${APP_URL}/?mp_status=pending&org_id=${org.id}`,
-          failure: `${APP_URL}/?mp_status=failure&org_id=${org.id}`,
-        },
-        auto_return: 'approved',
-        notification_url: `${APP_URL}/api/mercadopago/webhook`,
-        external_reference: externalReference,
-        statement_descriptor: 'BARBEROS PRO',
-      },
-    });
-
-    if (!org.subscription) {
-      org.subscription = {
-        status: 'PENDENTE',
-        planName: plan.title,
-        priceMonthly: planType === 'ANNUAL' ? 69.90 : 79.90,
-        isPaid: false,
-        invoices: [],
-      };
-    }
-    org.subscription.currentPreferenceId = prefResponse.id;
-
-    writeDB(db);
-
-    res.json({
-      success: true,
-      type: 'CHECKOUT_PRO',
-      preferenceId: prefResponse.id,
-      initPoint: prefResponse.init_point,
-      sandboxInitPoint: prefResponse.sandbox_init_point,
-      externalReference,
-      amount: plan.amount,
-      planTitle: plan.title,
-    });
   } catch (err: any) {
-    const parsed = parseMercadoPagoError(err);
-    console.error(`❌ [Mercado Pago API] Status ${parsed.status} - Mensagem: ${parsed.message} ${parsed.details ? `(Detalhes: ${parsed.details})` : ''}`);
-    res.status(parsed.status >= 400 && parsed.status < 600 ? parsed.status : 500).json({
-      error: 'MERCADOPAGO_API_ERROR',
-      statusCode: parsed.status,
-      message: parsed.message,
-      details: parsed.details || undefined,
-    });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// 2. Consult Payment Status by Payment ID
-app.get('/api/mercadopago/payment-status/:paymentId', async (req: Request, res: Response) => {
-  const { paymentId } = req.params;
-
-  if (!MP_ACCESS_TOKEN || !mpClient) {
-    return res.status(503).json({
-      error: 'MERCADOPAGO_NOT_CONFIGURED',
-      message: 'MERCADOPAGO_ACCESS_TOKEN não configurado.',
-    });
-  }
-
-  try {
-    const payment = new Payment(mpClient);
-    const paymentData = await payment.get({ id: paymentId });
-
-    // If payment is approved, activate subscription automatically
-    let subscriptionUpdated = false;
-    if (paymentData.status === 'approved') {
-      const extRef = paymentData.external_reference || '';
-      // format: sub_{orgId}_{planType}_{timestamp}
-      const parts = extRef.split('_');
-      const orgId = parts[1];
-      const planType = parts[2] as 'MONTHLY' | 'ANNUAL';
-
-      if (orgId) {
-        const db = readDB();
-        const org = (db.organizations || []).find((o: any) => o.id === orgId);
-        if (org) {
-          const plan = getPlanDetails(planType === 'ANNUAL' ? 'ANNUAL' : 'MONTHLY');
-          const todayIso = new Date().toISOString().split('T')[0];
-          const nextDate = new Date();
-          nextDate.setDate(nextDate.getDate() + (planType === 'ANNUAL' ? 365 : 30));
-          const nextBillingDate = nextDate.toISOString().split('T')[0];
-
-          if (!org.subscription) {
-            org.subscription = {
-              status: 'ATIVA',
-              planName: plan.title,
-              priceMonthly: planType === 'ANNUAL' ? 69.90 : 79.90,
-              isPaid: true,
-              invoices: [],
-            };
-          }
-
-          org.subscription.status = 'ATIVA';
-          org.subscription.isPaid = true;
-          org.subscription.lastPaymentDate = todayIso;
-          org.subscription.nextBillingDate = nextBillingDate;
-          org.subscription.paymentMethod = paymentData.payment_method_id === 'pix' ? 'PIX' : 'CARTAO_CREDITO';
-
-          // Update or add invoice
-          const existingInv = (org.subscription.invoices || []).find(
-            (inv: any) => inv.mpPaymentId === String(paymentId)
-          );
-          if (existingInv) {
-            existingInv.status = 'PAGO';
-            existingInv.mpStatus = 'approved';
-          } else {
-            org.subscription.invoices = org.subscription.invoices || [];
-            org.subscription.invoices.unshift({
-              id: `inv_mp_${paymentId}`,
-              date: todayIso,
-              amount: paymentData.transaction_amount || plan.amount,
-              status: 'PAGO',
-              paymentMethod: paymentData.payment_method_id === 'pix' ? 'PIX' : 'CARTAO_CREDITO',
-              description: `${plan.title} - Aprovado via Mercado Pago (#${paymentId})`,
-              mpPaymentId: String(paymentId),
-              mpStatus: 'approved',
-              receiptUrl: paymentData.point_of_interaction?.transaction_data?.ticket_url,
-            });
-          }
-
-          writeDB(db);
-          broadcastSSE('SUBSCRIPTION_UPDATED', { orgId: org.id, status: 'ATIVA' });
-          subscriptionUpdated = true;
-          console.log(`✅ Assinatura ativada com sucesso para org ${org.name} via consulta #${paymentId}`);
-        }
-      }
-    }
-
-    res.json({
-      success: true,
-      paymentId: paymentData.id,
-      status: paymentData.status,
-      statusDetail: paymentData.status_detail,
-      amount: paymentData.transaction_amount,
-      paymentMethod: paymentData.payment_method_id,
-      dateApproved: paymentData.date_approved,
-      subscriptionUpdated,
-    });
-  } catch (err: any) {
-    const parsed = parseMercadoPagoError(err);
-    console.error(`❌ [Mercado Pago Status #${paymentId}] Status ${parsed.status} - ${parsed.message}`);
-    res.status(parsed.status >= 400 && parsed.status < 600 ? parsed.status : 500).json({
-      error: 'MERCADOPAGO_STATUS_ERROR',
-      statusCode: parsed.status,
-      message: parsed.message,
-      details: parsed.details || undefined,
-    });
-  }
-});
-
-// 3. Webhook from Mercado Pago (IPN / Webhooks)
 app.post('/api/mercadopago/webhook', async (req: Request, res: Response) => {
-  console.log('🔔 Webhook Mercado Pago recebido:', req.query, req.body);
-
-  // Validate webhook signature if secret configured
-  if (MP_WEBHOOK_SECRET) {
-    const xSignature = req.headers['x-signature'] as string;
-    const xRequestId = req.headers['x-request-id'] as string;
-    if (xSignature) {
-      // Signature verification according to Mercado Pago docs: ts, v1
-      try {
-        const parts = xSignature.split(',');
-        let ts = '';
-        let v1 = '';
-        for (const p of parts) {
-          const [k, v] = p.split('=');
-          if (k.trim() === 'ts') ts = v.trim();
-          if (k.trim() === 'v1') v1 = v.trim();
-        }
-        if (ts && v1) {
-          const dataId = req.query['data.id'] || req.body?.data?.id || '';
-          const manifest = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
-          const hmac = crypto.createHmac('sha256', MP_WEBHOOK_SECRET).update(manifest).digest('hex');
-          if (hmac !== v1) {
-            console.warn('⚠️ Webhook Mercado Pago signature mismatch');
-          } else {
-            console.log('🛡️ Webhook Mercado Pago assinatura verificada com sucesso');
-          }
-        }
-      } catch (signErr) {
-        console.warn('Erro ao validar assinatura do webhook:', signErr);
-      }
-    }
-  }
-
-  // Answer 200 immediately to Mercado Pago
   res.status(200).send('OK');
 
-  if (!MP_ACCESS_TOKEN || !mpClient) {
-    console.warn('Webhook recebido, mas MERCADOPAGO_ACCESS_TOKEN não está configurado.');
-    return;
-  }
+  if (!MP_ACCESS_TOKEN || !mpClient) return;
 
-  // Process event asynchronously
   try {
     const topic = req.query.topic || req.body.type || req.query.type;
     const dataId = req.query['data.id'] || req.body?.data?.id || req.query.id;
@@ -2801,214 +1335,79 @@ app.post('/api/mercadopago/webhook', async (req: Request, res: Response) => {
       const payment = new Payment(mpClient);
       const paymentData = await payment.get({ id: String(dataId) });
 
-      console.log(`💳 Webhook processando pagamento #${dataId} com status: ${paymentData.status}`);
-
       if (paymentData.status === 'approved') {
         const extRef = paymentData.external_reference || '';
         const parts = extRef.split('_');
         const orgId = parts[1];
-        const planType = parts[2] as 'MONTHLY' | 'ANNUAL';
+        const planType = parts[2];
 
         if (orgId) {
-          const db = readDB();
-          const org = (db.organizations || []).find((o: any) => o.id === orgId);
-          if (org) {
-            const plan = getPlanDetails(planType === 'ANNUAL' ? 'ANNUAL' : 'MONTHLY');
-            const todayIso = new Date().toISOString().split('T')[0];
-            const nextDate = new Date();
-            nextDate.setDate(nextDate.getDate() + (planType === 'ANNUAL' ? 365 : 30));
-            const nextBillingDate = nextDate.toISOString().split('T')[0];
+          const nextDate = new Date();
+          nextDate.setDate(nextDate.getDate() + (planType === 'ANNUAL' ? 365 : 30));
 
-            if (!org.subscription) {
-              org.subscription = {
-                status: 'ATIVA',
-                planName: plan.title,
-                priceMonthly: planType === 'ANNUAL' ? 69.90 : 79.90,
-                isPaid: true,
-                invoices: [],
-              };
-            }
+          await SupabaseDBService.saveSubscription({
+            id: `sub_pay_${dataId}`,
+            organizationId: orgId,
+            planId: planType === 'ANNUAL' ? 'pro_annual' : 'pro_monthly',
+            status: 'ATIVA',
+            paymentId: String(dataId),
+            amount: paymentData.transaction_amount || 79.9,
+            expiresAt: nextDate.toISOString(),
+            metadata: {
+              approvedAt: new Date().toISOString(),
+              paymentMethod: paymentData.payment_method_id,
+            },
+          });
 
-            org.subscription.status = 'ATIVA';
-            org.subscription.isPaid = true;
-            org.subscription.lastPaymentDate = todayIso;
-            org.subscription.nextBillingDate = nextBillingDate;
-            org.subscription.paymentMethod = paymentData.payment_method_id === 'pix' ? 'PIX' : 'CARTAO_CREDITO';
+          await SupabaseDBService.updateOrganization(orgId, {
+            isActive: true,
+          });
 
-            const existingInv = (org.subscription.invoices || []).find(
-              (inv: any) => inv.mpPaymentId === String(dataId)
-            );
-            if (existingInv) {
-              existingInv.status = 'PAGO';
-              existingInv.mpStatus = 'approved';
-            } else {
-              org.subscription.invoices = org.subscription.invoices || [];
-              org.subscription.invoices.unshift({
-                id: `inv_mp_${dataId}`,
-                date: todayIso,
-                amount: paymentData.transaction_amount || plan.amount,
-                status: 'PAGO',
-                paymentMethod: paymentData.payment_method_id === 'pix' ? 'PIX' : 'CARTAO_CREDITO',
-                description: `${plan.title} - Aprovado via Mercado Pago Webhook (#${dataId})`,
-                mpPaymentId: String(dataId),
-                mpStatus: 'approved',
-                receiptUrl: paymentData.point_of_interaction?.transaction_data?.ticket_url,
-              });
-            }
-
-            writeDB(db);
-            broadcastSSE('SUBSCRIPTION_UPDATED', { orgId: org.id, status: 'ATIVA' });
-            console.log(`🎉 [Webhook] Assinatura da barbearia ${org.name} ativada com sucesso!`);
-          }
+          broadcastSSE('SUBSCRIPTION_UPDATED', { orgId, status: 'ATIVA' });
+          console.log(`🎉 [Webhook] Assinatura da barbearia ${orgId} ativada no Supabase!`);
         }
       }
     }
   } catch (err) {
-    console.error('Erro ao processar payload do webhook do Mercado Pago:', err);
-  }
-});
-
-// 4. Authenticated Subscription Status Endpoint
-app.get('/api/subscription/status/:orgId', (req: Request, res: Response) => {
-  const { orgId } = req.params;
-  const db = readDB();
-  const org = (db.organizations || []).find((o: any) => o.id === orgId);
-  if (!org) return res.status(404).json({ error: 'Organização não encontrada' });
-
-  res.json({
-    organizationId: org.id,
-    organizationName: org.name,
-    subscription: org.subscription || {
-      status: 'PENDENTE',
-      planName: 'Plano Pro BarberOS',
-      priceMonthly: 79.9,
-      isPaid: false,
-      invoices: [],
-    },
-    mercadopagoConfigured: !!MP_ACCESS_TOKEN,
-  });
-});
-
-// ---------------------------------------------------------------------------
-// HEALTH CHECK ENDPOINT
-// ---------------------------------------------------------------------------
-app.get('/api/health', (req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    name: 'BarberOS',
-    version: '1.0.0',
-    timestamp: new Date().toISOString()
-  });
-});
-
-// ---------------------------------------------------------------------------
-// CLOUD DATABASE STATUS & SYNC ENDPOINTS (Supabase PostgreSQL)
-// ---------------------------------------------------------------------------
-app.get('/api/cloud/status', async (req: Request, res: Response) => {
-  const isConfigured = SupabaseDBService.isConfigured();
-  const tablesReady = isConfigured ? await SupabaseDBService.checkTablesReady() : false;
-  res.json({
-    configured: isConfigured,
-    provider: 'Supabase (PostgreSQL)',
-    tablesReady,
-    url: process.env.SUPABASE_URL || null,
-    timestamp: new Date().toISOString()
-  });
-});
-
-app.post('/api/cloud/sync', async (req: Request, res: Response) => {
-  if (!SupabaseDBService.isConfigured()) {
-    return res.status(400).json({ error: 'Supabase não está configurado.' });
-  }
-  try {
-    const db = readDB();
-    await SupabaseDBService.syncAllToSupabase(db);
-    res.json({ success: true, message: 'Dados sincronizados com o Supabase com sucesso.' });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
+    console.error('Erro no processamento do webhook Mercado Pago:', err);
   }
 });
 
 // ---------------------------------------------------------------------------
-// STRICT 404 FOR UNMATCHED /api/* (CRITICAL: NEVER RETURN HTML FOR API CALLS)
+// 16. STRICT 404 FOR UNMATCHED /api/* (CRITICAL: NEVER RETURN HTML FOR API CALLS)
 // ---------------------------------------------------------------------------
 app.all('/api/*', (req: Request, res: Response) => {
   res.status(404).json({
     error: `Rota de API não encontrada: ${req.method} ${req.path}`,
-    status: 404
+    status: 404,
   });
 });
 
 // ---------------------------------------------------------------------------
-// 7. VITE DEV SERVER OR STATIC PROD SERVING
+// 17. SERVER STARTUP & VITE (DEV OR PROD)
 // ---------------------------------------------------------------------------
 async function startServer() {
-  // Bootstrap & merge persistent data from Supabase (PostgreSQL) if configured
-  if (SupabaseDBService.isConfigured()) {
-    try {
-      const supabaseData = await SupabaseDBService.loadAllFromSupabase();
-      if (supabaseData && Array.isArray(supabaseData.organizations) && supabaseData.organizations.length > 0) {
-        const db = readDB();
-        for (const sOrg of supabaseData.organizations) {
-          const idx = (db.organizations || []).findIndex((o: any) => o.id === sOrg.id);
-          if (idx >= 0) db.organizations[idx] = { ...db.organizations[idx], ...sOrg };
-          else db.organizations.push(sOrg);
-        }
-        if (Array.isArray(supabaseData.services)) {
-          for (const s of supabaseData.services) {
-            const idx = (db.services || []).findIndex((x: any) => x.id === s.id);
-            if (idx >= 0) db.services[idx] = { ...db.services[idx], ...s };
-            else db.services.push(s);
-          }
-        }
-        if (Array.isArray(supabaseData.professionals)) {
-          for (const p of supabaseData.professionals) {
-            const idx = (db.professionals || []).findIndex((x: any) => x.id === p.id);
-            if (idx >= 0) db.professionals[idx] = { ...db.professionals[idx], ...p };
-            else db.professionals.push(p);
-          }
-        }
-        if (Array.isArray(supabaseData.queue)) {
-          for (const q of supabaseData.queue) {
-            const idx = (db.queue || []).findIndex((x: any) => x.id === q.id);
-            if (idx >= 0) db.queue[idx] = { ...db.queue[idx], ...q };
-            else db.queue.push(q);
-          }
-        }
-        writeDB(db);
-        console.log(`⚡ Supabase: ${supabaseData.organizations.length} estabelecimentos carregados do PostgreSQL.`);
-      }
-    } catch (err) {
-      console.warn('Supabase initial boot warning:', err);
-    }
-  }
-
   const isProd = process.env.NODE_ENV === 'production' && fs.existsSync(path.resolve(__dirname, 'dist'));
 
   if (isProd) {
-    // Serve static assets correctly for any sub-route deep links
     app.use(['/fila/assets', '/agendar/assets', '/b/assets', '/atendimento/assets'], express.static(path.resolve(__dirname, 'dist', 'assets')));
     app.use(express.static(path.resolve(__dirname, 'dist')));
     app.get('*', (req: Request, res: Response) => {
-      // Guard against serving HTML for missing static files (preventing script MIME type errors)
       if (/\.(js|css|png|jpg|jpeg|gif|svg|ico|webp|woff|woff2|ttf|json|webmanifest)$/i.test(req.path)) {
         return res.status(404).send('Asset not found');
       }
       res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
     });
     app.listen(Number(PORT), '0.0.0.0', () => {
-      console.log(`💈 BarberOS Fila Virtual Server (Production) running on http://0.0.0.0:${PORT}`);
+      console.log(`💈 BarberOS Server (Production) running on http://0.0.0.0:${PORT}`);
     });
   } else {
-    // Rewrite subpath asset requests in dev mode if any
     app.use(['/fila/assets', '/agendar/assets', '/b/assets', '/atendimento/assets'], (req, res, next) => {
       req.url = '/assets' + req.url;
       next();
     });
-    // HMR is disabled in AI Studio environment to prevent WebSocket closed errors
-    const isHmrDisabled = process.env.DISABLE_HMR !== 'false';
-    const httpServer = http.createServer(app);
 
+    const httpServer = http.createServer(app);
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
@@ -3020,12 +1419,17 @@ async function startServer() {
     app.use(vite.middlewares);
 
     httpServer.listen(Number(PORT), '0.0.0.0', () => {
-      console.log(`💈 BarberOS Fila Virtual Server (Dev Mode) running on http://0.0.0.0:${PORT}`);
+      console.log(`💈 BarberOS Server (Dev Mode) running on http://0.0.0.0:${PORT}`);
     });
   }
 }
 
-if (!isVercel && process.env.NODE_ENV !== 'test') {
+const isMainModule = process.argv[1] && (
+  path.resolve(process.argv[1]) === path.resolve(__filename) ||
+  process.argv[1].endsWith('server.ts')
+);
+
+if (isMainModule && !isVercel && process.env.NODE_ENV !== 'test') {
   startServer().catch((err) => {
     console.error('Fatal server startup error:', err);
     process.exit(1);

@@ -420,10 +420,9 @@ export class StorageService {
       broadcastEvent('ORGANIZATIONS_UPDATED');
 
       return { success: true, organization: data.organization };
-    } catch (e) {
-      console.warn('Server registration offline fallback:', e);
-      const newOrg = this.createOrganization(params.organization);
-      return { success: true, organization: newOrg };
+    } catch (e: any) {
+      console.error('Server registration error:', e);
+      return { success: false, error: 'Falha de conexão com o servidor ao cadastrar barbearia: ' + (e?.message || 'Erro de rede') };
     }
   }
 
@@ -526,24 +525,30 @@ export class StorageService {
       const res = await fetch(`/api/public/establishment/${encodeURIComponent(clean)}`);
       const contentType = res.headers.get('content-type') || '';
 
+      let data: any = null;
+      if (contentType.includes('application/json')) {
+        try {
+          data = await res.json();
+        } catch {}
+      }
+
       if (res.status === 404) {
         return {
           status: 'NOT_FOUND',
           statusCode: 404,
-          error: 'Estabelecimento não encontrado para este link.'
+          error: data?.error || 'Estabelecimento não encontrado para este link.'
         };
       }
 
-      if (res.status >= 500) {
+      if (res.status === 503 || res.status >= 500) {
         return {
           status: 'SERVER_ERROR',
           statusCode: res.status,
-          error: 'Instabilidade temporária no servidor ou banco de dados.'
+          error: data?.error || 'Instabilidade no servidor ou banco de dados Supabase.'
         };
       }
 
-      if (res.ok && contentType.includes('application/json')) {
-        const data = await res.json();
+      if (res.ok && data && data.organization) {
         if (data.organization) {
           const db = this.getDB();
           const orgIdx = db.organizations.findIndex(o => o.id === data.organization.id);
@@ -2237,52 +2242,11 @@ export class StorageService {
       } else if (res.status === 401 || res.status === 403) {
         return { success: false, error: data.error };
       }
-    } catch (err) {
-      console.warn('Server login offline fallback:', err);
+      return { success: false, error: data?.error || 'Falha ao autenticar no servidor.' };
+    } catch (err: any) {
+      console.error('Server login error:', err);
+      return { success: false, error: 'Falha de conexão com o servidor ao autenticar: ' + (err?.message || 'Erro de rede') };
     }
-
-    // 2. Local fallback check
-    const db = this.getDB();
-    const termLower = term.toLowerCase();
-    const cleanPhone = termLower.replace(/\D/g, '');
-
-    const org = db.organizations.find(o =>
-      (o.ownerEmail && o.ownerEmail.toLowerCase() === termLower) ||
-      o.slug.toLowerCase() === termLower ||
-      (o.name && o.name.toLowerCase() === termLower) ||
-      (o.id && o.id.toLowerCase() === termLower) ||
-      (cleanPhone && o.phone && o.phone.replace(/\D/g, '') === cleanPhone) ||
-      (cleanPhone && o.whatsapp && o.whatsapp.replace(/\D/g, '') === cleanPhone)
-    );
-
-    if (!org) {
-      return { success: false, error: 'Nenhuma barbearia encontrada com este e-mail ou usuário.' };
-    }
-
-    if (org.isActive === false) {
-      return { success: false, error: 'Este estabelecimento está bloqueado pelo administrador da plataforma.' };
-    }
-
-    const expectedPassword = org.ownerPassword || '123';
-    if (cleanPass !== expectedPassword.trim()) {
-      return { success: false, error: 'Senha incorreta para esta barbearia.' };
-    }
-
-    const session: AuthSession = {
-      isAuthenticated: true,
-      uid: `usr_owner_${org.id}`,
-      userId: `usr_owner_${org.id}`,
-      role: 'OWNER',
-      organizationId: org.id,
-      userEmail: org.ownerEmail || `${org.slug}@barberos.app`,
-      userName: org.ownerName || org.name,
-      loggedAt: new Date().toISOString()
-    };
-    this.setAuthSession(session);
-    this.setCurrentOrgId(org.id);
-    this.logAudit(org.id, org.ownerName || org.name, `Login de proprietário realizado`);
-
-    return { success: true, organization: org };
   }
 
   static async loginSuperAdmin(password: string): Promise<{ success: boolean; error?: string }> {
@@ -2299,32 +2263,13 @@ export class StorageService {
       if (res.ok && data.success) {
         this.setAuthSession(data.session);
         return { success: true };
-      } else if (res.status === 401) {
-        return { success: false, error: data.error };
+      } else {
+        return { success: false, error: data?.error || 'Senha incorreta do Administrador Geral.' };
       }
-    } catch (err) {
-      console.warn('Server superadmin login fallback:', err);
+    } catch (err: any) {
+      console.error('Server superadmin login error:', err);
+      return { success: false, error: 'Falha de conexão com o servidor ao autenticar administrador: ' + (err?.message || 'Erro de rede') };
     }
-
-    // 2. Local fallback check: Anna123!@ or custom pass
-    const currentAdminPass = this.getSuperAdminPassword();
-    if (cleanPass !== currentAdminPass && cleanPass !== 'Anna123!@') {
-      return { success: false, error: 'Senha incorreta do Dono da SaaS (Super Admin).' };
-    }
-
-    const session: AuthSession = {
-      isAuthenticated: true,
-      uid: 'usr_superadmin_master',
-      userId: 'usr_superadmin_master',
-      role: 'SUPER_ADMIN',
-      userEmail: 'admin@barberos.com.br',
-      userName: 'Super Administrador (Dono da SaaS)',
-      loggedAt: new Date().toISOString()
-    };
-    this.setAuthSession(session);
-    this.logAudit('global', 'Super Admin', `Login de Super Admin realizado com sucesso`);
-
-    return { success: true };
   }
 
   static isSuperAdminAuthenticated(): boolean {

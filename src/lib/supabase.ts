@@ -1,37 +1,47 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl =
-  (typeof process !== 'undefined' &&
-    (process.env.SUPABASE_URL ||
-      process.env.NEXT_PUBLIC_SUPABASE_URL ||
-      process.env.VITE_SUPABASE_URL)) ||
-  'https://xsmcfrualbyswoccyicl.supabase.co';
+// Safe public client for browser/client-side use
+// NEVER uses or exposes SUPABASE_SERVICE_ROLE_KEY
+const getEnvVar = (key: string): string => {
+  if (typeof process !== 'undefined' && process.env && process.env[key]) {
+    return process.env[key] as string;
+  }
+  // Vite client-side fallback
+  try {
+    const metaEnv = (import.meta as any).env;
+    if (metaEnv && metaEnv[key]) return metaEnv[key];
+  } catch {}
+  return '';
+};
 
-const supabaseKey =
-  (typeof process !== 'undefined' &&
-    (process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      process.env.SUPABASE_ANON_KEY ||
-      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-      process.env.VITE_SUPABASE_ANON_KEY ||
-      process.env.VITE_SUPABASE_PUBLISHABLE_KEY)) ||
-  'sb_publishable_cO9Vc1J2pX7WE8LnyywbVQ_RhlD2AD8';
+const publicSupabaseUrl =
+  getEnvVar('NEXT_PUBLIC_SUPABASE_URL') ||
+  getEnvVar('VITE_SUPABASE_URL') ||
+  getEnvVar('SUPABASE_URL') ||
+  '';
+
+const publicSupabaseKey =
+  getEnvVar('NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY') ||
+  getEnvVar('VITE_SUPABASE_ANON_KEY') ||
+  getEnvVar('SUPABASE_ANON_KEY') ||
+  '';
 
 export const isSupabaseConfigured = (): boolean => {
-  return Boolean(supabaseUrl && supabaseKey && supabaseUrl.startsWith('http'));
+  return Boolean(publicSupabaseUrl && publicSupabaseKey && publicSupabaseUrl.startsWith('http'));
 };
 
 export const getSupabaseClient = (): SupabaseClient | null => {
   if (!isSupabaseConfigured()) {
     return null;
   }
-  return createClient(supabaseUrl, supabaseKey, {
+  return createClient(publicSupabaseUrl, publicSupabaseKey, {
     auth: {
-      persistSession: false,
-      autoRefreshToken: false,
+      persistSession: true,
+      autoRefreshToken: true,
     },
   });
 };
 
 export const supabase: SupabaseClient | null = isSupabaseConfigured()
-  ? createClient(supabaseUrl, supabaseKey)
+  ? createClient(publicSupabaseUrl, publicSupabaseKey)
   : null;
