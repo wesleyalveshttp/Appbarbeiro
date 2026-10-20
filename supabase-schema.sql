@@ -352,3 +352,9 @@ CREATE POLICY "Service role full access transactions" ON public.transactions FOR
 CREATE POLICY "Service role full access subscriptions" ON public.subscriptions FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 CREATE POLICY "Service role full access push_subscriptions" ON public.push_subscriptions FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
 CREATE POLICY "Service role full access sessions" ON public.sessions FOR ALL TO service_role USING (TRUE) WITH CHECK (TRUE);
+
+-- ==============================================================================
+-- RECARREGAMENTO INSTANTÂNEO DO SCHEMA CACHE DO POSTGREST
+-- ==============================================================================
+NOTIFY pgrst, 'reload schema';
+

@@ -32,12 +32,17 @@ export class SupabaseDBService {
   // ---------------------------------------------------------------------------
   // TABLE EXISTENCE CHECK
   // ---------------------------------------------------------------------------
+  private static lastCheckError: string | null = null;
+
   static async checkTablesReady(force = false): Promise<boolean> {
-    if (!this.isConfigured()) return false;
+    if (!this.isConfigured()) {
+      this.lastCheckError = 'Supabase backend não configurado';
+      return false;
+    }
 
     const now = Date.now();
-    if (!force && this.tablesReadyCache !== null && now - this.lastTableCheck < this.CHECK_INTERVAL_MS) {
-      return this.tablesReadyCache;
+    if (!force && this.tablesReadyCache === true && now - this.lastTableCheck < this.CHECK_INTERVAL_MS) {
+      return true;
     }
 
     try {
@@ -46,13 +51,18 @@ export class SupabaseDBService {
       this.lastTableCheck = now;
 
       if (error) {
+        console.error('[SupabaseDBService.checkTablesReady error]:', error.code, error.message);
+        this.lastCheckError = `[${error.code}] ${error.message}`;
         this.tablesReadyCache = false;
         return false;
       }
 
+      this.lastCheckError = null;
       this.tablesReadyCache = true;
       return true;
-    } catch {
+    } catch (err: any) {
+      console.error('[SupabaseDBService.checkTablesReady exception]:', err);
+      this.lastCheckError = err.message || 'Exceção ao conectar';
       this.tablesReadyCache = false;
       return false;
     }
@@ -60,8 +70,9 @@ export class SupabaseDBService {
 
   static assertTablesReady(isReady: boolean): void {
     if (!isReady) {
+      const detail = this.lastCheckError ? ` [${this.lastCheckError}]` : '';
       throw new Error(
-        'Tabelas do Supabase não encontradas no schema cache. Execute o script supabase-schema.sql no SQL Editor do seu projeto Supabase: https://supabase.com/dashboard/project/xsmcfrualbyswoccyicl/sql'
+        `Tabelas do Supabase não encontradas no schema cache${detail}. Execute o script supabase-schema.sql no SQL Editor do seu projeto Supabase: https://supabase.com/dashboard/project/xsmcfrualbyswoccyicl/sql`
       );
     }
   }
