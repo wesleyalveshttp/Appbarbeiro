@@ -202,25 +202,68 @@ app.get('/api/events', (req: Request, res: Response) => {
   });
 });
 
-// Helper for Web Push dispatch
+// Helper for Web Push dispatch with high priority wakeup
 async function sendWebPush(subscription: any, payload: any): Promise<boolean> {
   try {
-    await webpush.sendNotification(subscription, JSON.stringify(payload));
+    await webpush.sendNotification(subscription, JSON.stringify(payload), {
+      TTL: 120,
+      urgency: 'high',
+    });
     return true;
-  } catch (err) {
-    console.warn('Erro ao disparar Web Push:', err);
+  } catch (err: any) {
+    console.warn('Erro ao disparar Web Push:', err?.message || err);
     return false;
   }
 }
 
-async function sendQueuePushNotification(orgId: string, token: string, title: string, body: string) {
+async function sendQueuePushNotification(
+  orgId: string,
+  token: string,
+  title: string,
+  body: string,
+  options?: {
+    type?: 'CALLED' | 'NEXT' | 'STEP_3';
+    ticketNumber?: number;
+    url?: string;
+  }
+) {
   try {
     const subscriptions = await SupabaseDBService.getPushSubscriptionsForOrg(orgId);
-    const sub = subscriptions.find((s: any) => s.notification_token === token);
-    if (sub && sub.subscription_data) {
-      await sendWebPush(sub.subscription_data, { title, body, tag: `ticket-${Date.now()}` });
+    const type = options?.type || (title.includes('sua vez') || title.includes('chamando') ? 'CALLED' : 'NEXT');
+    const isCalled = type === 'CALLED';
+
+    const payload = {
+      title,
+      body,
+      type,
+      ticketNumber: options?.ticketNumber,
+      url: options?.url || `/fila/${orgId}`,
+      tag: `barberos-${type}-${options?.ticketNumber || Date.now()}`,
+      vibratePattern: isCalled
+        ? [600, 200, 600, 200, 1000, 250, 1000]
+        : [350, 150, 350, 150, 350],
+      requireInteraction: isCalled,
+      silent: false,
+      timestamp: Date.now(),
+    };
+
+    const matching = subscriptions.filter((s: any) => s.notification_token === token);
+    if (matching.length > 0) {
+      for (const sub of matching) {
+        if (sub && sub.subscription_data) {
+          await sendWebPush(sub.subscription_data, payload);
+        }
+      }
+    } else {
+      // Fallback: send to latest subscription for this org if single client testing
+      const latest = subscriptions[subscriptions.length - 1];
+      if (latest && latest.subscription_data) {
+        await sendWebPush(latest.subscription_data, payload);
+      }
     }
-  } catch {}
+  } catch (err) {
+    console.warn('sendQueuePushNotification error:', err);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -231,16 +274,63 @@ app.get('/api/push/vapid-public-key', (req: Request, res: Response) => {
 });
 
 app.post('/api/push/subscribe', async (req: Request, res: Response) => {
-  const { organizationId, token, subscription } = req.body;
+  const organizationId = req.body.organizationId || req.body.orgId;
+  const token = req.body.token || req.body.deviceToken || req.body.notificationToken;
+  const subscription = req.body.subscription;
+
   if (!organizationId || !token || !subscription) {
-    return res.status(400).json({ error: 'Parâmetros de inscrição push incompletos.' });
+    return res.status(400).json({ error: 'Parâmetros de inscrição push incompletos (organizationId, token, subscription).' });
   }
 
   try {
     await SupabaseDBService.savePushSubscription(organizationId, token, subscription);
-    res.json({ success: true });
+    res.json({ success: true, message: 'Inscrição de notificação push registrada com sucesso.' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/push/test', async (req: Request, res: Response) => {
+  try {
+    const token = req.body.token || req.body.deviceToken;
+    let subscription = req.body.subscription;
+
+    if (!subscription && token) {
+      const found = await SupabaseDBService.getPushSubscriptionByToken(token);
+      if (found) {
+        subscription = found.subscription_data;
+      }
+    }
+
+    const payload = {
+      title: req.body.title || '✂️ BarberOS: Teste de Toque e Vibração',
+      body: req.body.body || 'Alerta recebido com sucesso! Seu celular vibra e toca mesmo fora do app.',
+      type: req.body.type || 'CALLED',
+      ticketNumber: req.body.ticketNumber || 99,
+      url: req.body.url || '/',
+      tag: `barberos-test-${Date.now()}`,
+      vibratePattern: [600, 200, 600, 200, 1000, 250, 1000],
+      requireInteraction: true,
+      silent: false,
+      timestamp: Date.now(),
+    };
+
+    if (subscription) {
+      const sent = await sendWebPush(subscription, payload);
+      return res.json({
+        success: sent,
+        status: sent ? 'SENT' : 'PUSH_SEND_FAILED',
+        message: sent ? 'Notificação enviada ao aparelho com sucesso!' : 'Falha ao despachar notificação push para a chave do dispositivo.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      status: 'LOCAL_FALLBACK_OK',
+      message: 'Servidor pronto. Nenhuma inscrição remota ativa para esta sessão.'
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, status: 'ERROR', error: err.message });
   }
 });
 
@@ -1009,7 +1099,8 @@ app.post('/api/queue/call-next', async (req: Request, res: Response) => {
         organizationId,
         eligibleItem.notificationToken,
         '✂️ Chegou sua vez!',
-        `Dirija-se ao atendimento agora! (Senha #${eligibleItem.ticketNumber})`
+        `Dirija-se ao atendimento agora! (Senha #${eligibleItem.ticketNumber})`,
+        { type: 'CALLED', ticketNumber: eligibleItem.ticketNumber }
       );
     }
 
@@ -1029,7 +1120,8 @@ app.post('/api/queue/call-next', async (req: Request, res: Response) => {
           organizationId,
           nextWaiting.notificationToken,
           'Você é o próximo! 💈',
-          `Prepare-se! Sua senha é #${nextWaiting.ticketNumber}.`
+          `Prepare-se! Sua senha é #${nextWaiting.ticketNumber}.`,
+          { type: 'NEXT', ticketNumber: nextWaiting.ticketNumber }
         );
       }
       for (let i = 1; i < remainingWaiting.length; i++) {
@@ -1071,7 +1163,8 @@ app.post('/api/queue/call-specific', async (req: Request, res: Response) => {
         targetOrgId,
         item.notificationToken,
         '✂️ Chegou sua vez!',
-        `O barbeiro está te chamando para a cadeira agora! (Senha #${item.ticketNumber})`
+        `O barbeiro está te chamando para a cadeira agora! (Senha #${item.ticketNumber})`,
+        { type: 'CALLED', ticketNumber: item.ticketNumber }
       );
     }
 
@@ -1257,6 +1350,184 @@ app.post('/api/queue/mark-noshow', requireTenantAuth, async (req: Request, res: 
     });
     broadcastSSE('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId });
     res.json({ success: true, item: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Skip absent customer, keep their turn preserved, and cut/call the next customer! (#USER REQUIREMENT)
+app.post('/api/queue/skip-and-call-next', async (req: Request, res: Response) => {
+  const { currentQueueId, organizationId, assignedProfId, action = 'TO_CHAIR' } = req.body;
+  const token = extractToken(req);
+  let sessionOrgId: string | undefined;
+  if (token) {
+    try {
+      const session = await SupabaseDBService.getSession(token);
+      if (session) sessionOrgId = session.organizationId;
+    } catch {}
+  }
+  const targetOrgId = organizationId || sessionOrgId;
+  if (!targetOrgId) return res.status(400).json({ error: 'organizationId é obrigatório' });
+
+  try {
+    const queue = await SupabaseDBService.getQueueForOrganization(targetOrgId);
+    let lateItem: any = null;
+    if (currentQueueId) {
+      lateItem = queue.find((q: any) => q.id === currentQueueId);
+    }
+    if (!lateItem) {
+      // Find the currently called item
+      lateItem = queue.find((q: any) => q.status === 'CHAMADO' || q.status === 'A_CAMINHO' || q.status === 'PEDIU_TOLERANCIA');
+    }
+
+    let updatedLateItem: any = null;
+    if (lateItem) {
+      const existingNotes = lateItem.notes || '';
+      const notesUpdated = existingNotes.includes('[Vez mantida]')
+        ? existingNotes
+        : `${existingNotes} [Vez mantida - aguardando chegada]`.trim();
+
+      updatedLateItem = await SupabaseDBService.updateQueueItemStatus(lateItem.id, targetOrgId, {
+        status: 'PROXIMO',
+        calledToleranceExpiresAt: null as any,
+        notes: notesUpdated,
+      });
+
+      // Send courteous push to late customer letting them know their turn is preserved!
+      if (lateItem.notificationToken) {
+        sendQueuePushNotification(
+          targetOrgId,
+          lateItem.notificationToken,
+          '💈 Sua vez foi mantida!',
+          'O barbeiro atendeu o próximo enquanto você chega. Sua prioridade está garantida na fila!',
+          { type: 'NEXT', ticketNumber: lateItem.ticketNumber }
+        );
+      }
+    }
+
+    // Find the next eligible customer in line to attend (excluding the late customer)
+    const remainingWaiting = queue
+      .filter((q: any) => (q.status === 'AGUARDANDO' || q.status === 'PROXIMO') && (!lateItem || q.id !== lateItem.id))
+      .sort((a: any, b: any) => a.ticketNumber - b.ticketNumber);
+
+    if (remainingWaiting.length === 0) {
+      broadcastSSE('QUEUE_UPDATED', { orgId: targetOrgId });
+      return res.json({
+        success: true,
+        message: 'A vez do cliente foi mantida. Não há outros clientes aguardando na fila.',
+        skippedItem: updatedLateItem,
+        nextItem: null,
+      });
+    }
+
+    const nextToAttend = remainingWaiting[0];
+    let updatedNextItem: any = null;
+
+    if (action === 'TO_CHAIR') {
+      // Move next directly to the chair!
+      updatedNextItem = await SupabaseDBService.updateQueueItemStatus(nextToAttend.id, targetOrgId, {
+        status: 'NA CADEIRA',
+        onChairAt: new Date().toISOString(),
+        assignedProfessionalId: assignedProfId || nextToAttend.preferredProfessionalId,
+      });
+
+      if (nextToAttend.notificationToken) {
+        sendQueuePushNotification(
+          targetOrgId,
+          nextToAttend.notificationToken,
+          '💈 Você está na cadeira!',
+          `Seu atendimento de ${nextToAttend.serviceName} começou agora com o barbeiro!`,
+          { type: 'CALLED', ticketNumber: nextToAttend.ticketNumber }
+        );
+      }
+    } else {
+      // Call the next customer
+      const now = new Date();
+      const toleranceExpiry = new Date(now.getTime() + 5 * 60 * 1000);
+      updatedNextItem = await SupabaseDBService.updateQueueItemStatus(nextToAttend.id, targetOrgId, {
+        status: 'CHAMADO',
+        calledAt: now.toISOString(),
+        calledToleranceExpiresAt: toleranceExpiry.toISOString(),
+        assignedProfessionalId: assignedProfId || nextToAttend.preferredProfessionalId,
+      });
+
+      if (nextToAttend.notificationToken) {
+        sendQueuePushNotification(
+          targetOrgId,
+          nextToAttend.notificationToken,
+          '✂️ Chegou sua vez!',
+          `O barbeiro está te chamando para a cadeira agora! (Senha #${nextToAttend.ticketNumber})`,
+          { type: 'CALLED', ticketNumber: nextToAttend.ticketNumber }
+        );
+      }
+    }
+
+    broadcastSSE('QUEUE_UPDATED', {
+      orgId: targetOrgId,
+      skippedQueueItemId: lateItem?.id,
+      nextQueueItemId: nextToAttend.id,
+    });
+
+    return res.json({
+      success: true,
+      message: `Cliente ${lateItem?.customerName || 'anterior'} mantido na fila! Atendendo agora ${nextToAttend.customerName} (Senha #${nextToAttend.ticketNumber}).`,
+      skippedItem: updatedLateItem,
+      nextItem: updatedNextItem,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Hold / Pause turn without cancelling
+app.post('/api/queue/hold-turn', async (req: Request, res: Response) => {
+  const { queueId, organizationId } = req.body;
+  if (!queueId) return res.status(400).json({ error: 'queueId é obrigatório' });
+
+  try {
+    const item = await SupabaseDBService.getQueueItemById(queueId);
+    if (!item) return res.status(404).json({ error: 'Item não encontrado na fila' });
+
+    const targetOrgId = organizationId || item.organizationId;
+    const existingNotes = item.notes || '';
+    const notesUpdated = existingNotes.includes('[Vez mantida]')
+      ? existingNotes
+      : `${existingNotes} [Vez mantida - aguardando chegada]`.trim();
+
+    const updated = await SupabaseDBService.updateQueueItemStatus(queueId, targetOrgId, {
+      status: 'PROXIMO',
+      calledToleranceExpiresAt: null as any,
+      notes: notesUpdated,
+    });
+
+    broadcastSSE('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId });
+    res.json({ success: true, item: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Swap positions of two queue items
+app.post('/api/queue/swap-positions', async (req: Request, res: Response) => {
+  const { queueId1, queueId2, organizationId } = req.body;
+  if (!queueId1 || !queueId2) return res.status(400).json({ error: 'queueId1 e queueId2 são obrigatórios' });
+
+  try {
+    const item1 = await SupabaseDBService.getQueueItemById(queueId1);
+    const item2 = await SupabaseDBService.getQueueItemById(queueId2);
+    if (!item1 || !item2) return res.status(404).json({ error: 'Itens não encontrados na fila' });
+
+    const targetOrgId = organizationId || item1.organizationId;
+    const ticket1 = item1.ticketNumber;
+    const ticket2 = item2.ticketNumber;
+
+    const tempTicket = -9999;
+    await SupabaseDBService.updateQueueItemStatus(item1.id, targetOrgId, { ticketNumber: tempTicket });
+    await SupabaseDBService.updateQueueItemStatus(item2.id, targetOrgId, { ticketNumber: ticket1 });
+    await SupabaseDBService.updateQueueItemStatus(item1.id, targetOrgId, { ticketNumber: ticket2 });
+
+    broadcastSSE('QUEUE_UPDATED', { orgId: targetOrgId });
+    res.json({ success: true, message: 'Posições trocadas com sucesso.' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

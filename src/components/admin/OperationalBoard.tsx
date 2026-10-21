@@ -14,7 +14,8 @@ import {
   Maximize2,
   RefreshCw,
   Plus,
-  Sparkles
+  Sparkles,
+  FastForward
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization, Appointment, WaitingQueueItem, Professional, PaymentMethod } from '../../types';
@@ -125,6 +126,18 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
     await StorageService.moveQueueToChair(qId, prof?.id, organization.id);
     setBoardFeedback('💈 Cliente acomodado na cadeira com sucesso! Próximo promovido.');
     await loadData();
+    setTimeout(() => setBoardFeedback(null), 5000);
+  };
+
+  const handleSkipAndCutNext = async (lateItemId: string) => {
+    const prof = professionals[0] || StorageService.getProfessionals(organization.id)[0];
+    const res = await StorageService.skipAndCallNext(lateItemId, organization.id, 'TO_CHAIR', prof?.id);
+    if (res.success) {
+      setBoardFeedback('✂️ Próximo cliente acomodado na cadeira! A vez de quem não chegou foi mantida na fila com prioridade.');
+      await loadData();
+    } else {
+      setBoardFeedback(res.error || 'Não há outro cliente aguardando na fila.');
+    }
     setTimeout(() => setBoardFeedback(null), 5000);
   };
 
@@ -305,13 +318,21 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
                       <span>{calculateMinutesElapsed(item.joinedAt)} min na fila</span>
                     </div>
 
-                    <div className="pt-1">
+                    <div className="pt-1 flex items-center gap-2">
                       <button
                         onClick={() => handleCallQueueItem(item)}
-                        className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 py-1.5 text-xs font-bold text-slate-950 transition"
+                        className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 py-1.5 text-xs font-bold text-slate-950 transition"
                       >
                         <Play className="h-3 w-3 fill-current" />
-                        Chamar para Atender
+                        Chamar
+                      </button>
+                      <button
+                        onClick={() => handleQueueSitOnChair(item.id)}
+                        className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 py-1.5 text-xs font-bold text-white transition"
+                        title="Atender diretamente na cadeira"
+                      >
+                        <Armchair className="h-3 w-3" />
+                        Cadeira
                       </button>
                     </div>
                   </div>
@@ -367,13 +388,22 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
                       </span>
                     </div>
 
-                    <div className="pt-2 flex items-center gap-2">
+                    <div className="pt-2 flex flex-col gap-1.5">
                       <button
                         onClick={() => handleQueueSitOnChair(item.id)}
                         className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 py-1.5 text-xs font-bold text-slate-950 transition"
                       >
                         <Armchair className="h-3.5 w-3.5" />
                         Sentar na Cadeira
+                      </button>
+
+                      <button
+                        onClick={() => handleSkipAndCutNext(item.id)}
+                        className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-blue-600/90 hover:bg-blue-600 py-1.5 text-xs font-bold text-white transition"
+                        title="Cliente não chegou? Pule e atenda o próximo da fila, mantendo a vez deste cliente intacta!"
+                      >
+                        <FastForward className="h-3.5 w-3.5" />
+                        Pular e Atender Próximo
                       </button>
                     </div>
                   </div>

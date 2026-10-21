@@ -24,7 +24,9 @@ import {
   Check,
   X,
   Timer,
-  RefreshCw
+  RefreshCw,
+  FastForward,
+  UserCheck
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization, WaitingQueueItem, Professional, Service } from '../../types';
@@ -246,6 +248,48 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
     }
   };
 
+  // Skip absent client, keep their turn intact in the queue, and seat the next client! (#USER REQUIREMENT)
+  const handleSkipAndCutNext = async (lateItem?: WaitingQueueItem) => {
+    const targetProfId = selectedProfFilter !== 'ALL' ? selectedProfFilter : professionals[0]?.id;
+    const res = await StorageService.skipAndCallNext(lateItem?.id, organization.id, 'TO_CHAIR', targetProfId);
+    if (res.success) {
+      setCallFeedback({
+        type: 'success',
+        title: '✂️ Atendendo o Próximo da Fila!',
+        message: res.message || `Próximo cliente acomodado na cadeira! A vez de ${lateItem?.customerName || 'quem não chegou'} foi mantida com prioridade na fila.`
+      });
+      await loadData();
+    } else {
+      setCallFeedback({
+        type: 'error',
+        title: 'Aviso',
+        message: res.error || 'Não há outro cliente aguardando na fila para avançar.'
+      });
+    }
+    setTimeout(() => setCallFeedback(null), 7000);
+  };
+
+  const handleHoldTurn = async (item: WaitingQueueItem) => {
+    const res = await StorageService.holdTurn(item.id, organization.id);
+    if (res.success) {
+      setCallFeedback({
+        type: 'warning',
+        title: '⏳ Vez Guardada na Fila',
+        message: `A vaga de ${item.customerName} (Senha #${item.ticketNumber}) continua guardada como prioridade. Quando o cliente entrar no salão, basta colocá-lo na cadeira!`
+      });
+      await loadData();
+    }
+    setTimeout(() => setCallFeedback(null), 6000);
+  };
+
+  const handleSwapWithNext = async (index: number) => {
+    if (index >= waitingItems.length - 1) return;
+    const item1 = waitingItems[index];
+    const item2 = waitingItems[index + 1];
+    await StorageService.swapQueuePositions(item1.id, item2.id, organization.id);
+    await loadData();
+  };
+
   // Add Walk-in Customer
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -365,11 +409,23 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
             <button
               onClick={handleCallNext}
               disabled={waitingItems.length === 0}
-              className="flex items-center justify-center gap-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 px-8 py-5 text-sm sm:text-base font-black text-slate-950 shadow-2xl shadow-amber-500/30 transition-all transform active:scale-98 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer ring-4 ring-amber-500/20 animate-pulse hover:animate-none"
+              className="flex items-center justify-center gap-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 px-7 py-5 text-sm sm:text-base font-black text-slate-950 shadow-2xl shadow-amber-500/30 transition-all transform active:scale-98 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer ring-4 ring-amber-500/20 animate-pulse hover:animate-none"
             >
               <BellRing className="h-6 w-6 text-slate-950" />
               <span>CHAMAR PRÓXIMO CLIENTE</span>
             </button>
+
+            {/* SKIP ABSENT & CUT NEXT BUTTON (#USER REQUIREMENT) */}
+            {calledItems.length > 0 && waitingItems.length > 0 && (
+              <button
+                onClick={() => handleSkipAndCutNext(calledItems[0])}
+                className="flex items-center justify-center gap-2.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 px-6 py-5 text-xs sm:text-sm font-black text-white shadow-xl shadow-blue-500/20 transition cursor-pointer transform active:scale-98"
+                title="Atende o próximo cliente que já está esperando no salão, mantendo a vez de quem ainda não chegou sem cancelar!"
+              >
+                <FastForward className="h-5 w-5 text-white" />
+                <span>PULAR AUSENTE & CORTAR PRÓXIMO</span>
+              </button>
+            )}
 
             <button
               onClick={() => setShowAddModal(true)}
@@ -538,6 +594,11 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
                               É o Próximo
                             </span>
                           )}
+                          {item.notes?.includes('[Vez mantida]') && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                              ⭐ Vez Mantida
+                            </span>
+                          )}
                         </div>
 
                         <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400">
@@ -559,12 +620,32 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
                     <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
                       <button
                         onClick={() => handleCallSpecific(item)}
-                        className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold shadow-md transition cursor-pointer"
+                        className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold shadow-md transition cursor-pointer"
                         title="Chamar cliente individualmente"
                       >
                         <BellRing className="h-3.5 w-3.5" />
-                        <span>Chamar Agora</span>
+                        <span>Chamar</span>
                       </button>
+
+                      <button
+                        onClick={() => handleMoveToChair(item)}
+                        className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md transition cursor-pointer"
+                        title="Acomodar diretamente na cadeira para iniciar o corte"
+                      >
+                        <Armchair className="h-3.5 w-3.5" />
+                        <span>Cadeira</span>
+                      </button>
+
+                      {index < waitingItems.length - 1 && (
+                        <button
+                          onClick={() => handleSwapWithNext(index)}
+                          className="flex items-center gap-1 px-2.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-semibold transition cursor-pointer"
+                          title="Ceder a vez para o próximo cliente de trás sem cancelar"
+                        >
+                          <ArrowDown className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">Ceder</span>
+                        </button>
+                      )}
 
                       <button
                         onClick={() => handleCancel(item)}
@@ -658,18 +739,37 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
                       <button
                         onClick={() => handleMoveToChair(item)}
-                        className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold shadow-md transition cursor-pointer"
+                        className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold shadow-md transition cursor-pointer"
+                        title="Cliente chegou! Iniciar corte na cadeira."
                       >
                         <Armchair className="h-3.5 w-3.5" />
                         <span>Colocar na Cadeira</span>
                       </button>
 
                       <button
+                        onClick={() => handleSkipAndCutNext(item)}
+                        className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-md transition cursor-pointer"
+                        title="Cliente não chegou ainda? Pule e corte o próximo cliente que já está esperando no salão, mantendo a vez deste cliente intacta na fila!"
+                      >
+                        <FastForward className="h-3.5 w-3.5" />
+                        <span>Pular e Cortar Próximo</span>
+                      </button>
+
+                      <button
+                        onClick={() => handleHoldTurn(item)}
+                        className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-amber-300 border border-slate-700 text-xs font-semibold transition cursor-pointer"
+                        title="Pausar chamada e manter a vaga deste cliente guardada como prioridade no topo da fila"
+                      >
+                        <Clock className="h-3.5 w-3.5" />
+                        <span>Manter Vez</span>
+                      </button>
+
+                      <button
                         onClick={() => handleMarkNoShow(item)}
-                        className="px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-rose-950 text-rose-300 border border-slate-700 text-xs font-semibold transition cursor-pointer"
+                        className="px-2.5 py-2.5 rounded-xl bg-slate-800 hover:bg-rose-950 text-rose-400 border border-slate-700 text-xs font-semibold transition cursor-pointer"
                         title="Marcar como não compareceu e liberar cadeira"
                       >
                         <span>Não Compareceu</span>

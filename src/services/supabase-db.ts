@@ -793,6 +793,8 @@ export class SupabaseDBService {
       assignedProfessionalId?: string;
       pushDeliveryStatus?: string;
       estimatedWaitMinutes?: number;
+      notes?: string;
+      ticketNumber?: number;
     }
   ): Promise<any> {
     const ready = await this.checkTablesReady();
@@ -809,6 +811,8 @@ export class SupabaseDBService {
     if (updates.assignedProfessionalId !== undefined) dbUpdates.assigned_professional_id = updates.assignedProfessionalId;
     if (updates.pushDeliveryStatus !== undefined) dbUpdates.push_delivery_status = updates.pushDeliveryStatus;
     if (updates.estimatedWaitMinutes !== undefined) dbUpdates.estimated_wait_minutes = updates.estimatedWaitMinutes;
+    if (updates.notes !== undefined) dbUpdates.notes = updates.notes;
+    if (updates.ticketNumber !== undefined) dbUpdates.ticket_number = updates.ticketNumber;
 
     const { data, error } = await client
       .from('queue')
@@ -1376,6 +1380,23 @@ export class SupabaseDBService {
       return data || [];
     } catch {
       return [];
+    }
+  }
+
+  static async getPushSubscriptionByToken(token: string): Promise<any | null> {
+    const ready = await this.checkTablesReady();
+    if (!ready) return null;
+
+    try {
+      const client = getSupabaseAdminClient();
+      const { data } = await client
+        .from('push_subscriptions')
+        .select('*')
+        .eq('notification_token', token)
+        .maybeSingle();
+      return data || null;
+    } catch {
+      return null;
     }
   }
 

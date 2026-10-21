@@ -1839,6 +1839,90 @@ export class StorageService {
     return { success: false, error: 'Item não encontrado na fila' };
   }
 
+  // Skip absent customer, keep their spot in line, and immediately cut/call the next customer! (#USER REQUIREMENT)
+  static async skipAndCallNext(
+    currentQueueId?: string,
+    orgId?: string,
+    action: 'TO_CHAIR' | 'CALL_NEXT' = 'TO_CHAIR',
+    assignedProfId?: string
+  ): Promise<{ success: boolean; message?: string; skippedItem?: WaitingQueueItem; nextItem?: WaitingQueueItem; error?: string }> {
+    const targetOrgId = orgId || this.getCurrentOrgId();
+    try {
+      const token = this.getAuthToken();
+      const res = await fetch('/api/queue/skip-and-call-next', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          currentQueueId,
+          organizationId: targetOrgId,
+          assignedProfId,
+          action
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        await this.syncWithServer();
+        broadcastEvent('QUEUE_UPDATED', { orgId: targetOrgId });
+        return data;
+      }
+      return { success: false, error: data.error || 'Erro ao passar a vez' };
+    } catch (err: any) {
+      console.warn('skipAndCallNext error:', err);
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async holdTurn(queueId: string, orgId?: string): Promise<{ success: boolean; item?: WaitingQueueItem; error?: string }> {
+    const targetOrgId = orgId || this.getCurrentOrgId();
+    try {
+      const token = this.getAuthToken();
+      const res = await fetch('/api/queue/hold-turn', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ queueId, organizationId: targetOrgId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        await this.syncWithServer();
+        broadcastEvent('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId });
+        return data;
+      }
+      return { success: false, error: data.error || 'Erro ao segurar vaga' };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  static async swapQueuePositions(queueId1: string, queueId2: string, orgId?: string): Promise<{ success: boolean; error?: string }> {
+    const targetOrgId = orgId || this.getCurrentOrgId();
+    try {
+      const token = this.getAuthToken();
+      const res = await fetch('/api/queue/swap-positions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ queueId1, queueId2, organizationId: targetOrgId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        await this.syncWithServer();
+        broadcastEvent('QUEUE_UPDATED', { orgId: targetOrgId });
+        return { success: true };
+      }
+      return { success: false, error: data.error || 'Erro ao trocar posições' };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
   static finishQueueItem(queueId: string, paymentMethod: PaymentMethod = 'PIX'): WaitingQueueItem {
     const db = this.getDB();
     const item = db.queue.find(q => q.id === queueId);

@@ -23,7 +23,7 @@ self.addEventListener('push', (event) => {
     type: 'CALLED',
     ticketNumber: 0,
     url: '/',
-    vibratePattern: [400, 150, 400, 150, 800, 200, 800],
+    vibratePattern: [500, 200, 500, 200, 1000, 300, 1000, 300, 1200],
     tag: 'queue-update',
   };
 
@@ -35,25 +35,29 @@ self.addEventListener('push', (event) => {
     }
   }
 
-  const isCalled = data.type === 'CALLED';
+  const isCalled =
+    data.type === 'CALLED' ||
+    (data.title && (data.title.includes('vez') || data.title.includes('chamando'))) ||
+    (data.body && (data.body.includes('vez') || data.body.includes('cadeira')));
   const isNext = data.type === 'NEXT';
 
   const vibration =
     data.vibratePattern ||
     (isCalled
-      ? [400, 150, 400, 150, 800, 200, 800]
+      ? [500, 200, 500, 200, 1000, 300, 1000, 300, 1200]
       : isNext
-      ? [300, 150, 300, 150, 300]
+      ? [350, 150, 350, 150, 350]
       : [250, 100, 250]);
 
   const options = {
     body: data.body,
     icon: '/icon.svg',
     badge: '/icon.svg',
-    tag: data.tag || `queue-${data.type}-${data.ticketNumber || Date.now()}`,
+    tag: data.tag || `queue-${data.type || 'called'}-${Date.now()}`,
     vibrate: vibration,
     renotify: true,
     requireInteraction: isCalled, // Keeps notification active on Android / Desktop until user acts
+    silent: false, // Explicitly enables system notification ringtone & alert
     actions: [
       {
         action: 'open',
@@ -62,6 +66,7 @@ self.addEventListener('push', (event) => {
     ],
     data: {
       ...data,
+      isCalled,
       receivedAt: Date.now(),
     },
   };
@@ -73,7 +78,7 @@ self.addEventListener('push', (event) => {
       clientList.forEach((client) => {
         client.postMessage({
           type: 'REMOTE_PUSH_RECEIVED',
-          payload: data,
+          payload: { ...data, isCalled },
         });
       });
     });

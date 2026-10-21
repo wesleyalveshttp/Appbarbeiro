@@ -720,8 +720,21 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
               </div>
             )}
 
+            {/* REASSURANCE BANNER WHEN TURN WAS HELD / PRESERVED (#USER REQUIREMENT) */}
+            {myQueueItem.notes?.includes('[Vez mantida]') && (
+              <div className="rounded-2xl bg-amber-500/15 border-2 border-amber-500/50 p-4 text-xs text-amber-200 leading-relaxed flex items-start gap-3 shadow-lg">
+                <Sparkles className="h-5 w-5 text-amber-400 shrink-0 mt-0.5 animate-pulse" />
+                <div className="space-y-1">
+                  <strong className="text-white block font-bold text-sm">⭐ Sua vez está mantida e garantida!</strong>
+                  <p className="text-slate-300 text-[11px] leading-relaxed">
+                    O barbeiro adiantou o próximo cliente enquanto você se aproxima do salão. A sua vaga continua com prioridade total! Assim que você entrar na barbearia, avise o profissional para sentar na cadeira.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* STATUS REASSURANCE WHEN WAITING (#Requirement 1) */}
-            {myQueueItem.status === 'AGUARDANDO' && (
+            {myQueueItem.status === 'AGUARDANDO' && !myQueueItem.notes?.includes('[Vez mantida]') && (
               <div className="rounded-2xl bg-amber-500/10 border border-amber-500/30 p-4 text-xs text-amber-200 leading-relaxed flex items-start gap-3">
                 <Sparkles className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
                 <div>

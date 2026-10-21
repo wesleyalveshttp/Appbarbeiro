@@ -37,20 +37,19 @@ class NotificationServiceClass {
   private audioCtx: AudioContext | null = null;
   private swRegistration: ServiceWorkerRegistration | null = null;
   private currentSubscription: PushSubscription | null = null;
+  private hasUnlocked = false;
 
   constructor() {
     if (typeof window !== 'undefined') {
       this.initDeviceToken();
       this.initServiceWorkerAndListeners();
 
-      // Automatically unlock and resume audio on the very first user interaction anywhere on page
-      const unlockEvents = ['click', 'touchstart', 'touchend', 'pointerdown', 'keydown'];
-      const autoUnlock = () => {
+      // Silently unlock Web Audio on first gesture without making ANY sound
+      const silentUnlock = () => {
         this.unlockAudio();
       };
-      unlockEvents.forEach((evt) => {
-        window.addEventListener(evt, autoUnlock, { passive: true });
-      });
+      window.addEventListener('click', silentUnlock, { once: true, passive: true });
+      window.addEventListener('touchstart', silentUnlock, { once: true, passive: true });
     }
   }
 
@@ -104,12 +103,13 @@ class NotificationServiceClass {
       navigator.serviceWorker.addEventListener('message', (event) => {
         const { type, payload } = event.data || {};
         if (type === 'REMOTE_PUSH_RECEIVED' && payload) {
-          console.log('🔔 Remote push notification received in foreground:', payload);
-          this.playSound(payload.type);
-          if (payload.vibratePattern) {
-            this.vibrate(payload.vibratePattern);
-          } else {
-            this.vibrate([400, 150, 400, 150, 800, 200, 800]);
+          console.log('🔔 Remote push notification received in client:', payload);
+          // Only play ringtone if it's the customer's call or turn
+          if (payload.isCalled || payload.type === 'CALLED') {
+            this.startRepeatingAlarm('CALLED', 4000);
+          } else if (payload.type === 'NEXT') {
+            this.playSound('NEXT');
+            this.vibrate([350, 150, 350, 150, 350]);
           }
 
           // Emit local event so components update immediately
@@ -131,7 +131,7 @@ class NotificationServiceClass {
     if (!this.isSupported()) return 'unsupported';
     try {
       const permission = await Notification.requestPermission();
-      this.getAudioContext(); // Unlock Web Audio context on user gesture
+      this.unlockAudio();
       return permission as PushPermissionState;
     } catch (e) {
       console.warn('Failed to request notification permission:', e);
@@ -193,12 +193,13 @@ class NotificationServiceClass {
 
       const subJSON = subscription.toJSON();
 
-      // Send to backend database
+      // Send to backend database (passing both token and deviceToken)
       const saveRes = await fetch('/api/push/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           subscription: subJSON,
+          token: deviceToken,
           deviceToken,
           queueItemId: options?.queueItemId,
           customerPhone: options?.customerPhone,
@@ -244,6 +245,7 @@ class NotificationServiceClass {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          token: deviceToken,
           deviceToken,
           subscription: this.currentSubscription ? this.currentSubscription.toJSON() : null,
         }),
@@ -280,22 +282,22 @@ class NotificationServiceClass {
   }
 
   public unlockAudio(): void {
+    if (this.hasUnlocked) return;
+    this.hasUnlocked = true;
     try {
       const ctx = this.getAudioContext();
       if (ctx && ctx.state === 'suspended') {
         ctx.resume().catch(() => {});
       }
-      // Initialize and prime persistent HTML5 audio element
+      // Initialize persistent HTML5 audio element silently (ZERO touch sounds)
       if (typeof window !== 'undefined' && !this.persistentAudio) {
         this.persistentAudio = new Audio();
         this.persistentAudio.volume = 1.0;
       }
-      // Pre-warm with a micro silent burst
-      this.playHtmlAudioFallback('STEP_3', 0.001);
     } catch {}
   }
 
-  // Synthesize audible chimes with Web Audio API & HTML5 Audio fallback
+  // Synthesize authentic, pleasant calling ringtone with Web Audio & HTML5 Audio
   public playSound(type: 'STEP_3' | 'NEXT' | 'CALLED') {
     const ctx = this.getAudioContext();
 
@@ -304,26 +306,25 @@ class NotificationServiceClass {
         const now = context.currentTime;
 
         if (type === 'STEP_3') {
-          // Double gentle chime (Aviso 1: Faltam poucas pessoas)
-          this.playTone(context, 523.25, now, 0.22, 0.5); // C5
-          this.playTone(context, 659.25, now + 0.18, 0.28, 0.55); // E5
+          // Double gentle advisory chime (Faltam poucas pessoas)
+          this.playTone(context, 523.25, now, 0.22, 0.4); // C5
+          this.playTone(context, 659.25, now + 0.18, 0.28, 0.45); // E5
         } else if (type === 'NEXT') {
-          // High alert chime (Aviso 2: Você é o próximo)
+          // Alert chime (Você é o próximo)
           this.playTone(context, 659.25, now, 0.18, 0.6); // E5
           this.playTone(context, 880.0, now + 0.16, 0.22, 0.65); // A5
-          this.playTone(context, 987.77, now + 0.35, 0.45, 0.7); // B5
+          this.playTone(context, 1046.5, now + 0.35, 0.45, 0.7); // C6
         } else {
-          // Energetic loud alert chime (Aviso 3: CHEGOU SUA VEZ NA CADEIRA!)
-          // 1st Fanfare Pass
-          this.playTone(context, 523.25, now, 0.16, 0.7); // C5
-          this.playTone(context, 659.25, now + 0.14, 0.16, 0.75); // E5
-          this.playTone(context, 783.99, now + 0.28, 0.18, 0.8); // G5
-          this.playTone(context, 1046.5, now + 0.44, 0.55, 0.85); // C6 (High C)
+          // REAL SHOP CALL RINGTONE / TOQUE DE CHAMADA (CHEGOU SUA VEZ NA CADEIRA!)
+          // Melodic Bell Sequence: F#5 (740Hz) -> A#5 (932Hz) -> C#6 (1108Hz) -> F#6 (1480Hz)
+          this.playBell(context, 739.99, now, 0.35, 0.85); // Note 1
+          this.playBell(context, 932.33, now + 0.26, 0.35, 0.85); // Note 2
+          this.playBell(context, 1108.73, now + 0.52, 0.4, 0.9); // Note 3
+          this.playBell(context, 1479.98, now + 0.80, 0.95, 0.95); // Sustained Bell Ring
 
-          // 2nd Fanfare Pass (0.65s later)
-          this.playTone(context, 659.25, now + 0.7, 0.16, 0.75); // E5
-          this.playTone(context, 783.99, now + 0.84, 0.18, 0.8); // G5
-          this.playTone(context, 1046.5, now + 1.0, 0.7, 0.9); // High C6
+          // Double attention chime ring
+          this.playBell(context, 1108.73, now + 1.35, 0.25, 0.8);
+          this.playBell(context, 1479.98, now + 1.55, 0.75, 0.9);
         }
       } catch (e) {
         console.warn('Audio tone error:', e);
@@ -338,20 +339,24 @@ class NotificationServiceClass {
       }
     }
 
-    // Secondary Audio Engine: HTML5 synthetic tone (guaranteed playback on mobile)
-    this.playHtmlAudioFallback(type, 0.9);
+    // Secondary Audio Engine: HTML5 melodic bell ringtone (guaranteed background playback on mobile)
+    this.playHtmlAudioFallback(type, 0.95);
   }
 
-  // Generates and plays an audible synthetic WAV tone via HTML5 Audio element
-  private playHtmlAudioFallback(type: 'STEP_3' | 'NEXT' | 'CALLED', maxVol: number = 0.8): void {
+  // Generates and plays a high-quality 22050Hz 16-bit WAV bell ringtone via HTML5 Audio element
+  private playHtmlAudioFallback(type: 'STEP_3' | 'NEXT' | 'CALLED', maxVol: number = 0.95): void {
     if (typeof window === 'undefined') return;
     try {
       let dataUrl = this.cachedAudioUrls[type];
       if (!dataUrl) {
-        const sampleRate = 8000;
-        const durationSec = type === 'CALLED' ? 1.0 : 0.45;
+        const sampleRate = 22050;
+        const durationSec = type === 'CALLED' ? 2.0 : 0.6;
         const totalSamples = Math.floor(sampleRate * durationSec);
-        const buffer = new Uint8Array(44 + totalSamples);
+        const bytesPerSample = 2; // 16-bit PCM
+        const blockAlign = bytesPerSample;
+        const byteRate = sampleRate * blockAlign;
+        const dataSize = totalSamples * bytesPerSample;
+        const buffer = new Uint8Array(44 + dataSize);
 
         const writeStr = (offset: number, str: string) => {
           for (let i = 0; i < str.length; i++) buffer[offset + i] = str.charCodeAt(i);
@@ -367,33 +372,66 @@ class NotificationServiceClass {
           buffer[offset + 1] = (val >> 8) & 0xff;
         };
 
+        // RIFF header
         writeStr(0, 'RIFF');
-        write32(4, 36 + totalSamples);
+        write32(4, 36 + dataSize);
         writeStr(8, 'WAVE');
         writeStr(12, 'fmt ');
-        write32(16, 16);
-        write16(20, 1);
-        write16(22, 1);
+        write32(16, 16); // PCM header size
+        write16(20, 1);  // PCM format
+        write16(22, 1);  // Mono
         write32(24, sampleRate);
-        write32(28, sampleRate);
-        write16(32, 1);
-        write16(34, 8);
+        write32(28, byteRate);
+        write16(32, blockAlign);
+        write16(34, 16); // 16 bits
         writeStr(36, 'data');
-        write32(40, totalSamples);
+        write32(40, dataSize);
 
-        const freq1 = type === 'CALLED' ? 880 : type === 'NEXT' ? 784 : 587;
-        const freq2 = type === 'CALLED' ? 1046 : type === 'NEXT' ? 988 : 659;
+        // Synthesis of high-fidelity melodic call chime (Ding-Dong-Ding-DONG)
         for (let i = 0; i < totalSamples; i++) {
           const t = i / sampleRate;
-          const currentFreq = t < (durationSec / 2) ? freq1 : freq2;
-          const decay = Math.max(0.1, 1 - (t / durationSec));
-          const sample = Math.sin(2 * Math.PI * currentFreq * t) * decay;
-          buffer[44 + i] = Math.floor((sample + 1) * 127.5);
+          let sample = 0;
+
+          if (type === 'CALLED') {
+            // 4-chime sequence: 0.0s, 0.26s, 0.52s, 0.80s
+            const notes = [
+              { start: 0.0, freq: 740, dur: 0.4 },
+              { start: 0.26, freq: 932, dur: 0.4 },
+              { start: 0.52, freq: 1108, dur: 0.45 },
+              { start: 0.80, freq: 1480, dur: 1.1 },
+            ];
+            for (const n of notes) {
+              if (t >= n.start && t < n.start + n.dur) {
+                const noteT = t - n.start;
+                const env = Math.exp(-3.5 * (noteT / n.dur));
+                const s1 = Math.sin(2 * Math.PI * n.freq * noteT);
+                const s2 = 0.35 * Math.sin(2 * Math.PI * n.freq * 2 * noteT); // 1st harmonic
+                sample += (s1 + s2) * env * 0.7;
+              }
+            }
+          } else if (type === 'NEXT') {
+            const freq = t < 0.25 ? 784 : 988;
+            const env = Math.exp(-4 * t);
+            sample = Math.sin(2 * Math.PI * freq * t) * env * 0.7;
+          } else {
+            const freq = 659;
+            const env = Math.exp(-5 * t);
+            sample = Math.sin(2 * Math.PI * freq * t) * env * 0.5;
+          }
+
+          // Clamp to 16-bit signed integer
+          sample = Math.max(-1, Math.min(1, sample));
+          const intSample = Math.floor(sample < 0 ? sample * 32768 : sample * 32767);
+          const byteOffset = 44 + i * 2;
+          buffer[byteOffset] = intSample & 0xff;
+          buffer[byteOffset + 1] = (intSample >> 8) & 0xff;
         }
 
         let binary = '';
-        for (let i = 0; i < buffer.length; i++) {
-          binary += String.fromCharCode(buffer[i]);
+        const chunkSize = 8192;
+        for (let i = 0; i < buffer.length; i += chunkSize) {
+          const slice = buffer.subarray(i, i + chunkSize);
+          binary += String.fromCharCode.apply(null, slice as any);
         }
         dataUrl = `data:audio/wav;base64,${btoa(binary)}`;
         this.cachedAudioUrls[type] = dataUrl;
@@ -403,25 +441,27 @@ class NotificationServiceClass {
         this.persistentAudio = new Audio();
       }
       this.persistentAudio.src = dataUrl;
-      this.persistentAudio.volume = Math.min(1, Math.max(0.01, maxVol));
+      this.persistentAudio.volume = Math.min(1, Math.max(0.1, maxVol));
       const playPromise = this.persistentAudio.play();
       if (playPromise) {
         playPromise.catch((err) => {
           console.warn('HTML5 audio auto-play suppressed:', err);
         });
       }
-    } catch {}
+    } catch (e) {
+      console.warn('playHtmlAudioFallback error:', e);
+    }
   }
 
   // Start continuous repeating loud chime alarm until client confirms arrival or leaves
-  public startRepeatingAlarm(type: 'CALLED' | 'NEXT' = 'CALLED', intervalMs: number = 4000) {
+  public startRepeatingAlarm(type: 'CALLED' | 'NEXT' = 'CALLED', intervalMs: number = 4200) {
     this.stopRepeatingAlarm();
     this.playSound(type);
-    this.vibrate([600, 200, 600, 200, 1000, 300, 1000]);
+    this.vibrate([600, 200, 600, 200, 1000, 250, 1000]);
 
     this.repeatingAlarmTimer = setInterval(() => {
       this.playSound(type);
-      this.vibrate([600, 200, 600, 200, 1000, 300, 1000]);
+      this.vibrate([600, 200, 600, 200, 1000, 250, 1000]);
     }, intervalMs);
   }
 
@@ -430,6 +470,32 @@ class NotificationServiceClass {
       clearInterval(this.repeatingAlarmTimer);
       this.repeatingAlarmTimer = null;
     }
+  }
+
+  // Rich bell tone with harmonics and natural decay
+  private playBell(ctx: AudioContext, freq: number, startTime: number, duration: number, volume: number = 0.5) {
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+
+    osc1.type = 'triangle'; // Rich fundamental
+    osc1.frequency.setValueAtTime(freq, startTime);
+
+    osc2.type = 'sine'; // 2nd harmonic overtone
+    osc2.frequency.setValueAtTime(freq * 2, startTime);
+
+    gainNode.gain.setValueAtTime(0.001, startTime);
+    gainNode.gain.linearRampToValueAtTime(volume, startTime + 0.015);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+
+    osc1.connect(gainNode);
+    osc2.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    osc1.start(startTime);
+    osc2.start(startTime);
+    osc1.stop(startTime + duration + 0.05);
+    osc2.stop(startTime + duration + 0.05);
   }
 
   private playTone(ctx: AudioContext, freq: number, startTime: number, duration: number, volume: number = 0.3) {
