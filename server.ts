@@ -79,14 +79,16 @@ export async function requireTenantAuth(req: Request, res: Response, next: any) 
 
     (req as any).session = session;
 
-    if (session.role === 'SUPERADMIN') {
+    if (session.role === 'SUPERADMIN' || session.role === 'SUPER_ADMIN') {
       return next();
     }
 
     // Determine target organization ID from params, query, or body
     const targetOrgId =
       req.params.orgId ||
+      req.params.id ||
       req.body.organizationId ||
+      req.body.id ||
       (req.query.orgId as string) ||
       (req.query.organizationId as string);
 
@@ -716,7 +718,7 @@ app.get('/api/organizations', async (req: Request, res: Response) => {
   }
 
   try {
-    if (session && session.role === 'SUPERADMIN') {
+    if (session && (session.role === 'SUPERADMIN' || session.role === 'SUPER_ADMIN')) {
       const orgs = await SupabaseDBService.getAllOrganizations();
       return res.json({ organizations: orgs });
     }
@@ -755,7 +757,7 @@ app.get('/api/organizations/:id', async (req: Request, res: Response) => {
     const org = await SupabaseDBService.getOrganizationById(id);
     if (!org) return res.status(404).json({ error: 'Organização não encontrada.' });
 
-    const isAuthorized = session && (session.role === 'SUPERADMIN' || session.organizationId === org.id);
+    const isAuthorized = session && (session.role === 'SUPERADMIN' || session.role === 'SUPER_ADMIN' || session.organizationId === org.id);
     if (isAuthorized) {
       const { ownerPasswordHash, ownerSalt, ...safeOrg } = org;
       return res.json({ organization: safeOrg });
@@ -773,6 +775,7 @@ app.get('/api/organizations/:id', async (req: Request, res: Response) => {
         address: org.address,
         workingHours: org.workingHours,
         settings: org.settings,
+        subscription: org.subscription,
         isActive: org.isActive,
       },
     });
@@ -789,17 +792,162 @@ app.put('/api/organizations/:id', requireTenantAuth, async (req: Request, res: R
   try {
     const updated = await SupabaseDBService.updateOrganization(id, updates);
     broadcastSSE('ORGANIZATION_UPDATED', { orgId: id });
+    broadcastSSE('ORGANIZATIONS_UPDATED');
     res.json({ success: true, organization: updated });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.delete('/api/organizations/:id', requireSuperAdminAuth, async (req: Request, res: Response) => {
+// Admin Toggle Organization Status (Block / Unblock)
+app.post(['/api/admin/organization/toggle-status', '/api/organizations/:id/toggle-status'], async (req: Request, res: Response) => {
+  const orgId = req.params.id || req.body.orgId || req.body.id;
+  if (!orgId) return res.status(400).json({ error: 'ID do estabelecimento é obrigatório.' });
+
+  try {
+    const current = await SupabaseDBService.getOrganizationById(orgId);
+    if (!current) return res.status(404).json({ error: 'Estabelecimento não encontrado.' });
+
+    const newActive = req.body.isActive !== undefined ? Boolean(req.body.isActive) : !current.isActive;
+    const updated = await SupabaseDBService.updateOrganization(orgId, { isActive: newActive });
+
+    broadcastSSE('ORGANIZATION_UPDATED', { orgId });
+    broadcastSSE('ORGANIZATIONS_UPDATED');
+    return res.json({ success: true, organization: updated, isActive: updated.isActive });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin Approve Subscription (Aprovar Pagamento e Liberar 100%)
+app.post(['/api/admin/subscription/approve', '/api/organizations/:id/approve-subscription'], async (req: Request, res: Response) => {
+  const orgId = req.params.id || req.body.orgId || req.body.id;
+  const approvedBy = req.body.approvedBy || 'Dono da SaaS';
+  if (!orgId) return res.status(400).json({ error: 'ID do estabelecimento é obrigatório.' });
+
+  try {
+    const org = await SupabaseDBService.getOrganizationById(orgId);
+    if (!org) return res.status(404).json({ error: 'Estabelecimento não encontrado.' });
+
+    const todayIso = new Date().toISOString().split('T')[0];
+    const nextDate = new Date();
+    nextDate.setDate(nextDate.getDate() + 30);
+    const nextBillingDate = nextDate.toISOString().split('T')[0];
+
+    const invoiceId = `inv-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const invoice = {
+      id: invoiceId,
+      date: todayIso,
+      amount: 79.9,
+      status: 'PAGO' as const,
+      paymentMethod: org.subscription?.paymentMethod || 'PIX',
+      description: `Mensalidade BarberOS Pro (R$ 79,90) - Confirmado por ${approvedBy} (100% Liberado)`
+    };
+
+    const existingInvoices = Array.isArray(org.subscription?.invoices) ? org.subscription.invoices : [];
+
+    const updated = await SupabaseDBService.updateSubscriptionForOrg(orgId, {
+      status: 'ATIVA',
+      isPaid: true,
+      lastPaymentDate: todayIso,
+      nextBillingDate,
+      invoices: [invoice, ...existingInvoices],
+    });
+
+    broadcastSSE('SUBSCRIPTION_UPDATED', { orgId, status: 'ATIVA' });
+    broadcastSSE('ORGANIZATION_UPDATED', { orgId });
+    broadcastSSE('ORGANIZATIONS_UPDATED');
+    return res.json({ success: true, organization: updated });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin Reject Subscription (Recusar Pagamento)
+app.post(['/api/admin/subscription/reject', '/api/organizations/:id/reject-subscription'], async (req: Request, res: Response) => {
+  const orgId = req.params.id || req.body.orgId || req.body.id;
+  const reason = req.body.reason || 'Comprovante não identificado ou pendente';
+  if (!orgId) return res.status(400).json({ error: 'ID do estabelecimento é obrigatório.' });
+
+  try {
+    const updated = await SupabaseDBService.updateSubscriptionForOrg(orgId, {
+      status: 'PENDENTE',
+      isPaid: false,
+      paymentProofNote: reason,
+    });
+
+    broadcastSSE('SUBSCRIPTION_UPDATED', { orgId, status: 'PENDENTE' });
+    broadcastSSE('ORGANIZATION_UPDATED', { orgId });
+    broadcastSSE('ORGANIZATIONS_UPDATED');
+    return res.json({ success: true, organization: updated });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin Update Subscription Status
+app.post(['/api/admin/subscription/status', '/api/organizations/:id/subscription-status'], async (req: Request, res: Response) => {
+  const orgId = req.params.id || req.body.orgId || req.body.id;
+  const status = req.body.status;
+  if (!orgId || !status) return res.status(400).json({ error: 'orgId e status são obrigatórios.' });
+
+  try {
+    const isPaid = status === 'ATIVA';
+    const updated = await SupabaseDBService.updateSubscriptionForOrg(orgId, {
+      status,
+      isPaid,
+    });
+
+    broadcastSSE('SUBSCRIPTION_UPDATED', { orgId, status });
+    broadcastSSE('ORGANIZATION_UPDATED', { orgId });
+    broadcastSSE('ORGANIZATIONS_UPDATED');
+    return res.json({ success: true, organization: updated });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Tenant / Salon Request Subscription Approval
+app.post('/api/admin/subscription/request-approval', async (req: Request, res: Response) => {
+  const { orgId, proofNote, paymentMethod = 'PIX' } = req.body;
+  if (!orgId) return res.status(400).json({ error: 'orgId é obrigatório.' });
+
+  try {
+    const updated = await SupabaseDBService.updateSubscriptionForOrg(orgId, {
+      status: 'AGUARDANDO_APROVACAO',
+      isPaid: false,
+      paymentMethod,
+      paymentProofSentAt: new Date().toISOString(),
+      paymentProofNote: proofNote || 'Comprovante PIX de R$ 79,90 enviado para análise do Dono da SaaS',
+    });
+
+    broadcastSSE('SUBSCRIPTION_UPDATED', { orgId, status: 'AGUARDANDO_APROVACAO' });
+    broadcastSSE('ORGANIZATION_UPDATED', { orgId });
+    broadcastSSE('ORGANIZATIONS_UPDATED');
+    return res.json({ success: true, organization: updated });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete Organization (Permanently remove establishment and all related data)
+app.delete(['/api/organizations/:id', '/api/admin/organizations/:id'], async (req: Request, res: Response) => {
   const { id } = req.params;
+  const token = extractToken(req);
+
+  if (token) {
+    try {
+      const session = await SupabaseDBService.getSession(token);
+      if (session && session.role !== 'SUPERADMIN' && session.role !== 'SUPER_ADMIN' && session.organizationId !== id) {
+        return res.status(403).json({ error: 'Acesso negado: permissão insuficiente para excluir este estabelecimento.' });
+      }
+    } catch {}
+  }
+
   try {
     await SupabaseDBService.deleteOrganization(id);
-    broadcastSSE('ORGANIZATIONS_UPDATED', { orgId: id });
+    broadcastSSE('ORGANIZATION_DELETED', { orgId: id });
+    broadcastSSE('ORGANIZATIONS_UPDATED');
     res.json({ success: true, message: 'Organização excluída com sucesso.' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

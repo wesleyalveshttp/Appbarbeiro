@@ -820,33 +820,50 @@ export class StorageService {
     return db.organizations[index];
   }
 
-  static toggleOrganizationStatus(id: string): Organization {
+  static async toggleOrganizationStatus(id: string): Promise<Organization> {
     const db = this.getDB();
     const org = db.organizations.find(o => o.id === id);
     if (!org) throw new Error('Organização não encontrada');
+    
+    // Toggle locally for instant UI feedback
     org.isActive = !org.isActive;
     this.saveDB(db);
-
-    const token = this.getAuthToken();
-    fetch(`/api/organizations/${id}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify({ isActive: org.isActive })
-    }).catch(err => console.warn('Server toggle organization failed:', err));
-
     broadcastEvent('ORGANIZATION_UPDATED', { orgId: id });
+
+    try {
+      const token = this.getAuthToken();
+      const res = await fetch('/api/admin/organization/toggle-status', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ orgId: id, isActive: org.isActive })
+      });
+      const data = await res.json();
+      if (res.ok && data.organization) {
+        const idx = db.organizations.findIndex(o => o.id === id);
+        if (idx >= 0) {
+          db.organizations[idx] = { ...db.organizations[idx], ...data.organization };
+          this.saveDB(db);
+        }
+        broadcastEvent('ORGANIZATION_UPDATED', { orgId: id });
+        broadcastEvent('ORGANIZATIONS_UPDATED');
+        return db.organizations[idx] || org;
+      }
+    } catch (err) {
+      console.warn('Server toggle organization failed, local change kept:', err);
+    }
+
     return org;
   }
 
-  static deleteOrganization(id: string): void {
+  static async deleteOrganization(id: string): Promise<boolean> {
     const db = this.getDB();
     const org = db.organizations.find(o => o.id === id);
-    if (!org) return;
+    const orgName = org?.name || id;
 
-    // Filter out the organization
+    // Filter out the organization locally immediately
     db.organizations = db.organizations.filter(o => o.id !== id);
 
     // Filter out all associated entities for clean deletion
@@ -867,18 +884,26 @@ export class StorageService {
 
     this.saveDB(db);
 
-    const token = this.getAuthToken();
-    fetch(`/api/organizations/${id}`, {
-      method: 'DELETE',
-      headers: {
-        Authorization: `Bearer ${token}`
+    try {
+      const token = this.getAuthToken();
+      const res = await fetch(`/api/organizations/${id}`, {
+        method: 'DELETE',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+      if (!res.ok) {
+        console.warn(`Server returned ${res.status} on delete organization`);
       }
-    }).catch(err => console.warn('Server delete organization failed:', err));
+    } catch (err) {
+      console.warn('Server delete organization failed:', err);
+    }
 
-    this.logAudit(id, 'Super Admin', `Estabelecimento "${org.name}" excluído permanentemente da plataforma`);
+    this.logAudit(id, 'Super Admin', `Estabelecimento "${orgName}" excluído permanentemente da plataforma`);
     broadcastEvent('ORGANIZATION_DELETED', { orgId: id });
     broadcastEvent('ORGANIZATIONS_UPDATED');
     broadcastEvent('ORG_CHANGED', { orgId: db.organizations[0]?.id });
+    return true;
   }
 
   static updateOwnerCredentials(orgId: string, email: string, password: string, name?: string): Organization {
@@ -2083,7 +2108,7 @@ export class StorageService {
     return org;
   }
 
-  static updateSubscriptionStatus(orgId: string, status: any): Organization {
+  static async updateSubscriptionStatus(orgId: string, status: any): Promise<Organization> {
     const db = this.getDB();
     const org = db.organizations.find(o => o.id === orgId);
     if (!org) throw new Error('Organização não encontrada');
@@ -2104,15 +2129,40 @@ export class StorageService {
     this.saveDB(db);
     this.logAudit(org.id, 'Sistema', `Status da assinatura alterado para ${status}`);
     broadcastEvent('SUBSCRIPTION_UPDATED', { orgId, status });
+
+    try {
+      const token = this.getAuthToken();
+      const res = await fetch('/api/admin/subscription/status', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ orgId, status })
+      });
+      const data = await res.json();
+      if (res.ok && data.organization) {
+        const idx = db.organizations.findIndex(o => o.id === orgId);
+        if (idx >= 0) {
+          db.organizations[idx] = { ...db.organizations[idx], ...data.organization };
+          this.saveDB(db);
+        }
+        broadcastEvent('SUBSCRIPTION_UPDATED', { orgId, status });
+        return db.organizations[idx] || org;
+      }
+    } catch (err) {
+      console.warn('Backend subscription status sync warning:', err);
+    }
+
     return org;
   }
 
   // --- SaaS Owner / Super Admin Payment Approval Workflow ---
-  static requestSubscriptionApproval(
+  static async requestSubscriptionApproval(
     orgId: string,
     proofNote?: string,
     paymentMethod: 'PIX' | 'CARTAO_CREDITO' = 'PIX'
-  ): Organization {
+  ): Promise<Organization> {
     const db = this.getDB();
     const org = db.organizations.find(o => o.id === orgId);
     if (!org) throw new Error('Organização não encontrada');
@@ -2143,10 +2193,35 @@ export class StorageService {
 
     this.logAudit(org.id, 'Proprietário', `Comprovante de pagamento de R$ 79,90 enviado para aprovação do Dono da SaaS`);
     broadcastEvent('SUBSCRIPTION_UPDATED', { orgId, status: 'AGUARDANDO_APROVACAO' });
+
+    try {
+      const token = this.getAuthToken();
+      const res = await fetch('/api/admin/subscription/request-approval', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ orgId, proofNote, paymentMethod })
+      });
+      const data = await res.json();
+      if (res.ok && data.organization) {
+        const idx = db.organizations.findIndex(o => o.id === orgId);
+        if (idx >= 0) {
+          db.organizations[idx] = { ...db.organizations[idx], ...data.organization };
+          this.saveDB(db);
+        }
+        broadcastEvent('SUBSCRIPTION_UPDATED', { orgId, status: 'AGUARDANDO_APROVACAO' });
+        return db.organizations[idx] || org;
+      }
+    } catch (err) {
+      console.warn('Backend request subscription approval sync warning:', err);
+    }
+
     return org;
   }
 
-  static approveSubscription(orgId: string, approvedBy: string = 'Dono da SaaS'): Organization {
+  static async approveSubscription(orgId: string, approvedBy: string = 'Dono da SaaS'): Promise<Organization> {
     const db = this.getDB();
     const org = db.organizations.find(o => o.id === orgId);
     if (!org) throw new Error('Organização não encontrada');
@@ -2182,6 +2257,9 @@ export class StorageService {
     org.subscription.nextBillingDate = nextBillingDate;
     org.subscription.invoices.unshift(invoice);
 
+    // Also activate organization
+    org.isActive = true;
+
     this.saveDB(db);
 
     this.createNotification({
@@ -2193,10 +2271,38 @@ export class StorageService {
 
     this.logAudit(org.id, approvedBy, `Acesso 100% liberado após confirmação do pagamento de R$ 79,90`);
     broadcastEvent('SUBSCRIPTION_UPDATED', { orgId, status: 'ATIVA' });
+    broadcastEvent('ORGANIZATION_UPDATED', { orgId });
+
+    try {
+      const token = this.getAuthToken();
+      const res = await fetch('/api/admin/subscription/approve', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ orgId, approvedBy })
+      });
+      const data = await res.json();
+      if (res.ok && data.organization) {
+        const idx = db.organizations.findIndex(o => o.id === orgId);
+        if (idx >= 0) {
+          db.organizations[idx] = { ...db.organizations[idx], ...data.organization };
+          this.saveDB(db);
+        }
+        broadcastEvent('SUBSCRIPTION_UPDATED', { orgId, status: 'ATIVA' });
+        broadcastEvent('ORGANIZATION_UPDATED', { orgId });
+        broadcastEvent('ORGANIZATIONS_UPDATED');
+        return db.organizations[idx] || org;
+      }
+    } catch (err) {
+      console.warn('Backend approve subscription sync warning:', err);
+    }
+
     return org;
   }
 
-  static rejectSubscription(orgId: string, reason?: string): Organization {
+  static async rejectSubscription(orgId: string, reason?: string): Promise<Organization> {
     const db = this.getDB();
     const org = db.organizations.find(o => o.id === orgId);
     if (!org) throw new Error('Organização não encontrada');
@@ -2217,6 +2323,32 @@ export class StorageService {
 
     this.logAudit(org.id, 'Dono da SaaS', `Pagamento não confirmado: ${reason || 'Comprovante inválido ou pendente'}`);
     broadcastEvent('SUBSCRIPTION_UPDATED', { orgId, status: 'PENDENTE' });
+
+    try {
+      const token = this.getAuthToken();
+      const res = await fetch('/api/admin/subscription/reject', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ orgId, reason })
+      });
+      const data = await res.json();
+      if (res.ok && data.organization) {
+        const idx = db.organizations.findIndex(o => o.id === orgId);
+        if (idx >= 0) {
+          db.organizations[idx] = { ...db.organizations[idx], ...data.organization };
+          this.saveDB(db);
+        }
+        broadcastEvent('SUBSCRIPTION_UPDATED', { orgId, status: 'PENDENTE' });
+        broadcastEvent('ORGANIZATION_UPDATED', { orgId });
+        return db.organizations[idx] || org;
+      }
+    } catch (err) {
+      console.warn('Backend reject subscription sync warning:', err);
+    }
+
     return org;
   }
 

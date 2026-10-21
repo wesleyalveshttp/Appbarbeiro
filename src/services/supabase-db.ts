@@ -336,6 +336,16 @@ export class SupabaseDBService {
     if (updates.planId !== undefined) dbUpdates.plan_id = updates.planId;
     if (updates.isActive !== undefined) dbUpdates.is_active = updates.isActive;
 
+    if (updates.subscription !== undefined) {
+      const currentOrg = await this.getOrganizationById(id).catch(() => null);
+      const existingSettings = updates.settings || currentOrg?.settings || {};
+      existingSettings.subscription = {
+        ...(existingSettings.subscription || {}),
+        ...updates.subscription,
+      };
+      dbUpdates.settings = existingSettings;
+    }
+
     if (updates.ownerPassword) {
       const h = hashPassword(updates.ownerPassword);
       dbUpdates.owner_password_hash = h.hash;
@@ -356,11 +366,114 @@ export class SupabaseDBService {
     return this.mapOrgFromDb(data);
   }
 
+  static async updateSubscriptionForOrg(
+    organizationId: string,
+    subscription: {
+      status: 'ATIVA' | 'PENDENTE' | 'AGUARDANDO_APROVACAO' | 'TESTE_GRATIS' | 'VENCIDA';
+      isPaid?: boolean;
+      planName?: string;
+      priceMonthly?: number;
+      paymentMethod?: string;
+      lastPaymentDate?: string;
+      nextBillingDate?: string;
+      paymentProofSentAt?: string;
+      paymentProofNote?: string;
+      invoices?: any[];
+    }
+  ): Promise<any> {
+    const ready = await this.checkTablesReady();
+    this.assertTablesReady(ready);
+
+    const client = getSupabaseAdminClient();
+    const org = await this.getOrganizationById(organizationId);
+    if (!org) throw new Error('Organização não encontrada');
+
+    const currentSettings = org.settings || {};
+    const existingSub = currentSettings.subscription || org.subscription || {};
+
+    const updatedSub = {
+      ...existingSub,
+      ...subscription,
+      status: subscription.status,
+      isPaid: subscription.isPaid !== undefined ? subscription.isPaid : (subscription.status === 'ATIVA'),
+      updatedAt: new Date().toISOString(),
+    };
+
+    currentSettings.subscription = updatedSub;
+
+    // Update organizations table settings JSONB and ensure organization is active when subscription is ATIVA
+    const { data: updatedOrg, error: orgErr } = await client
+      .from('organizations')
+      .update({
+        settings: currentSettings,
+        is_active: subscription.status === 'ATIVA' ? true : org.isActive,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', organizationId)
+      .select()
+      .single();
+
+    if (orgErr) {
+      throw new Error(`Erro ao atualizar assinatura no Supabase [${orgErr.code}]: ${orgErr.message}`);
+    }
+
+    // Also persist in subscriptions table if present
+    try {
+      await this.saveSubscription({
+        id: `sub_${organizationId}`,
+        organizationId,
+        planId: org.planId || 'pro_monthly',
+        status: subscription.status,
+        amount: subscription.priceMonthly || 79.9,
+        expiresAt: subscription.nextBillingDate ? new Date(subscription.nextBillingDate).toISOString() : undefined,
+        metadata: {
+          approvedAt: subscription.status === 'ATIVA' ? new Date().toISOString() : undefined,
+          invoices: updatedSub.invoices,
+          paymentProofNote: subscription.paymentProofNote,
+        },
+      });
+    } catch (subErr) {
+      console.warn('Subscriptions table sync warning:', subErr);
+    }
+
+    return this.mapOrgFromDb(updatedOrg);
+  }
+
   static async deleteOrganization(id: string): Promise<boolean> {
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
     const client = getSupabaseAdminClient();
+
+    // Cascading cleanup across all tables to avoid any foreign key constraint issues
+    try {
+      await client.from('sessions').delete().eq('organization_id', id);
+    } catch {}
+    try {
+      await client.from('push_subscriptions').delete().eq('organization_id', id);
+    } catch {}
+    try {
+      await client.from('subscriptions').delete().eq('organization_id', id);
+    } catch {}
+    try {
+      await client.from('transactions').delete().eq('organization_id', id);
+    } catch {}
+    try {
+      await client.from('appointments').delete().eq('organization_id', id);
+    } catch {}
+    try {
+      await client.from('customers').delete().eq('organization_id', id);
+    } catch {}
+    try {
+      await client.from('queue').delete().eq('organization_id', id);
+    } catch {}
+    try {
+      await client.from('services').delete().eq('organization_id', id);
+    } catch {}
+    try {
+      await client.from('professionals').delete().eq('organization_id', id);
+    } catch {}
+
     const { error } = await client.from('organizations').delete().eq('id', id);
     if (error) {
       throw new Error(`Falha ao excluir estabelecimento no Supabase [${error.code}]: ${error.message}`);
@@ -1355,6 +1468,19 @@ export class SupabaseDBService {
   // HELPERS & MAPPERS
   // ---------------------------------------------------------------------------
   private static mapOrgFromDb(row: any): any {
+    const settings = row.settings || {};
+    const defaultSubscription = {
+      status: row.is_active === false ? 'PENDENTE' : 'ATIVA',
+      planName: 'Plano Pro Barbearia (R$ 79,90/mês)',
+      priceMonthly: 79.9,
+      trialDaysRemaining: 0,
+      nextBillingDate: '',
+      isPaid: row.is_active !== false,
+      invoices: [],
+    };
+
+    const subscription = settings.subscription || defaultSubscription;
+
     return {
       id: row.id,
       name: row.name,
@@ -1370,8 +1496,9 @@ export class SupabaseDBService {
       ownerSalt: row.owner_salt,
       address: row.address || {},
       workingHours: row.working_hours || [],
-      settings: row.settings || {},
+      settings,
       planId: row.plan_id || 'premium',
+      subscription,
       isActive: row.is_active !== false,
       createdAt: row.created_at,
       updatedAt: row.updated_at,

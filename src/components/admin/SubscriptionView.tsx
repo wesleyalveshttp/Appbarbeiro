@@ -50,8 +50,8 @@ export const SubscriptionView: React.FC<SubscriptionViewProps> = ({ organization
     invoices: [],
   };
 
-  const handleSimulateStatus = (newStatus: SubscriptionStatus) => {
-    const updated = StorageService.updateSubscriptionStatus(org.id, newStatus);
+  const handleSimulateStatus = async (newStatus: SubscriptionStatus) => {
+    const updated = await StorageService.updateSubscriptionStatus(org.id, newStatus);
     setOrg(updated);
   };
 

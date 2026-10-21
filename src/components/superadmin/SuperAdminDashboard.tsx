@@ -59,6 +59,14 @@ export const SuperAdminDashboard: React.FC = () => {
   const [showPasswordsMap, setShowPasswordsMap] = useState<{ [id: string]: boolean }>({});
   const [cloudSyncing, setCloudSyncing] = useState(false);
   const [cloudSyncSuccess, setCloudSyncSuccess] = useState<string | null>(null);
+  const [processingOrgId, setProcessingOrgId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [actionNotice, setActionNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const showNotice = (text: string, type: 'success' | 'error' = 'success') => {
+    setActionNotice({ text, type });
+    setTimeout(() => setActionNotice(null), 4500);
+  };
 
   const handleManualCloudSync = async () => {
     setCloudSyncing(true);
@@ -78,7 +86,10 @@ export const SuperAdminDashboard: React.FC = () => {
     }
   };
 
-  const loadData = () => {
+  const loadData = async () => {
+    try {
+      await StorageService.syncWithServer();
+    } catch {}
     setOrganizations(StorageService.getAllOrganizations());
     setPlans(StorageService.getPlans());
     setAuditLogs(StorageService.getAuditLogs());
@@ -92,19 +103,40 @@ export const SuperAdminDashboard: React.FC = () => {
     return unsub;
   }, []);
 
-  const handleToggleOrg = (orgId: string) => {
-    StorageService.toggleOrganizationStatus(orgId);
-    loadData();
+  const handleToggleOrg = async (orgId: string) => {
+    setProcessingOrgId(orgId);
+    try {
+      const updated = await StorageService.toggleOrganizationStatus(orgId);
+      showNotice(
+        updated.isActive
+          ? `Estabelecimento "${updated.name}" foi DESBLOQUEADO com sucesso!`
+          : `Estabelecimento "${updated.name}" foi BLOQUEADO com sucesso!`
+      );
+      await loadData();
+    } catch (err: any) {
+      showNotice(err?.message || 'Erro ao alterar status do estabelecimento', 'error');
+    } finally {
+      setProcessingOrgId(null);
+    }
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (!orgToDelete) return;
     const name = orgToDelete.name;
-    StorageService.deleteOrganization(orgToDelete.id);
-    setOrgToDelete(null);
-    setDeletedSuccessName(name);
-    setTimeout(() => setDeletedSuccessName(null), 4000);
-    loadData();
+    const id = orgToDelete.id;
+    setIsDeleting(true);
+    try {
+      await StorageService.deleteOrganization(id);
+      setOrgToDelete(null);
+      setDeletedSuccessName(name);
+      showNotice(`Estabelecimento "${name}" foi excluído definitivamente da plataforma.`);
+      setTimeout(() => setDeletedSuccessName(null), 4000);
+      await loadData();
+    } catch (err: any) {
+      showNotice(err?.message || 'Erro ao excluir estabelecimento', 'error');
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const handleSaveSuperAdminPassword = (e: React.FormEvent) => {
@@ -142,15 +174,31 @@ export const SuperAdminDashboard: React.FC = () => {
     loadData();
   };
 
-  const handleApprovePayment = (orgId: string) => {
-    StorageService.approveSubscription(orgId, 'Dono da SaaS');
-    loadData();
+  const handleApprovePayment = async (orgId: string) => {
+    setProcessingOrgId(orgId);
+    try {
+      const updated = await StorageService.approveSubscription(orgId, 'Dono da SaaS');
+      showNotice(`🎉 Pagamento de R$ 79,90 da "${updated.name}" foi APROVADO! Acesso 100% liberado.`);
+      await loadData();
+    } catch (err: any) {
+      showNotice(err?.message || 'Erro ao aprovar pagamento', 'error');
+    } finally {
+      setProcessingOrgId(null);
+    }
   };
 
-  const handleRejectPayment = (orgId: string) => {
+  const handleRejectPayment = async (orgId: string) => {
     if (confirm('Deseja recusar a confirmação de pagamento deste estabelecimento?')) {
-      StorageService.rejectSubscription(orgId, 'Comprovante não identificado ou pendente');
-      loadData();
+      setProcessingOrgId(orgId);
+      try {
+        const updated = await StorageService.rejectSubscription(orgId, 'Comprovante não identificado ou pendente');
+        showNotice(`Pagamento da "${updated.name}" marcado como pendente.`, 'error');
+        await loadData();
+      } catch (err: any) {
+        showNotice(err?.message || 'Erro ao recusar pagamento', 'error');
+      } finally {
+        setProcessingOrgId(null);
+      }
     }
   };
 
@@ -195,6 +243,32 @@ export const SuperAdminDashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Realtime Action Toast Notice */}
+      {actionNotice && (
+        <div
+          className={`p-4 rounded-2xl border text-xs font-semibold flex items-center justify-between gap-3 shadow-lg transition-all animate-fadeIn ${
+            actionNotice.type === 'success'
+              ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+              : 'bg-rose-500/20 border-rose-500/40 text-rose-300'
+          }`}
+        >
+          <div className="flex items-center gap-2.5">
+            {actionNotice.type === 'success' ? (
+              <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
+            ) : (
+              <AlertCircle className="h-5 w-5 shrink-0 text-rose-400" />
+            )}
+            <span>{actionNotice.text}</span>
+          </div>
+          <button
+            onClick={() => setActionNotice(null)}
+            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-850 cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* Super Admin Security & Password Card */}
       <div className="rounded-2xl bg-gradient-to-r from-purple-950/60 via-slate-900 to-slate-900 border border-purple-500/40 p-5 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -300,17 +374,30 @@ export const SuperAdminDashboard: React.FC = () => {
             </p>
             {organizations.length > 0 && (
               <button
-                onClick={() => {
-                  StorageService.requestSubscriptionApproval(
-                    organizations[0].id,
-                    'Comprovante de pagamento PIX R$ 79,90 enviado para análise do Dono da SaaS (Simulação de Teste)'
-                  );
-                  loadData();
+                disabled={processingOrgId === organizations[0].id}
+                onClick={async () => {
+                  setProcessingOrgId(organizations[0].id);
+                  try {
+                    await StorageService.requestSubscriptionApproval(
+                      organizations[0].id,
+                      'Comprovante de pagamento PIX R$ 79,90 enviado para análise do Dono da SaaS (Simulação de Teste)'
+                    );
+                    showNotice(`Comprovante de teste de "${organizations[0].name}" enviado para análise!`);
+                    await loadData();
+                  } catch (err: any) {
+                    showNotice(err?.message || 'Erro ao simular comprovante', 'error');
+                  } finally {
+                    setProcessingOrgId(null);
+                  }
                 }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold transition cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold transition cursor-pointer disabled:opacity-50"
               >
                 <Sparkles className="h-3.5 w-3.5" />
-                <span>Simular Envio de Comprovante PIX de {organizations[0].name} (Para Testar Aprovação)</span>
+                <span>
+                  {processingOrgId === organizations[0].id
+                    ? 'Enviando...'
+                    : `Simular Envio de Comprovante PIX de ${organizations[0].name} (Para Testar Aprovação)`}
+                </span>
               </button>
             )}
           </div>
@@ -358,18 +445,20 @@ export const SuperAdminDashboard: React.FC = () => {
                   </a>
 
                   <button
+                    disabled={processingOrgId === org.id}
                     onClick={() => handleRejectPayment(org.id)}
-                    className="px-3 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition cursor-pointer"
+                    className="px-3 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-semibold transition cursor-pointer disabled:opacity-50"
                   >
-                    Recusar
+                    {processingOrgId === org.id ? 'Aguarde...' : 'Recusar'}
                   </button>
 
                   <button
+                    disabled={processingOrgId === org.id}
                     onClick={() => handleApprovePayment(org.id)}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold shadow-md shadow-emerald-500/20 transition cursor-pointer"
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold shadow-md shadow-emerald-500/20 transition cursor-pointer disabled:opacity-50"
                   >
                     <CheckCircle2 className="h-4 w-4" />
-                    <span>Aprovar & Liberar 100%</span>
+                    <span>{processingOrgId === org.id ? 'Aprovando...' : 'Aprovar & Liberar 100%'}</span>
                   </button>
                 </div>
               </div>
@@ -492,27 +581,43 @@ export const SuperAdminDashboard: React.FC = () => {
                   <td className="py-3 px-4 text-right">
                     <div className="flex items-center justify-end gap-1.5">
                       <button
-                        onClick={() => {
+                        disabled={processingOrgId === org.id}
+                        onClick={async () => {
                           const newSubStatus = org.subscription?.status === 'ATIVA' ? 'PENDENTE' : 'ATIVA';
-                          StorageService.updateSubscriptionStatus(org.id, newSubStatus);
-                          loadData();
+                          setProcessingOrgId(org.id);
+                          try {
+                            const updated = await StorageService.updateSubscriptionStatus(org.id, newSubStatus);
+                            showNotice(`Assinatura de "${updated.name}" alterada para ${newSubStatus}!`);
+                            await loadData();
+                          } catch (err: any) {
+                            showNotice(err?.message || 'Erro ao alterar assinatura', 'error');
+                          } finally {
+                            setProcessingOrgId(null);
+                          }
                         }}
-                        className="rounded-lg px-2 py-1 text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-medium transition cursor-pointer"
+                        className="rounded-lg px-2 py-1 text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-medium transition cursor-pointer disabled:opacity-50"
                         title="Alternar Assinatura"
                       >
-                        {org.subscription?.status === 'ATIVA' ? 'Suspender Pagto' : 'Aprovar R$ 79,90'}
+                        {processingOrgId === org.id
+                          ? 'Aguarde...'
+                          : org.subscription?.status === 'ATIVA'
+                          ? 'Suspender Pagto'
+                          : 'Aprovar R$ 79,90'}
                       </button>
 
                       {/* Bloquear / Desbloquear */}
                       <button
+                        disabled={processingOrgId === org.id}
                         onClick={() => handleToggleOrg(org.id)}
-                        className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold transition cursor-pointer ${
+                        className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold transition cursor-pointer disabled:opacity-50 ${
                           org.isActive
                             ? 'bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 border border-rose-500/30'
                             : 'bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 border border-emerald-500/30'
                         }`}
                       >
-                        {org.isActive ? (
+                        {processingOrgId === org.id ? (
+                          <span>Atualizando...</span>
+                        ) : org.isActive ? (
                           <>
                             <Lock className="h-3 w-3" />
                             Bloquear
@@ -527,8 +632,9 @@ export const SuperAdminDashboard: React.FC = () => {
 
                       {/* Botão Lixeira ao lado do botão Bloquear para Excluir Estabelecimento */}
                       <button
+                        disabled={processingOrgId === org.id}
                         onClick={() => setOrgToDelete({ id: org.id, name: org.name })}
-                        className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/30 transition cursor-pointer"
+                        className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/30 transition cursor-pointer disabled:opacity-50"
                         title="Excluir estabelecimento permanentemente"
                       >
                         <Trash2 className="h-3 w-3" />
@@ -716,11 +822,12 @@ export const SuperAdminDashboard: React.FC = () => {
               </button>
               <button
                 type="button"
+                disabled={isDeleting}
                 onClick={handleDeleteConfirm}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/30 transition cursor-pointer"
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/30 transition cursor-pointer disabled:opacity-50"
               >
                 <Trash2 className="h-4 w-4" />
-                <span>Sim, Excluir Definitivamente</span>
+                <span>{isDeleting ? 'Excluindo definitivamente...' : 'Sim, Excluir Definitivamente'}</span>
               </button>
             </div>
           </div>
