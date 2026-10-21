@@ -55,6 +55,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
   const [qrType, setQrType] = useState<'booking' | 'queue'>('booking');
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [copiedLinkType, setCopiedLinkType] = useState<string | null>(null);
+  const [callFeedback, setCallFeedback] = useState<{ type: 'success' | 'warning' | 'error'; message: string } | null>(null);
 
   const sub = organization.subscription || {
     status: 'TESTE_GRATIS',
@@ -136,16 +137,9 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
 
   const handleCallCustomer = async (queueItem: WaitingQueueItem) => {
     const availableProf = professionals.find(p => p.isActive) || professionals[0];
-    if (!availableProf) return;
-    await StorageService.callQueueCustomer(queueItem.id, availableProf.id);
-
-    // Automatically trigger WhatsApp direct message link
-    const link = StorageService.getWhatsAppCallLink(queueItem.id);
-    if (link) {
-      window.open(link, '_blank');
-    }
-
-    loadData();
+    const profId = availableProf?.id || 'prof-1';
+    await StorageService.callQueueCustomer(queueItem.id, profId, organization.id);
+    await loadData();
   };
 
   return (
@@ -361,12 +355,21 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   onClick={async () => {
-                    const res = await StorageService.callNextCustomer(organization.id);
+                    const availableProf = professionals.find(p => p.isActive) || professionals[0];
+                    const res = await StorageService.callNextCustomer(organization.id, availableProf?.id);
                     if (res.success && res.item) {
-                      loadData();
+                      setCallFeedback({
+                        type: 'success',
+                        message: `✂️ Cliente ${res.item.customerName} (Senha #${res.item.ticketNumber}) chamado para a cadeira! Alerta com som e vibração disparado no celular.`
+                      });
+                      await loadData();
                     } else {
-                      alert(res.error || 'Nenhum cliente aguardando na fila.');
+                      setCallFeedback({
+                        type: 'warning',
+                        message: res.error || 'Nenhum cliente aguardando na fila.'
+                      });
                     }
+                    setTimeout(() => setCallFeedback(null), 6000);
                   }}
                   disabled={waitingInQueueCount === 0}
                   className="flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 px-3.5 py-1.5 text-xs font-black text-slate-950 shadow-md shadow-amber-500/20 transition disabled:opacity-40 cursor-pointer"
@@ -459,31 +462,61 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
                       {/* Action */}
                       <div className="flex items-center gap-2 shrink-0">
                         {item.status === 'AGUARDANDO' || item.status === 'PROXIMO' ? (
-                          <button
-                            onClick={() => handleCallCustomer(item)}
-                            className="flex items-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-amber-400 shadow-md shadow-amber-500/20 transition cursor-pointer"
-                            title="Chamar cliente e disparar mensagem WhatsApp"
-                          >
-                            <Play className="h-3 w-3 fill-current" />
-                            <MessageCircle className="h-3 w-3 text-slate-950" />
-                            <span>Chamar & WhatsApp</span>
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={async () => {
+                                await handleCallCustomer(item);
+                                setCallFeedback({
+                                  type: 'success',
+                                  message: `✂️ ${item.customerName} (Senha #${item.ticketNumber}) chamado! Alerta sonoro e push enviado.`
+                                });
+                                setTimeout(() => setCallFeedback(null), 5000);
+                              }}
+                              className="flex items-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-amber-400 shadow-md shadow-amber-500/20 transition cursor-pointer"
+                              title="Chamar cliente para a cadeira"
+                            >
+                              <Play className="h-3 w-3 fill-current" />
+                              <span>Chamar</span>
+                            </button>
+                            {item.customerPhone && (
+                              <a
+                                href={StorageService.getWhatsAppCallLink(item.id) || '#'}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-2 py-1.5 text-xs font-semibold text-emerald-400 transition"
+                                title="Enviar mensagem no WhatsApp"
+                              >
+                                <MessageCircle className="h-3.5 w-3.5 text-emerald-400" />
+                              </a>
+                            )}
+                          </div>
                         ) : item.status === 'CHAMADO' || item.status === 'A_CAMINHO' || item.status === 'PEDIU_TOLERANCIA' ? (
                           <button
-                            onClick={() => {
-                              StorageService.moveQueueToChair(item.id);
-                              loadData();
+                            onClick={async () => {
+                              const prof = professionals[0] || StorageService.getProfessionals(organization.id)[0];
+                              await StorageService.moveQueueToChair(item.id, prof?.id, organization.id);
+                              setCallFeedback({
+                                type: 'success',
+                                message: `💈 ${item.customerName} sentou na cadeira!`
+                              });
+                              await loadData();
+                              setTimeout(() => setCallFeedback(null), 5000);
                             }}
-                            className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition cursor-pointer"
+                            className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition cursor-pointer shadow-md shadow-emerald-500/20"
                           >
                             <Armchair className="h-3.5 w-3.5" />
                             <span>Sentar na Cadeira</span>
                           </button>
                         ) : (
                           <button
-                            onClick={() => {
+                            onClick={async () => {
                               StorageService.finishQueueItem(item.id);
-                              loadData();
+                              setCallFeedback({
+                                type: 'success',
+                                message: `✂️ Atendimento de ${item.customerName} concluído!`
+                              });
+                              await loadData();
+                              setTimeout(() => setCallFeedback(null), 5000);
                             }}
                             className="flex items-center gap-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition"
                           >

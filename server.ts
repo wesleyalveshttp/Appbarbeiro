@@ -809,7 +809,7 @@ app.delete('/api/organizations/:id', requireSuperAdminAuth, async (req: Request,
 // ---------------------------------------------------------------------------
 // 10. QUEUE OPERATIONS (TENANT ISOLATED & PROTECTED)
 // ---------------------------------------------------------------------------
-app.get('/api/queue/:orgId', requireTenantAuth, async (req: Request, res: Response) => {
+app.get('/api/queue/:orgId', async (req: Request, res: Response) => {
   const { orgId } = req.params;
   try {
     const queue = await SupabaseDBService.getQueueForOrganization(orgId);

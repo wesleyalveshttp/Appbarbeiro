@@ -13,7 +13,8 @@ import {
   ArrowRight,
   Maximize2,
   RefreshCw,
-  Plus
+  Plus,
+  Sparkles
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization, Appointment, WaitingQueueItem, Professional, PaymentMethod } from '../../types';
@@ -47,6 +48,7 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
     professionalId: string;
   } | null>(null);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod>('PIX');
+  const [boardFeedback, setBoardFeedback] = useState<string | null>(null);
 
   const todayStr = new Date().toISOString().split('T')[0];
 
@@ -86,6 +88,7 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
   // AGUARDANDO
   const waitingAppointments = appointments.filter(a => a.status === 'CHEGOU' || a.status === 'AGUARDANDO');
   const waitingQueue = queue.filter(q => q.status === 'AGUARDANDO');
+  const eligibleToCall = queue.filter(q => q.status === 'PROXIMO' || q.status === 'AGUARDANDO');
 
   // PRÓXIMO
   const nextAppointments = appointments.filter(a => a.status === 'CONFIRMADO' || a.status === 'A CAMINHO');
@@ -104,20 +107,25 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
   // Actions
   const handleCallQueueItem = async (item: WaitingQueueItem) => {
     const prof = professionals[0] || StorageService.getProfessionals(organization.id)[0];
-    if (!prof) return;
-    await StorageService.callQueueCustomer(item.id, prof.id);
-    loadData();
+    await StorageService.callQueueCustomer(item.id, prof?.id, organization.id);
+    setBoardFeedback(`✂️ ${item.customerName} (Senha #${item.ticketNumber}) chamado! Alerta sonoro e push disparado.`);
+    await loadData();
+    setTimeout(() => setBoardFeedback(null), 5000);
   };
 
-  const handleStartAppointment = (aptId: string) => {
+  const handleStartAppointment = async (aptId: string) => {
     StorageService.updateAppointmentStatus(aptId, 'NA CADEIRA');
-    loadData();
+    setBoardFeedback('💈 Cliente acomodado na cadeira!');
+    await loadData();
+    setTimeout(() => setBoardFeedback(null), 5000);
   };
 
-  const handleQueueSitOnChair = (qId: string) => {
+  const handleQueueSitOnChair = async (qId: string) => {
     const prof = professionals[0] || StorageService.getProfessionals(organization.id)[0];
-    StorageService.moveQueueToChair(qId, prof?.id);
-    loadData();
+    await StorageService.moveQueueToChair(qId, prof?.id, organization.id);
+    setBoardFeedback('💈 Cliente acomodado na cadeira com sucesso! Próximo promovido.');
+    await loadData();
+    setTimeout(() => setBoardFeedback(null), 5000);
   };
 
   const handleOpenFinishModal = (item: {
@@ -180,12 +188,14 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
             onClick={async () => {
               const res = await StorageService.callNextCustomer(organization.id, selectedProfessionalId);
               if (res.success && res.item) {
-                loadData();
+                setBoardFeedback(`✂️ Cliente ${res.item.customerName} (Senha #${res.item.ticketNumber}) chamado! Alerta sonoro e push enviado.`);
+                await loadData();
               } else {
-                alert(res.error || 'Nenhum cliente aguardando na fila.');
+                setBoardFeedback(res.error || 'Nenhum cliente aguardando na fila.');
               }
+              setTimeout(() => setBoardFeedback(null), 5000);
             }}
-            disabled={waitingQueue.length === 0}
+            disabled={eligibleToCall.length === 0}
             className="flex items-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 px-4 py-2 text-xs font-black text-slate-950 shadow-md shadow-amber-500/20 transition disabled:opacity-40 cursor-pointer"
           >
             <Scissors className="h-4 w-4" />
@@ -209,6 +219,14 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Real-time Feedback Toast */}
+      {boardFeedback && (
+        <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 px-4 py-3 text-xs font-semibold text-amber-300 flex items-center gap-2 shadow-lg animate-fadeIn">
+          <Sparkles className="h-4 w-4 text-amber-400 shrink-0" />
+          <span>{boardFeedback}</span>
+        </div>
+      )}
 
       {/* 4 COLUMNS KANBAN (#10) */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">

@@ -75,9 +75,8 @@ if (typeof window !== 'undefined') {
         try {
           const data = JSON.parse(e.data);
           if (data.type === 'QUEUE_UPDATED' || data.type === 'DB_SYNCED') {
-            StorageService.syncWithServer().then(() => {
-              broadcastEvent('QUEUE_UPDATED', data.payload);
-            });
+            broadcastEvent('QUEUE_UPDATED', data.payload);
+            StorageService.syncWithServer();
           }
         } catch {}
       };
@@ -1595,9 +1594,14 @@ export class StorageService {
 
   static async callQueueCustomer(
     queueId: string,
-    assignedProfessionalId: string
-  ): Promise<{ success: boolean; item: WaitingQueueItem; pushResult?: any }> {
-    const local = this.callQueueCustomerLocal(queueId, assignedProfessionalId);
+    assignedProfessionalId?: string,
+    orgId?: string
+  ): Promise<{ success: boolean; item?: WaitingQueueItem; pushResult?: any; error?: string }> {
+    const db = this.getDB();
+    const localItem = db.queue.find(q => q.id === queueId);
+    const targetOrgId = orgId || localItem?.organizationId || this.getCurrentOrgId();
+    const profId = assignedProfessionalId || localItem?.preferredProfessionalId || 'prof-1';
+
     try {
       const token = this.getAuthToken();
       const res = await fetch('/api/queue/call-specific', {
@@ -1608,19 +1612,32 @@ export class StorageService {
         },
         body: JSON.stringify({
           queueId,
-          assignedProfessionalId,
-          organizationId: local.organizationId,
+          assignedProfessionalId: profId,
+          organizationId: targetOrgId,
         }),
       });
       const data = await res.json();
       if (data.success && data.item) {
-        broadcastEvent('QUEUE_UPDATED', { queueItemId: data.item.id, pushResult: data.pushResult });
+        const itemIdx = db.queue.findIndex(q => q.id === queueId);
+        if (itemIdx >= 0) {
+          db.queue[itemIdx] = { ...db.queue[itemIdx], ...data.item };
+        } else {
+          db.queue.push(data.item);
+        }
+        this.recalculateQueueAlerts(db, targetOrgId, queueId);
+        this.saveDB(db);
+        broadcastEvent('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: data.item.id, pushResult: data.pushResult });
         return data;
       }
     } catch (e: any) {
       console.warn('callQueueCustomer API sync warning:', e);
     }
-    return { success: true, item: local };
+
+    if (localItem) {
+      const called = this.callQueueCustomerLocal(queueId, profId);
+      return { success: true, item: called };
+    }
+    return { success: false, error: 'Item não encontrado na fila' };
   }
 
   static callQueueCustomerLocal(queueId: string, assignedProfessionalId: string): WaitingQueueItem {
@@ -1745,36 +1762,56 @@ export class StorageService {
     return `https://wa.me/${phoneWithCountry}?text=${encodeURIComponent(text)}`;
   }
 
-  static moveQueueToChair(queueId: string, professionalId?: string): WaitingQueueItem {
+  static async moveQueueToChair(
+    queueId: string,
+    professionalId?: string,
+    orgId?: string
+  ): Promise<{ success: boolean; item?: WaitingQueueItem; error?: string }> {
     const db = this.getDB();
-    const item = db.queue.find(q => q.id === queueId);
-    if (!item) throw new Error('Item da fila não encontrado');
+    const localItem = db.queue.find(q => q.id === queueId);
+    const targetOrgId = orgId || localItem?.organizationId || this.getCurrentOrgId();
 
-    item.status = 'NA CADEIRA';
-    item.onChairAt = new Date().toISOString();
-    if (professionalId) item.assignedProfessionalId = professionalId;
+    try {
+      const token = this.getAuthToken();
+      const res = await fetch('/api/queue/to-chair', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          queueId,
+          organizationId: targetOrgId,
+          assignedProfessionalId: professionalId || localItem?.assignedProfessionalId || 'prof-1'
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.item) {
+        const itemIdx = db.queue.findIndex(q => q.id === queueId);
+        if (itemIdx >= 0) {
+          db.queue[itemIdx] = { ...db.queue[itemIdx], ...data.item };
+        } else {
+          db.queue.push(data.item);
+        }
+        this.recalculateQueueAlerts(db, targetOrgId, queueId);
+        this.saveDB(db);
+        broadcastEvent('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId });
+        return { success: true, item: data.item };
+      }
+    } catch (err: any) {
+      console.warn('moveQueueToChair API warning, trying local:', err);
+    }
 
-    // Recalculate remaining waiting positions: promote next to PROXIMO
-    this.recalculateQueueAlerts(db, item.organizationId, item.id);
-    this.saveDB(db);
-    broadcastEvent('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id });
-
-    // Sync authoritative status to backend server & Supabase
-    const token = this.getAuthToken();
-    fetch('/api/queue/to-chair', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
-      },
-      body: JSON.stringify({
-        queueId,
-        organizationId: item.organizationId,
-        assignedProfessionalId: professionalId
-      })
-    }).catch(err => console.warn('Sync /api/queue/to-chair error:', err));
-
-    return item;
+    if (localItem) {
+      localItem.status = 'NA CADEIRA';
+      localItem.onChairAt = new Date().toISOString();
+      if (professionalId) localItem.assignedProfessionalId = professionalId;
+      this.recalculateQueueAlerts(db, targetOrgId, queueId);
+      this.saveDB(db);
+      broadcastEvent('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId });
+      return { success: true, item: localItem };
+    }
+    return { success: false, error: 'Item não encontrado na fila' };
   }
 
   static finishQueueItem(queueId: string, paymentMethod: PaymentMethod = 'PIX'): WaitingQueueItem {

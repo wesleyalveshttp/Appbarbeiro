@@ -60,9 +60,18 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
   const [testNotificationFeedback, setTestNotificationFeedback] = useState<string | null>(null);
   const lastAlertedStatusRef = useRef<string | null>(null);
 
-  // Tolerance countdown for called client
   const [secondsRemaining, setSecondsRemaining] = useState<number | null>(null);
   const [showQR, setShowQR] = useState(false);
+  const [isVisualVibrating, setIsVisualVibrating] = useState(false);
+
+  useEffect(() => {
+    const handleVibrateEvent = () => {
+      setIsVisualVibrating(true);
+      setTimeout(() => setIsVisualVibrating(false), 2000);
+    };
+    window.addEventListener('barberos_vibrate', handleVibrateEvent);
+    return () => window.removeEventListener('barberos_vibrate', handleVibrateEvent);
+  }, []);
 
   const [isLoading, setIsLoading] = useState(true);
   const [orgNotFound, setOrgNotFound] = useState(false);
@@ -164,8 +173,11 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
     };
   }, [slug]);
 
-  // Find My Item (prefer direct authoritative record from DB if available)
-  const myQueueItem = myDirectTicketItem || queue.find(q => q.id === myTicketId);
+  // Find My Item (authoritative resolution from active queue or direct server record)
+  const effectiveTicketId = myTicketId || (typeof window !== 'undefined' ? localStorage.getItem(`barberos_queue_ticket_${slug}`) : null);
+  const queueItemFromList = queue.find(q => q.id === effectiveTicketId);
+  const myQueueItem = queueItemFromList || myDirectTicketItem;
+
   const isCurrentlyInQueue =
     !!myQueueItem &&
     myQueueItem.status !== 'FINALIZADO' &&
@@ -200,8 +212,7 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
 
     if (currentStatus !== lastAlertedStatusRef.current) {
       if (currentStatus === 'CHAMADO') {
-        NotificationService.playSound('CALLED');
-        NotificationService.vibrate([500, 150, 500, 150, 1000, 200, 1000]);
+        NotificationService.startRepeatingAlarm('CALLED', 3500);
         NotificationService.dispatchNotification({
           title: '✂️ O BARBEIRO ESTÁ TE CHAMANDO!',
           body: `Chegou a sua vez (${myQueueItem.serviceName})! Dirija-se à cadeira agora!`,
@@ -210,12 +221,20 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
         });
         lastAlertedStatusRef.current = 'CHAMADO';
       } else if (currentStatus === 'NA CADEIRA') {
-        NotificationService.playSound('NEXT');
+        NotificationService.stopRepeatingAlarm();
+        NotificationService.playSound('CALLED');
         NotificationService.vibrate([400, 150, 400]);
+        NotificationService.dispatchNotification({
+          title: '💈 Você está na cadeira!',
+          body: `Seu atendimento de ${myQueueItem.serviceName} começou!`,
+          type: 'NEXT',
+          ticketNumber: myQueueItem.ticketNumber,
+        });
         lastAlertedStatusRef.current = 'NA CADEIRA';
       } else if (currentStatus === 'PROXIMO') {
+        NotificationService.stopRepeatingAlarm();
         NotificationService.playSound('NEXT');
-        NotificationService.vibrate([300, 150, 300, 150, 300]);
+        NotificationService.vibrate([350, 150, 350, 150, 350]);
         NotificationService.dispatchNotification({
           title: '💈 Você é o próximo da fila!',
           body: `Prepare-se! Sua senha é #${myQueueItem.ticketNumber}. Faltam poucos minutos.`,
@@ -224,9 +243,16 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
         });
         lastAlertedStatusRef.current = 'PROXIMO';
       } else {
+        NotificationService.stopRepeatingAlarm();
         lastAlertedStatusRef.current = currentStatus;
       }
     }
+
+    return () => {
+      if (currentStatus !== 'CHAMADO') {
+        NotificationService.stopRepeatingAlarm();
+      }
+    };
   }, [myQueueItem?.status]);
 
   // Tolerance countdown timer when called
@@ -337,6 +363,7 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
   const handleLeaveQueue = async () => {
     if (!myQueueItem) return;
     if (confirm('Tem certeza que deseja sair da fila virtual de espera?')) {
+      NotificationService.stopRepeatingAlarm();
       await StorageService.cancelQueueItem(myQueueItem.id, 'Cliente desistiu pelo celular');
       localStorage.removeItem(`barberos_queue_ticket_${slug}`);
       setMyTicketId(null);
@@ -347,6 +374,7 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
 
   const handleRespondCalled = async (response: 'A_CAMINHO' | 'PEDIU_TOLERANCIA' | 'NAO_PODE') => {
     if (!myQueueItem) return;
+    NotificationService.stopRepeatingAlarm();
     await StorageService.respondCalledQueueItem(myQueueItem.id, response);
     loadData();
   };
@@ -572,7 +600,9 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
             {(myQueueItem.status === 'CHAMADO' ||
               myQueueItem.status === 'A_CAMINHO' ||
               myQueueItem.status === 'PEDIU_TOLERANCIA') && (
-              <div className="rounded-3xl bg-gradient-to-b from-emerald-500 to-emerald-600 text-slate-950 p-6 text-center shadow-2xl space-y-4 border-2 border-emerald-300 animate-pulse">
+              <div className={`rounded-3xl bg-gradient-to-b from-emerald-500 to-emerald-600 text-slate-950 p-6 text-center shadow-2xl space-y-4 border-2 border-emerald-300 transition-all ${
+                isVisualVibrating ? 'ring-8 ring-amber-300 scale-[1.02] animate-bounce' : 'animate-pulse'
+              }`}>
                 <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-emerald-400 font-bold shadow-lg">
                   <Scissors className="h-7 w-7 animate-bounce" />
                 </div>
@@ -587,6 +617,20 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
                   <p className="mt-1 text-xs font-bold text-slate-900 leading-relaxed">
                     Seu barbeiro está pronto para atender você ({myQueueItem.serviceName}). Dirija-se à cadeira agora!
                   </p>
+
+                  <div className="mt-2 flex items-center justify-center gap-2">
+                    <button
+                      onClick={() => {
+                        NotificationService.unlockAudio();
+                        NotificationService.playSound('CALLED');
+                        NotificationService.vibrate([600, 200, 600, 200, 1000]);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/90 text-amber-300 text-xs font-bold hover:bg-slate-950 transition cursor-pointer shadow-md"
+                    >
+                      <Volume2 className="h-3.5 w-3.5 text-amber-400 animate-pulse" />
+                      <span>Tocar Som da Chamada 🔊</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Tolerance Countdown Timer (#Requirement 7) */}

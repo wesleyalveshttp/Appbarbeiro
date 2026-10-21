@@ -42,6 +42,15 @@ class NotificationServiceClass {
     if (typeof window !== 'undefined') {
       this.initDeviceToken();
       this.initServiceWorkerAndListeners();
+
+      // Automatically unlock and resume audio on the very first user interaction anywhere on page
+      const unlockEvents = ['click', 'touchstart', 'touchend', 'pointerdown', 'keydown'];
+      const autoUnlock = () => {
+        this.unlockAudio();
+      };
+      unlockEvents.forEach((evt) => {
+        window.addEventListener(evt, autoUnlock, { passive: true });
+      });
     }
   }
 
@@ -251,6 +260,10 @@ class NotificationServiceClass {
     }
   }
 
+  private persistentAudio: HTMLAudioElement | null = null;
+  private repeatingAlarmTimer: any = null;
+  private cachedAudioUrls: Record<string, string> = {};
+
   private getAudioContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
     try {
@@ -259,9 +272,6 @@ class NotificationServiceClass {
         if (AudioCtxClass) {
           this.audioCtx = new AudioCtxClass();
         }
-      }
-      if (this.audioCtx && this.audioCtx.state === 'suspended') {
-        this.audioCtx.resume().catch(() => {});
       }
       return this.audioCtx;
     } catch {
@@ -275,46 +285,158 @@ class NotificationServiceClass {
       if (ctx && ctx.state === 'suspended') {
         ctx.resume().catch(() => {});
       }
+      // Initialize and prime persistent HTML5 audio element
+      if (typeof window !== 'undefined' && !this.persistentAudio) {
+        this.persistentAudio = new Audio();
+        this.persistentAudio.volume = 1.0;
+      }
+      // Pre-warm with a micro silent burst
+      this.playHtmlAudioFallback('STEP_3', 0.001);
     } catch {}
   }
 
-  // Synthesize audible chimes with Web Audio API
+  // Synthesize audible chimes with Web Audio API & HTML5 Audio fallback
   public playSound(type: 'STEP_3' | 'NEXT' | 'CALLED') {
     const ctx = this.getAudioContext();
-    if (!ctx) return;
 
-    try {
-      const now = ctx.currentTime;
+    const executeTones = (context: AudioContext) => {
+      try {
+        const now = context.currentTime;
 
-      if (type === 'STEP_3') {
-        // Double gentle chime (Aviso 1: Faltam poucas pessoas)
-        this.playTone(ctx, 523.25, now, 0.2, 0.15); // C5
-        this.playTone(ctx, 659.25, now + 0.18, 0.25, 0.2); // E5
-      } else if (type === 'NEXT') {
-        // High alert chime (Aviso 2: Você é o próximo)
-        this.playTone(ctx, 659.25, now, 0.15, 0.2); // E5
-        this.playTone(ctx, 880.0, now + 0.15, 0.2, 0.25); // A5
-        this.playTone(ctx, 987.77, now + 0.32, 0.35, 0.3); // B5
-      } else {
-        // Energetic triumphant chime (Aviso 3: CHEGOU SUA VEZ!)
-        this.playTone(ctx, 523.25, now, 0.15, 0.3); // C5
-        this.playTone(ctx, 659.25, now + 0.14, 0.15, 0.3); // E5
-        this.playTone(ctx, 783.99, now + 0.28, 0.15, 0.3); // G5
-        this.playTone(ctx, 1046.5, now + 0.44, 0.5, 0.4); // C6 (High C)
-        // Repeat fanfare after 0.7s
-        this.playTone(ctx, 783.99, now + 0.8, 0.15, 0.25);
-        this.playTone(ctx, 1046.5, now + 0.95, 0.6, 0.4);
+        if (type === 'STEP_3') {
+          // Double gentle chime (Aviso 1: Faltam poucas pessoas)
+          this.playTone(context, 523.25, now, 0.22, 0.5); // C5
+          this.playTone(context, 659.25, now + 0.18, 0.28, 0.55); // E5
+        } else if (type === 'NEXT') {
+          // High alert chime (Aviso 2: Você é o próximo)
+          this.playTone(context, 659.25, now, 0.18, 0.6); // E5
+          this.playTone(context, 880.0, now + 0.16, 0.22, 0.65); // A5
+          this.playTone(context, 987.77, now + 0.35, 0.45, 0.7); // B5
+        } else {
+          // Energetic loud alert chime (Aviso 3: CHEGOU SUA VEZ NA CADEIRA!)
+          // 1st Fanfare Pass
+          this.playTone(context, 523.25, now, 0.16, 0.7); // C5
+          this.playTone(context, 659.25, now + 0.14, 0.16, 0.75); // E5
+          this.playTone(context, 783.99, now + 0.28, 0.18, 0.8); // G5
+          this.playTone(context, 1046.5, now + 0.44, 0.55, 0.85); // C6 (High C)
+
+          // 2nd Fanfare Pass (0.65s later)
+          this.playTone(context, 659.25, now + 0.7, 0.16, 0.75); // E5
+          this.playTone(context, 783.99, now + 0.84, 0.18, 0.8); // G5
+          this.playTone(context, 1046.5, now + 1.0, 0.7, 0.9); // High C6
+        }
+      } catch (e) {
+        console.warn('Audio tone error:', e);
       }
-    } catch (e) {
-      console.warn('Audio tone error:', e);
+    };
+
+    if (ctx) {
+      if (ctx.state === 'suspended') {
+        ctx.resume().then(() => executeTones(ctx)).catch(() => executeTones(ctx));
+      } else {
+        executeTones(ctx);
+      }
+    }
+
+    // Secondary Audio Engine: HTML5 synthetic tone (guaranteed playback on mobile)
+    this.playHtmlAudioFallback(type, 0.9);
+  }
+
+  // Generates and plays an audible synthetic WAV tone via HTML5 Audio element
+  private playHtmlAudioFallback(type: 'STEP_3' | 'NEXT' | 'CALLED', maxVol: number = 0.8): void {
+    if (typeof window === 'undefined') return;
+    try {
+      let dataUrl = this.cachedAudioUrls[type];
+      if (!dataUrl) {
+        const sampleRate = 8000;
+        const durationSec = type === 'CALLED' ? 1.0 : 0.45;
+        const totalSamples = Math.floor(sampleRate * durationSec);
+        const buffer = new Uint8Array(44 + totalSamples);
+
+        const writeStr = (offset: number, str: string) => {
+          for (let i = 0; i < str.length; i++) buffer[offset + i] = str.charCodeAt(i);
+        };
+        const write32 = (offset: number, val: number) => {
+          buffer[offset] = val & 0xff;
+          buffer[offset + 1] = (val >> 8) & 0xff;
+          buffer[offset + 2] = (val >> 16) & 0xff;
+          buffer[offset + 3] = (val >> 24) & 0xff;
+        };
+        const write16 = (offset: number, val: number) => {
+          buffer[offset] = val & 0xff;
+          buffer[offset + 1] = (val >> 8) & 0xff;
+        };
+
+        writeStr(0, 'RIFF');
+        write32(4, 36 + totalSamples);
+        writeStr(8, 'WAVE');
+        writeStr(12, 'fmt ');
+        write32(16, 16);
+        write16(20, 1);
+        write16(22, 1);
+        write32(24, sampleRate);
+        write32(28, sampleRate);
+        write16(32, 1);
+        write16(34, 8);
+        writeStr(36, 'data');
+        write32(40, totalSamples);
+
+        const freq1 = type === 'CALLED' ? 880 : type === 'NEXT' ? 784 : 587;
+        const freq2 = type === 'CALLED' ? 1046 : type === 'NEXT' ? 988 : 659;
+        for (let i = 0; i < totalSamples; i++) {
+          const t = i / sampleRate;
+          const currentFreq = t < (durationSec / 2) ? freq1 : freq2;
+          const decay = Math.max(0.1, 1 - (t / durationSec));
+          const sample = Math.sin(2 * Math.PI * currentFreq * t) * decay;
+          buffer[44 + i] = Math.floor((sample + 1) * 127.5);
+        }
+
+        let binary = '';
+        for (let i = 0; i < buffer.length; i++) {
+          binary += String.fromCharCode(buffer[i]);
+        }
+        dataUrl = `data:audio/wav;base64,${btoa(binary)}`;
+        this.cachedAudioUrls[type] = dataUrl;
+      }
+
+      if (!this.persistentAudio) {
+        this.persistentAudio = new Audio();
+      }
+      this.persistentAudio.src = dataUrl;
+      this.persistentAudio.volume = Math.min(1, Math.max(0.01, maxVol));
+      const playPromise = this.persistentAudio.play();
+      if (playPromise) {
+        playPromise.catch((err) => {
+          console.warn('HTML5 audio auto-play suppressed:', err);
+        });
+      }
+    } catch {}
+  }
+
+  // Start continuous repeating loud chime alarm until client confirms arrival or leaves
+  public startRepeatingAlarm(type: 'CALLED' | 'NEXT' = 'CALLED', intervalMs: number = 4000) {
+    this.stopRepeatingAlarm();
+    this.playSound(type);
+    this.vibrate([600, 200, 600, 200, 1000, 300, 1000]);
+
+    this.repeatingAlarmTimer = setInterval(() => {
+      this.playSound(type);
+      this.vibrate([600, 200, 600, 200, 1000, 300, 1000]);
+    }, intervalMs);
+  }
+
+  public stopRepeatingAlarm() {
+    if (this.repeatingAlarmTimer) {
+      clearInterval(this.repeatingAlarmTimer);
+      this.repeatingAlarmTimer = null;
     }
   }
 
-  private playTone(ctx: AudioContext, freq: number, startTime: number, duration: number, volume: number = 0.2) {
+  private playTone(ctx: AudioContext, freq: number, startTime: number, duration: number, volume: number = 0.3) {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
 
-    osc.type = 'sine';
+    osc.type = 'triangle'; // Richer sound than pure sine
     osc.frequency.setValueAtTime(freq, startTime);
 
     gain.gain.setValueAtTime(0.001, startTime);
@@ -328,16 +450,23 @@ class NotificationServiceClass {
     osc.stop(startTime + duration + 0.05);
   }
 
-  // Trigger device vibration via Vibration API
+  // Trigger device vibration via Vibration API with multi-pulse cadence
   public vibrate(pattern: number[]) {
-    if (typeof window === 'undefined' || !('navigator' in window)) return;
-    if ('vibrate' in navigator && typeof navigator.vibrate === 'function') {
+    if (typeof window === 'undefined') return;
+    if ('navigator' in window && 'vibrate' in navigator && typeof navigator.vibrate === 'function') {
       try {
         navigator.vibrate(pattern);
+        if (pattern.length > 2) {
+          setTimeout(() => {
+            try { navigator.vibrate(pattern); } catch {}
+          }, 1500);
+        }
       } catch (e) {
         console.warn('Vibration not permitted by device hardware/OS:', e);
       }
     }
+    // Also dispatch a custom visual vibrate event for CSS pulsating animation
+    window.dispatchEvent(new CustomEvent('barberos_vibrate', { detail: { pattern } }));
   }
 
   // In-app direct dispatch fallback

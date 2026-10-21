@@ -173,10 +173,9 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
   // Specific item call
   const handleCallSpecific = async (item: WaitingQueueItem, profId?: string) => {
     const targetProf = profId || item.preferredProfessionalId || professionals[0]?.id;
-    if (!targetProf) return;
 
     try {
-      const res = await StorageService.callQueueCustomer(item.id, targetProf);
+      const res = await StorageService.callQueueCustomer(item.id, targetProf, organization.id);
       const push = res?.pushResult;
       const isDelivered = push?.status === 'DELIVERED_TO_PUSH_SERVICE';
       const isNoDevice = push?.status === 'NO_DEVICE_REGISTERED';
@@ -198,7 +197,7 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
         httpStatus: push?.httpStatus,
         phone: item.customerPhone,
       });
-      loadData();
+      await loadData();
     } catch (e: any) {
       setCallFeedback({
         type: 'error',
@@ -209,26 +208,26 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
     setTimeout(() => setCallFeedback(null), 7000);
   };
 
-  const handleMoveToChair = (item: WaitingQueueItem) => {
+  const handleMoveToChair = async (item: WaitingQueueItem) => {
     const prof = professionals.find(p => p.id === item.assignedProfessionalId) || professionals[0];
-    StorageService.moveQueueToChair(item.id, prof?.id);
+    await StorageService.moveQueueToChair(item.id, prof?.id, organization.id);
     setCallFeedback({
       type: 'success',
       title: '💈 Cliente na Cadeira!',
       message: `${item.customerName} sentou na cadeira. O próximo cliente da fila foi promovido automaticamente!`
     });
-    loadData();
+    await loadData();
     setTimeout(() => setCallFeedback(null), 6000);
   };
 
-  const handleFinish = (item: WaitingQueueItem) => {
+  const handleFinish = async (item: WaitingQueueItem) => {
     StorageService.finishQueueItem(item.id, 'PIX');
     setCallFeedback({
       type: 'success',
       title: '✂️ Atendimento Concluído!',
       message: `Corte de ${item.customerName} concluído! A fila avançou automaticamente e o próximo assumiu o 1º lugar.`
     });
-    loadData();
+    await loadData();
     setTimeout(() => setCallFeedback(null), 6000);
   };
 
