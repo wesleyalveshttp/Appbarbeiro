@@ -438,7 +438,7 @@ export class SupabaseDBService {
       .from('queue')
       .select('id, ticket_number, organization_id, customer_name, service_id, service_name, preferred_professional_id, status, joined_at, estimated_wait_minutes, called_at, called_tolerance_expires_at, on_chair_at, finished_at')
       .eq('organization_id', orgId)
-      .in('status', ['AGUARDANDO', 'PROXIMO', 'CHAMADO', 'EM_ATENDIMENTO'])
+      .in('status', ['AGUARDANDO', 'PROXIMO', 'CHAMADO', 'EM_ATENDIMENTO', 'NA CADEIRA', 'A_CAMINHO', 'PEDIU_TOLERANCIA'])
       .order('ticket_number', { ascending: true });
 
     if (qErr) throw new Error(`Erro ao buscar fila [${qErr.code}]: ${qErr.message}`);
@@ -679,6 +679,7 @@ export class SupabaseDBService {
       preferredProfessionalId?: string;
       assignedProfessionalId?: string;
       pushDeliveryStatus?: string;
+      estimatedWaitMinutes?: number;
     }
   ): Promise<any> {
     const ready = await this.checkTablesReady();
@@ -694,6 +695,7 @@ export class SupabaseDBService {
     if (updates.preferredProfessionalId !== undefined) dbUpdates.preferred_professional_id = updates.preferredProfessionalId;
     if (updates.assignedProfessionalId !== undefined) dbUpdates.assigned_professional_id = updates.assignedProfessionalId;
     if (updates.pushDeliveryStatus !== undefined) dbUpdates.push_delivery_status = updates.pushDeliveryStatus;
+    if (updates.estimatedWaitMinutes !== undefined) dbUpdates.estimated_wait_minutes = updates.estimatedWaitMinutes;
 
     const { data, error } = await client
       .from('queue')

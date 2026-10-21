@@ -1378,7 +1378,12 @@ export class StorageService {
   static async fetchQueue(orgId: string): Promise<WaitingQueueItem[]> {
     if (typeof window === 'undefined') return this.getAllQueueHistory(orgId);
     try {
-      const res = await fetch(`/api/queue/${encodeURIComponent(orgId)}`);
+      const token = this.getAuthToken();
+      const res = await fetch(`/api/queue/${encodeURIComponent(orgId)}`, {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.queue)) {
@@ -1501,9 +1506,13 @@ export class StorageService {
     assignedProfId?: string
   ): Promise<{ success: boolean; item?: WaitingQueueItem; error?: string; pushResult?: any }> {
     try {
+      const token = this.getAuthToken();
       const res = await fetch('/api/queue/call-next', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({ organizationId: orgId, assignedProfId }),
       });
       const data = await res.json();
@@ -1550,22 +1559,30 @@ export class StorageService {
     queueId: string,
     assignedProfessionalId: string
   ): Promise<{ success: boolean; item: WaitingQueueItem; pushResult?: any }> {
+    const local = this.callQueueCustomerLocal(queueId, assignedProfessionalId);
     try {
+      const token = this.getAuthToken();
       const res = await fetch('/api/queue/call-specific', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ queueId, assignedProfessionalId }),
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          queueId,
+          assignedProfessionalId,
+          organizationId: local.organizationId,
+        }),
       });
       const data = await res.json();
       if (data.success && data.item) {
-        await this.syncWithServer();
         broadcastEvent('QUEUE_UPDATED', { queueItemId: data.item.id, pushResult: data.pushResult });
         return data;
       }
-      throw new Error(data.error || 'Erro ao chamar cliente');
     } catch (e: any) {
-      return { success: true, item: this.callQueueCustomerLocal(queueId, assignedProfessionalId) };
+      console.warn('callQueueCustomer API sync warning:', e);
     }
+    return { success: true, item: local };
   }
 
   static callQueueCustomerLocal(queueId: string, assignedProfessionalId: string): WaitingQueueItem {
@@ -1699,8 +1716,26 @@ export class StorageService {
     item.onChairAt = new Date().toISOString();
     if (professionalId) item.assignedProfessionalId = professionalId;
 
+    // Recalculate remaining waiting positions: promote next to PROXIMO
+    this.recalculateQueueAlerts(db, item.organizationId, item.id);
     this.saveDB(db);
     broadcastEvent('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id });
+
+    // Sync authoritative status to backend server & Supabase
+    const token = this.getAuthToken();
+    fetch('/api/queue/to-chair', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      },
+      body: JSON.stringify({
+        queueId,
+        organizationId: item.organizationId,
+        assignedProfessionalId: professionalId
+      })
+    }).catch(err => console.warn('Sync /api/queue/to-chair error:', err));
+
     return item;
   }
 
@@ -1740,8 +1775,26 @@ export class StorageService {
       date: getTodayStr()
     });
 
+    // AUTOMATIC ADVANCEMENT OF QUEUE (#USER REQUIREMENT):
+    // Promote the next customer in line to PROXIMO so they take the position immediately!
+    this.recalculateQueueAlerts(db, item.organizationId, item.id);
     this.saveDB(db);
     broadcastEvent('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id });
+
+    // Sync authoritative status to backend server & Supabase
+    const finishToken = this.getAuthToken();
+    fetch('/api/queue/finish', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(finishToken ? { Authorization: `Bearer ${finishToken}` } : {})
+      },
+      body: JSON.stringify({
+        queueId,
+        organizationId: item.organizationId
+      })
+    }).catch(err => console.warn('Sync /api/queue/finish error:', err));
+
     return item;
   }
 

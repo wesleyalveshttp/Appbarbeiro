@@ -269,6 +269,15 @@ class NotificationServiceClass {
     }
   }
 
+  public unlockAudio(): void {
+    try {
+      const ctx = this.getAudioContext();
+      if (ctx && ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+    } catch {}
+  }
+
   // Synthesize audible chimes with Web Audio API
   public playSound(type: 'STEP_3' | 'NEXT' | 'CALLED') {
     const ctx = this.getAudioContext();

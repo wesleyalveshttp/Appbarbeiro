@@ -89,7 +89,9 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
 
   // PRÓXIMO
   const nextAppointments = appointments.filter(a => a.status === 'CONFIRMADO' || a.status === 'A CAMINHO');
-  const nextQueue = queue.filter(q => q.status === 'PROXIMO' || q.status === 'CHAMADO');
+  const nextQueue = queue.filter(
+    q => q.status === 'PROXIMO' || q.status === 'CHAMADO' || q.status === 'A_CAMINHO' || q.status === 'PEDIU_TOLERANCIA'
+  );
 
   // NA CADEIRA
   const onChairAppointments = appointments.filter(a => a.status === 'NA CADEIRA');
@@ -337,7 +339,13 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
                         </div>
                       </div>
                       <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">
-                        {item.status === 'CHAMADO' ? 'Chamado' : 'Próximo'}
+                        {item.status === 'CHAMADO'
+                          ? 'Chamado'
+                          : item.status === 'A_CAMINHO'
+                          ? 'A Caminho'
+                          : item.status === 'PEDIU_TOLERANCIA'
+                          ? '+3 min'
+                          : 'Próximo'}
                       </span>
                     </div>
 

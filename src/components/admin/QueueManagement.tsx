@@ -212,12 +212,24 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
   const handleMoveToChair = (item: WaitingQueueItem) => {
     const prof = professionals.find(p => p.id === item.assignedProfessionalId) || professionals[0];
     StorageService.moveQueueToChair(item.id, prof?.id);
+    setCallFeedback({
+      type: 'success',
+      title: '💈 Cliente na Cadeira!',
+      message: `${item.customerName} sentou na cadeira. O próximo cliente da fila foi promovido automaticamente!`
+    });
     loadData();
+    setTimeout(() => setCallFeedback(null), 6000);
   };
 
   const handleFinish = (item: WaitingQueueItem) => {
     StorageService.finishQueueItem(item.id, 'PIX');
+    setCallFeedback({
+      type: 'success',
+      title: '✂️ Atendimento Concluído!',
+      message: `Corte de ${item.customerName} concluído! A fila avançou automaticamente e o próximo assumiu o 1º lugar.`
+    });
     loadData();
+    setTimeout(() => setCallFeedback(null), 6000);
   };
 
   const handleMarkNoShow = (item: WaitingQueueItem) => {

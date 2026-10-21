@@ -299,7 +299,7 @@ CREATE OR REPLACE VIEW public.public_queue AS
     on_chair_at,
     finished_at
   FROM public.queue
-  WHERE status IN ('AGUARDANDO', 'PROXIMO', 'CHAMADO', 'EM_ATENDIMENTO');
+  WHERE status IN ('AGUARDANDO', 'PROXIMO', 'CHAMADO', 'EM_ATENDIMENTO', 'NA CADEIRA', 'A_CAMINHO', 'PEDIU_TOLERANCIA');
 
 GRANT SELECT ON public.public_queue TO anon, authenticated;
 

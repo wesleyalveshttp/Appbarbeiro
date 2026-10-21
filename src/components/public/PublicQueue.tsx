@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Clock,
   Scissors,
@@ -46,6 +46,7 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
 
   // My Ticket (stored in localStorage for persistent client tracking)
   const [myTicketId, setMyTicketId] = useState<string | null>(null);
+  const [myDirectTicketItem, setMyDirectTicketItem] = useState<WaitingQueueItem | null>(null);
 
   // Form State
   const [customerName, setCustomerName] = useState('');
@@ -57,7 +58,7 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
   // Notification & Audio/Vibration State
   const [permissionState, setPermissionState] = useState<PushPermissionState>('default');
   const [testNotificationFeedback, setTestNotificationFeedback] = useState<string | null>(null);
-  const [hasPlayedChime, setHasPlayedChime] = useState(false);
+  const lastAlertedStatusRef = useRef<string | null>(null);
 
   // Tolerance countdown for called client
   const [secondsRemaining, setSecondsRemaining] = useState<number | null>(null);
@@ -101,6 +102,22 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
         setErrorType('NETWORK_ERROR');
         setErrorMessage(result.error || 'Falha de conexão com a internet. Verifique sua rede e tente novamente.');
       }
+
+      // If customer has a ticket ID, fetch the exact real-time item status directly
+      const currentTicketId = myTicketId || localStorage.getItem(`barberos_queue_ticket_${slug}`);
+      if (currentTicketId) {
+        try {
+          const itemRes = await fetch(`/api/queue/item/${encodeURIComponent(currentTicketId)}`);
+          if (itemRes.ok) {
+            const itemData = await itemRes.json();
+            if (itemData?.item) {
+              setMyDirectTicketItem(itemData.item);
+            }
+          }
+        } catch (itemErr) {
+          console.warn('Personal ticket direct sync warning:', itemErr);
+        }
+      }
     } catch (err: any) {
       console.warn('Erro ao carregar dados da fila pública:', err);
       setErrorType('NETWORK_ERROR');
@@ -113,6 +130,13 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
   useEffect(() => {
     // Check permission state
     setPermissionState(NotificationService.getPermissionStatus());
+
+    // Unlock Web Audio API on first user gesture
+    const unlock = () => {
+      NotificationService.unlockAudio();
+    };
+    window.addEventListener('click', unlock, { once: true });
+    window.addEventListener('touchstart', unlock, { once: true });
 
     // Restore my ticket if active in localStorage or via URL param (?ticket=id)
     const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
@@ -135,11 +159,13 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
     return () => {
       clearInterval(interval);
       unsub();
+      window.removeEventListener('click', unlock);
+      window.removeEventListener('touchstart', unlock);
     };
   }, [slug]);
 
-  // Find My Item
-  const myQueueItem = queue.find(q => q.id === myTicketId);
+  // Find My Item (prefer direct authoritative record from DB if available)
+  const myQueueItem = myDirectTicketItem || queue.find(q => q.id === myTicketId);
   const isCurrentlyInQueue =
     !!myQueueItem &&
     myQueueItem.status !== 'FINALIZADO' &&
@@ -163,23 +189,45 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
   // Approximate forecast clock time (e.g. "17:45")
   const forecastTimeStr = (() => {
     const d = new Date();
-    d.setMinutes(d.getMinutes() + estimatedTime);
+    d.setMinutes(d.getMinutes() + (estimatedTime || 10));
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   })();
 
-  // Sound & Vibration alert when status changes to PROXIMO or CHAMADO
+  // Sound, Vibration, and Push alert when status changes to PROXIMO, CHAMADO, or NA CADEIRA
   useEffect(() => {
-    if (myQueueItem && (myQueueItem.status === 'CHAMADO' || myQueueItem.status === 'PROXIMO') && !hasPlayedChime) {
-      if (myQueueItem.status === 'CHAMADO') {
+    if (!myQueueItem) return;
+    const currentStatus = myQueueItem.status;
+
+    if (currentStatus !== lastAlertedStatusRef.current) {
+      if (currentStatus === 'CHAMADO') {
         NotificationService.playSound('CALLED');
-        NotificationService.vibrate([400, 150, 400, 150, 800, 200, 800]);
-      } else {
+        NotificationService.vibrate([500, 150, 500, 150, 1000, 200, 1000]);
+        NotificationService.dispatchNotification({
+          title: '✂️ O BARBEIRO ESTÁ TE CHAMANDO!',
+          body: `Chegou a sua vez (${myQueueItem.serviceName})! Dirija-se à cadeira agora!`,
+          type: 'CALLED',
+          ticketNumber: myQueueItem.ticketNumber,
+        });
+        lastAlertedStatusRef.current = 'CHAMADO';
+      } else if (currentStatus === 'NA CADEIRA') {
+        NotificationService.playSound('NEXT');
+        NotificationService.vibrate([400, 150, 400]);
+        lastAlertedStatusRef.current = 'NA CADEIRA';
+      } else if (currentStatus === 'PROXIMO') {
         NotificationService.playSound('NEXT');
         NotificationService.vibrate([300, 150, 300, 150, 300]);
+        NotificationService.dispatchNotification({
+          title: '💈 Você é o próximo da fila!',
+          body: `Prepare-se! Sua senha é #${myQueueItem.ticketNumber}. Faltam poucos minutos.`,
+          type: 'NEXT',
+          ticketNumber: myQueueItem.ticketNumber,
+        });
+        lastAlertedStatusRef.current = 'PROXIMO';
+      } else {
+        lastAlertedStatusRef.current = currentStatus;
       }
-      setHasPlayedChime(true);
     }
-  }, [myQueueItem?.status, hasPlayedChime]);
+  }, [myQueueItem?.status]);
 
   // Tolerance countdown timer when called
   useEffect(() => {
@@ -282,7 +330,7 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
 
     setMyTicketId(newItem.id);
     localStorage.setItem(`barberos_queue_ticket_${slug}`, newItem.id);
-    setHasPlayedChime(false);
+    lastAlertedStatusRef.current = null;
     loadData();
   };
 
@@ -292,6 +340,7 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
       await StorageService.cancelQueueItem(myQueueItem.id, 'Cliente desistiu pelo celular');
       localStorage.removeItem(`barberos_queue_ticket_${slug}`);
       setMyTicketId(null);
+      setMyDirectTicketItem(null);
       loadData();
     }
   };
@@ -471,8 +520,53 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
           </div>
         )}
 
-        {/* CASE 1: CLIENT IS ACTIVELY IN QUEUE (#Requirement 2, 3, 7) */}
-        {isCurrentlyInQueue && myQueueItem ? (
+        {/* CASE 0: CLIENT HAIRCUT COMPLETED (#Requirement) */}
+        {myQueueItem && myQueueItem.status === 'FINALIZADO' ? (
+          <div className="rounded-3xl bg-slate-900 border-2 border-emerald-500/50 p-6 sm:p-8 text-center shadow-2xl space-y-5">
+            <div className="inline-flex h-16 w-16 items-center justify-center rounded-3xl bg-emerald-500 text-slate-950 font-bold shadow-lg shadow-emerald-500/20">
+              <CheckCircle2 className="h-9 w-9" />
+            </div>
+            <div>
+              <span className="text-[11px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 px-3 py-1 rounded-full border border-emerald-500/30">
+                Atendimento Concluído
+              </span>
+              <h2 className="mt-3 text-3xl font-black text-white tracking-tight">
+                ✂️ Corte Finalizado!
+              </h2>
+              <p className="mt-1.5 text-xs text-slate-300 max-w-sm mx-auto leading-relaxed">
+                Seu atendimento na <strong className="text-white">{organization.name}</strong> foi concluído com sucesso. Obrigado pela preferência e aproveite o novo estilo!
+              </p>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-left text-xs space-y-2">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Cliente:</span>
+                <span className="font-bold text-white">{myQueueItem.customerName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Serviço:</span>
+                <span className="text-emerald-400 font-bold">{myQueueItem.serviceName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Senha:</span>
+                <span className="font-mono text-amber-300 font-bold">#{myQueueItem.ticketNumber}</span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => {
+                localStorage.removeItem(`barberos_queue_ticket_${slug}`);
+                setMyTicketId(null);
+                setMyDirectTicketItem(null);
+                loadData();
+              }}
+              className="w-full flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3.5 text-xs shadow-lg transition cursor-pointer"
+            >
+              <Sparkles className="h-4 w-4" />
+              <span>Entrar na Fila Novamente</span>
+            </button>
+          </div>
+        ) : isCurrentlyInQueue && myQueueItem ? (
           <div className="space-y-5">
             {/* ALERT STATE 1: CALLED TO CHAIR ("CHEGOU SUA VEZ") */}
             {(myQueueItem.status === 'CHAMADO' ||
@@ -610,16 +704,30 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
               {/* Position Counter */}
               <div>
                 <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
-                  Sua Posição Atual na Fila
+                  {myQueueItem.status === 'NA CADEIRA' ? 'Situação do Atendimento' : 'Sua Posição Atual na Fila'}
                 </span>
-                <div className="mt-2 text-6xl sm:text-7xl font-black text-white font-mono tracking-tight text-shadow-lg">
-                  #{myPositionIndex + 1}º
-                </div>
-                <span className="text-[11px] text-emerald-400 font-bold block mt-1">
-                  {myPositionIndex === 0
-                    ? 'Você é o primeiro da fila!'
-                    : `${peopleAhead} ${peopleAhead === 1 ? 'pessoa' : 'pessoas'} à sua frente`}
-                </span>
+                {myQueueItem.status === 'NA CADEIRA' ? (
+                  <div className="mt-3 py-2 px-4 rounded-2xl bg-emerald-500/20 border border-emerald-400/40 text-center">
+                    <div className="text-3xl sm:text-4xl font-black text-emerald-400 font-mono tracking-tight flex items-center justify-center gap-2">
+                      <Armchair className="h-8 w-8 text-emerald-400 animate-pulse" />
+                      <span>NA CADEIRA</span>
+                    </div>
+                    <span className="text-xs text-emerald-300 font-semibold block mt-1">
+                      Você está sendo atendido agora!
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="mt-2 text-6xl sm:text-7xl font-black text-white font-mono tracking-tight text-shadow-lg">
+                      #{myPositionIndex + 1}º
+                    </div>
+                    <span className="text-[11px] text-emerald-400 font-bold block mt-1">
+                      {myPositionIndex === 0
+                        ? 'Você é o primeiro da fila!'
+                        : `${peopleAhead} ${peopleAhead === 1 ? 'pessoa' : 'pessoas'} à sua frente`}
+                    </span>
+                  </>
+                )}
               </div>
 
               {/* 3 Metric Cards */}

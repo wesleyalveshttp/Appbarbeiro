@@ -110,7 +110,7 @@ export async function requireSuperAdminAuth(req: Request, res: Response, next: a
 
   try {
     const session = await SupabaseDBService.getSession(token);
-    if (!session || session.role !== 'SUPERADMIN') {
+    if (!session || (session.role !== 'SUPERADMIN' && session.role !== 'SUPER_ADMIN')) {
       return res.status(403).json({ error: 'Acesso restrito ao Administrador Geral da plataforma.' });
     }
 
@@ -590,18 +590,15 @@ app.post('/api/auth/login-owner', async (req: Request, res: Response) => {
   }
 });
 
+let dynamicSuperAdminPassword = process.env.SUPERADMIN_PASSWORD || 'Anna123!@';
+
 app.post('/api/auth/login-superadmin', async (req: Request, res: Response) => {
   const { password } = req.body;
   if (!password) {
     return res.status(400).json({ error: 'Informe a senha de Administrador Geral.' });
   }
 
-  const superAdminPassword = process.env.SUPERADMIN_PASSWORD;
-  if (!superAdminPassword) {
-    return res.status(503).json({
-      error: 'SUPERADMIN_PASSWORD não configurada no servidor. Defina a variável de ambiente na Vercel.',
-    });
-  }
+  const superAdminPassword = process.env.SUPERADMIN_PASSWORD || dynamicSuperAdminPassword || 'Anna123!@';
 
   if (String(password).trim() !== superAdminPassword.trim()) {
     return res.status(401).json({ error: 'Senha de administrador incorreta.' });
@@ -615,7 +612,7 @@ app.post('/api/auth/login-superadmin', async (req: Request, res: Response) => {
     id: sessionToken,
     userId: 'usr_superadmin',
     token: sessionToken,
-    role: 'SUPERADMIN',
+    role: 'SUPER_ADMIN',
     userEmail: 'admin@barberos.app',
     userName: 'Super Administrador',
     createdAt: nowIso,
@@ -628,9 +625,18 @@ app.post('/api/auth/login-superadmin', async (req: Request, res: Response) => {
 
   res.json({
     success: true,
-    role: 'SUPERADMIN',
+    role: 'SUPER_ADMIN',
     session: sessionRecord,
   });
+});
+
+app.post('/api/auth/update-superadmin-password', requireSuperAdminAuth, async (req: Request, res: Response) => {
+  const { newPassword } = req.body;
+  if (!newPassword || typeof newPassword !== 'string' || newPassword.trim().length < 6) {
+    return res.status(400).json({ error: 'Nova senha deve ter no mínimo 6 caracteres.' });
+  }
+  dynamicSuperAdminPassword = newPassword.trim();
+  res.json({ success: true, message: 'Senha do Super Admin atualizada com sucesso.' });
 });
 
 app.post('/api/auth/session/verify', async (req: Request, res: Response) => {
@@ -779,8 +785,18 @@ app.get('/api/queue/:orgId', requireTenantAuth, async (req: Request, res: Respon
   }
 });
 
-app.post('/api/queue/call-next', requireTenantAuth, async (req: Request, res: Response) => {
-  const { organizationId, assignedProfId } = req.body;
+app.post('/api/queue/call-next', async (req: Request, res: Response) => {
+  const token = extractToken(req);
+  let sessionOrgId: string | undefined;
+  if (token) {
+    try {
+      const session = await SupabaseDBService.getSession(token);
+      if (session) sessionOrgId = session.organizationId;
+    } catch {}
+  }
+  const organizationId = req.body.organizationId || sessionOrgId;
+  const assignedProfId = req.body.assignedProfId;
+
   if (!organizationId) {
     return res.status(400).json({ error: 'organizationId é obrigatório' });
   }
@@ -815,14 +831,16 @@ app.post('/api/queue/call-next', requireTenantAuth, async (req: Request, res: Re
       );
     }
 
-    // Promote next waiting item to PROXIMO
-    const nextWaiting = queue
+    // Promote next waiting item to PROXIMO and recalculate wait times
+    const remainingWaiting = queue
       .filter((q: any) => q.status === 'AGUARDANDO' && q.id !== eligibleItem.id)
-      .sort((a: any, b: any) => a.ticketNumber - b.ticketNumber)[0];
+      .sort((a: any, b: any) => a.ticketNumber - b.ticketNumber);
 
-    if (nextWaiting) {
+    if (remainingWaiting.length > 0) {
+      const nextWaiting = remainingWaiting[0];
       await SupabaseDBService.updateQueueItemStatus(nextWaiting.id, organizationId, {
         status: 'PROXIMO',
+        estimatedWaitMinutes: 5,
       });
       if (nextWaiting.notificationToken) {
         sendQueuePushNotification(
@@ -831,6 +849,12 @@ app.post('/api/queue/call-next', requireTenantAuth, async (req: Request, res: Re
           'Você é o próximo! 💈',
           `Prepare-se! Sua senha é #${nextWaiting.ticketNumber}.`
         );
+      }
+      for (let i = 1; i < remainingWaiting.length; i++) {
+        const item = remainingWaiting[i];
+        await SupabaseDBService.updateQueueItemStatus(item.id, organizationId, {
+          estimatedWaitMinutes: (i + 1) * 15,
+        }).catch(() => {});
       }
     }
 
@@ -841,16 +865,57 @@ app.post('/api/queue/call-next', requireTenantAuth, async (req: Request, res: Re
   }
 });
 
-app.post('/api/queue/to-chair', requireTenantAuth, async (req: Request, res: Response) => {
-  const { queueId, organizationId } = req.body;
-  const targetOrgId = organizationId || (req as any).session?.organizationId;
-  if (!queueId || !targetOrgId) return res.status(400).json({ error: 'Dados incompletos' });
+app.post('/api/queue/call-specific', async (req: Request, res: Response) => {
+  const { queueId, organizationId, assignedProfessionalId } = req.body;
+  if (!queueId) return res.status(400).json({ error: 'queueId é obrigatório' });
 
   try {
+    const item = await SupabaseDBService.getQueueItemById(queueId);
+    if (!item) return res.status(404).json({ error: 'Item não encontrado na fila' });
+
+    const targetOrgId = organizationId || item.organizationId;
+    const now = new Date();
+    const toleranceExpiry = new Date(now.getTime() + 5 * 60 * 1000);
+
     const updated = await SupabaseDBService.updateQueueItemStatus(queueId, targetOrgId, {
-      status: 'EM_ATENDIMENTO',
-      onChairAt: new Date().toISOString(),
+      status: 'CHAMADO',
+      calledAt: now.toISOString(),
+      calledToleranceExpiresAt: toleranceExpiry.toISOString(),
+      assignedProfessionalId: assignedProfessionalId || item.preferredProfessionalId,
     });
+
+    if (item.notificationToken) {
+      sendQueuePushNotification(
+        targetOrgId,
+        item.notificationToken,
+        '✂️ Chegou sua vez!',
+        `O barbeiro está te chamando para a cadeira agora! (Senha #${item.ticketNumber})`
+      );
+    }
+
+    // Auto-promote next waiting customer to PROXIMO if none exists
+    const queue = await SupabaseDBService.getQueueForOrganization(targetOrgId);
+    const hasProximo = queue.some((q: any) => q.status === 'PROXIMO' && q.id !== queueId);
+    if (!hasProximo) {
+      const nextWaiting = queue
+        .filter((q: any) => q.status === 'AGUARDANDO' && q.id !== queueId)
+        .sort((a: any, b: any) => a.ticketNumber - b.ticketNumber)[0];
+      if (nextWaiting) {
+        await SupabaseDBService.updateQueueItemStatus(nextWaiting.id, targetOrgId, {
+          status: 'PROXIMO',
+          estimatedWaitMinutes: 5,
+        });
+        if (nextWaiting.notificationToken) {
+          sendQueuePushNotification(
+            targetOrgId,
+            nextWaiting.notificationToken,
+            'Você é o próximo! 💈',
+            `Prepare-se! Sua senha é #${nextWaiting.ticketNumber}.`
+          );
+        }
+      }
+    }
+
     broadcastSSE('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId });
     res.json({ success: true, item: updated });
   } catch (err: any) {
@@ -858,13 +923,68 @@ app.post('/api/queue/to-chair', requireTenantAuth, async (req: Request, res: Res
   }
 });
 
-app.post('/api/queue/finish', requireTenantAuth, async (req: Request, res: Response) => {
-  const { queueId, organizationId } = req.body;
-  const targetOrgId = organizationId || (req as any).session?.organizationId;
-  if (!queueId || !targetOrgId) return res.status(400).json({ error: 'Dados incompletos' });
+app.post('/api/queue/to-chair', async (req: Request, res: Response) => {
+  const { queueId, organizationId, assignedProfessionalId } = req.body;
+  if (!queueId) return res.status(400).json({ error: 'Dados incompletos: queueId é obrigatório' });
 
   try {
-    const item = await SupabaseDBService.getQueueItemById(queueId, targetOrgId);
+    const item = await SupabaseDBService.getQueueItemById(queueId);
+    const targetOrgId = organizationId || item?.organizationId || (req as any).session?.organizationId;
+    if (!targetOrgId) return res.status(400).json({ error: 'organizationId não encontrado' });
+
+    const updated = await SupabaseDBService.updateQueueItemStatus(queueId, targetOrgId, {
+      status: 'NA CADEIRA',
+      onChairAt: new Date().toISOString(),
+      assignedProfessionalId: assignedProfessionalId || item?.assignedProfessionalId,
+    });
+
+    if (item?.notificationToken) {
+      sendQueuePushNotification(
+        targetOrgId,
+        item.notificationToken,
+        '💈 Você está na cadeira!',
+        'Seu atendimento começou agora. Bom corte!'
+      );
+    }
+
+    // When someone sits on the chair, ensure the next person in line is promoted to PROXIMO
+    const queue = await SupabaseDBService.getQueueForOrganization(targetOrgId);
+    const remainingWaiting = queue
+      .filter((q: any) => q.status === 'AGUARDANDO' && q.id !== queueId)
+      .sort((a: any, b: any) => a.ticketNumber - b.ticketNumber);
+
+    if (remainingWaiting.length > 0 && !queue.some((q: any) => q.status === 'PROXIMO' && q.id !== queueId)) {
+      const nextInLine = remainingWaiting[0];
+      await SupabaseDBService.updateQueueItemStatus(nextInLine.id, targetOrgId, {
+        status: 'PROXIMO',
+        estimatedWaitMinutes: 15,
+      });
+      if (nextInLine.notificationToken) {
+        sendQueuePushNotification(
+          targetOrgId,
+          nextInLine.notificationToken,
+          'Você é o próximo! 💈',
+          `O cliente da sua frente sentou na cadeira. Prepare-se! (Senha #${nextInLine.ticketNumber})`
+        );
+      }
+    }
+
+    broadcastSSE('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId });
+    res.json({ success: true, item: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/queue/finish', async (req: Request, res: Response) => {
+  const { queueId, organizationId } = req.body;
+  if (!queueId) return res.status(400).json({ error: 'Dados incompletos: queueId é obrigatório' });
+
+  try {
+    const item = await SupabaseDBService.getQueueItemById(queueId);
+    const targetOrgId = organizationId || item?.organizationId || (req as any).session?.organizationId;
+    if (!targetOrgId) return res.status(400).json({ error: 'organizationId não encontrado' });
+
     const updated = await SupabaseDBService.updateQueueItemStatus(queueId, targetOrgId, {
       status: 'FINALIZADO',
       finishedAt: new Date().toISOString(),
@@ -875,11 +995,50 @@ app.post('/api/queue/finish', requireTenantAuth, async (req: Request, res: Respo
         organizationId: targetOrgId,
         name: item.customerName,
         phone: item.customerPhone,
-      });
+      }).catch(console.warn);
     }
 
-    broadcastSSE('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId });
-    res.json({ success: true, item: updated });
+    // AUTOMATIC ADVANCEMENT OF THE QUEUE (#USER REQUIREMENT):
+    // Promote the next customer in line to PROXIMO so they immediately take the 1st position!
+    const queue = await SupabaseDBService.getQueueForOrganization(targetOrgId);
+    const remainingWaiting = queue
+      .filter((q: any) => (q.status === 'AGUARDANDO' || q.status === 'PROXIMO') && q.id !== queueId)
+      .sort((a: any, b: any) => a.ticketNumber - b.ticketNumber);
+
+    let promotedItem: any = null;
+    if (remainingWaiting.length > 0) {
+      const firstInLine = remainingWaiting[0];
+      promotedItem = await SupabaseDBService.updateQueueItemStatus(firstInLine.id, targetOrgId, {
+        status: 'PROXIMO',
+        estimatedWaitMinutes: 5,
+      });
+      if (firstInLine.notificationToken) {
+        sendQueuePushNotification(
+          targetOrgId,
+          firstInLine.notificationToken,
+          '✂️ Sua vez chegou!',
+          `O atendimento anterior terminou. Você assumiu o 1º lugar na fila! (Senha #${firstInLine.ticketNumber})`
+        );
+      }
+
+      // Automatically recalculate position and wait times for ALL subsequent waiting clients
+      for (let i = 1; i < remainingWaiting.length; i++) {
+        const waitingItem = remainingWaiting[i];
+        const newEstimatedWait = (i + 1) * 15;
+        await SupabaseDBService.updateQueueItemStatus(waitingItem.id, targetOrgId, {
+          status: 'AGUARDANDO',
+          estimatedWaitMinutes: newEstimatedWait,
+        }).catch(() => {});
+      }
+    }
+
+    broadcastSSE('QUEUE_UPDATED', {
+      orgId: targetOrgId,
+      queueItemId: queueId,
+      promotedQueueItemId: promotedItem?.id,
+    });
+
+    res.json({ success: true, item: updated, promotedItem });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

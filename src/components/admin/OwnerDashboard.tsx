@@ -468,13 +468,13 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
                             <MessageCircle className="h-3 w-3 text-slate-950" />
                             <span>Chamar & WhatsApp</span>
                           </button>
-                        ) : item.status === 'CHAMADO' ? (
+                        ) : item.status === 'CHAMADO' || item.status === 'A_CAMINHO' || item.status === 'PEDIU_TOLERANCIA' ? (
                           <button
                             onClick={() => {
                               StorageService.moveQueueToChair(item.id);
                               loadData();
                             }}
-                            className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition"
+                            className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition cursor-pointer"
                           >
                             <Armchair className="h-3.5 w-3.5" />
                             <span>Sentar na Cadeira</span>
