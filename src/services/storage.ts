@@ -336,10 +336,36 @@ export class StorageService {
       const res = await fetch('/api/db');
       if (res.ok) {
         const serverDb: AppDatabase = await res.json();
-        if (serverDb && Array.isArray(serverDb.organizations)) {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(serverDb));
+        if (serverDb && Array.isArray(serverDb.organizations) && serverDb.organizations.length > 0) {
+          const db = this.getDB();
+          for (const sOrg of serverDb.organizations) {
+            const idx = db.organizations.findIndex(o => o.id === sOrg.id);
+            if (idx >= 0) {
+              db.organizations[idx] = { ...db.organizations[idx], ...sOrg };
+            } else {
+              db.organizations.push(sOrg);
+            }
+          }
+          if (Array.isArray(serverDb.services) && serverDb.services.length > 0) {
+            for (const s of serverDb.services) {
+              const idx = db.services.findIndex(x => x.id === s.id);
+              if (idx >= 0) db.services[idx] = { ...db.services[idx], ...s };
+              else db.services.push(s);
+            }
+          }
+          if (Array.isArray(serverDb.professionals) && serverDb.professionals.length > 0) {
+            for (const p of serverDb.professionals) {
+              const idx = db.professionals.findIndex(x => x.id === p.id);
+              if (idx >= 0) db.professionals[idx] = { ...db.professionals[idx], ...p };
+              else db.professionals.push(p);
+            }
+          }
+          if (Array.isArray(serverDb.queue)) {
+            db.queue = serverDb.queue;
+          }
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
           broadcastEvent('DB_SYNCED');
-          return serverDb;
+          return db;
         }
       }
     } catch (e) {
@@ -458,6 +484,18 @@ export class StorageService {
       localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
     }
     broadcastEvent('ORG_CHANGED', { orgId: id });
+  }
+
+  static upsertOrganization(org: Organization): void {
+    const db = this.getDB();
+    const idx = db.organizations.findIndex(o => o.id === org.id);
+    if (idx >= 0) {
+      db.organizations[idx] = { ...db.organizations[idx], ...org };
+    } else {
+      db.organizations.push(org);
+    }
+    this.saveDB(db);
+    broadcastEvent('ORGANIZATIONS_UPDATED');
   }
 
   static getCurrentRole(): { role: 'SUPER_ADMIN' | 'OWNER' | 'PROFESSIONAL' | 'CLIENT'; professionalId?: string } {

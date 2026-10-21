@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { StorageService } from './services/storage';
 import { Organization, Professional, UserRole, AuthSession } from './types';
-import { CreditCard, Sparkles } from 'lucide-react';
+import { CreditCard, Sparkles, Scissors } from 'lucide-react';
 
 // Common Layout Components
 import { Header } from './components/common/Header';
@@ -120,7 +120,14 @@ function parseRouteFromLocation(): {
 
 export default function App() {
   const initialRouteInfo = useMemo(() => parseRouteFromLocation(), []);
-  const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
+  const [currentOrg, setCurrentOrg] = useState<Organization | null>(() => {
+    try {
+      const activeOrgId = StorageService.getCurrentOrgId();
+      return StorageService.getOrganizationById(activeOrgId) || StorageService.getAllOrganizations()[0] || null;
+    } catch {
+      return null;
+    }
+  });
   const [currentRole, setCurrentRole] = useState<UserRole>('OWNER');
   const [authSession, setAuthSession] = useState<AuthSession>(() => StorageService.getAuthSession());
   const [selectedProfessionalId, setSelectedProfessionalId] = useState<string | undefined>();
@@ -166,45 +173,61 @@ export default function App() {
     parseUrl();
 
     const initApp = async () => {
-      // 1. Sync with server backend first to load all registered accounts into local state
-      const serverDb = await StorageService.syncWithServer();
+      try {
+        // 1. Sync with server backend first to load all registered accounts into local state
+        const serverDb = await StorageService.syncWithServer();
 
-      // 2. Restore and verify user session
-      const session = await StorageService.restoreSession();
-      if (session?.isAuthenticated) {
-        setAuthSession(session);
-        setCurrentRole(session.role);
+        // 2. Restore and verify user session
+        const session = await StorageService.restoreSession();
+        if (session?.isAuthenticated) {
+          setAuthSession(session);
+          setCurrentRole(session.role);
 
-        if (session.role === 'SUPER_ADMIN') {
-          setCurrentRoute((prev) => (prev.startsWith('public-') ? prev : (prev === 'landing' ? 'superadmin' : prev)));
+          if (session.role === 'SUPER_ADMIN') {
+            setCurrentRoute((prev) => (prev.startsWith('public-') ? prev : (prev === 'landing' ? 'superadmin' : prev)));
+          } else {
+            let org: Organization | undefined;
+            if (session.organizationId) {
+              org = StorageService.getOrganizationById(session.organizationId);
+              if (!org) {
+                try {
+                  const orgRes = await fetch(`/api/organizations/${encodeURIComponent(session.organizationId)}`);
+                  if (orgRes.ok) {
+                    const orgData = await orgRes.json();
+                    if (orgData?.organization) {
+                      org = orgData.organization as Organization;
+                      StorageService.upsertOrganization(org);
+                    }
+                  }
+                } catch {}
+              }
+            }
+            if (!org) {
+              const orgId = StorageService.getCurrentOrgId();
+              org = StorageService.getOrganizationById(orgId) || serverDb?.organizations?.find(o => o.id !== 'org-prime') || serverDb?.organizations?.[0] || StorageService.getAllOrganizations()[0];
+            }
+            if (org) {
+              setCurrentOrg(org);
+              StorageService.setCurrentOrgId(org.id);
+            }
+            setCurrentRoute((prev) => (prev.startsWith('public-') ? prev : (prev === 'landing' ? 'dashboard' : prev)));
+          }
         } else {
-          let org: Organization | undefined;
-          if (session.organizationId) {
-            org = StorageService.getOrganizationById(session.organizationId);
-          }
-          if (!org) {
-            const orgId = StorageService.getCurrentOrgId();
-            org = StorageService.getOrganizationById(orgId) || serverDb?.organizations?.find(o => o.id !== 'org-prime') || serverDb?.organizations?.[0] || StorageService.getAllOrganizations()[0];
-          }
+          // Not logged in: pick current or registered account
+          const orgId = StorageService.getCurrentOrgId();
+          const org = StorageService.getOrganizationById(orgId) || serverDb?.organizations?.find(o => o.id !== 'org-prime') || serverDb?.organizations?.[0] || StorageService.getAllOrganizations()[0];
           if (org) {
             setCurrentOrg(org);
             StorageService.setCurrentOrgId(org.id);
           }
-          setCurrentRoute((prev) => (prev.startsWith('public-') ? prev : (prev === 'landing' ? 'dashboard' : prev)));
         }
-      } else {
-        // Not logged in: pick current or registered account
-        const orgId = StorageService.getCurrentOrgId();
-        const org = StorageService.getOrganizationById(orgId) || serverDb?.organizations?.find(o => o.id !== 'org-prime') || serverDb?.organizations?.[0] || StorageService.getAllOrganizations()[0];
-        if (org) {
-          setCurrentOrg(org);
-          StorageService.setCurrentOrgId(org.id);
-        }
-      }
 
-      const roleInfo = StorageService.getCurrentRole();
-      setCurrentRole(roleInfo.role);
-      setSelectedProfessionalId(roleInfo.professionalId);
+        const roleInfo = StorageService.getCurrentRole();
+        setCurrentRole(roleInfo.role);
+        setSelectedProfessionalId(roleInfo.professionalId);
+      } catch (err) {
+        console.warn('initApp warning fallback:', err);
+      }
     };
 
     initApp();
@@ -444,19 +467,6 @@ export default function App() {
     );
   }
 
-  if (!currentOrg) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-white">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
-      </div>
-    );
-  }
-
-  const selectedProfessional = selectedProfessionalId
-    ? StorageService.getProfessionalById(selectedProfessionalId)
-    : undefined;
-
-  // Check authentication session
   const activeSession = authSession.isAuthenticated ? authSession : StorageService.getAuthSession();
   const isPublicRoute =
     currentRoute === 'landing' ||
@@ -466,7 +476,7 @@ export default function App() {
     currentRoute === 'public-tracker' ||
     currentRoute === 'client-portal';
 
-  // Render Marketing Landing Page or Protect Internal Routes if not authenticated
+  // 2. Render Marketing Landing Page or Protect Internal Routes if not authenticated
   if (currentRoute === 'landing' || (!isPublicRoute && !activeSession.isAuthenticated)) {
     return (
       <>
@@ -511,6 +521,99 @@ export default function App() {
     );
   }
 
+  // 3. Super Admin Panel doesn't require an active tenant organization
+  if (
+    currentRoute === 'superadmin' ||
+    currentRoute === 'superadmin-orgs' ||
+    currentRoute === 'superadmin-plans' ||
+    currentRoute === 'superadmin-logs'
+  ) {
+    const adminFallbackOrg = currentOrg || StorageService.getAllOrganizations()[0] || {
+      id: 'org-prime',
+      name: 'Painel Global SuperAdmin',
+      slug: 'superadmin',
+      type: 'Barbearia',
+      description: '',
+      phone: '',
+      whatsapp: '',
+      instagram: '',
+      address: {},
+      workingHours: [],
+      settings: {},
+      isActive: true,
+      createdAt: new Date().toISOString()
+    };
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950 pb-16 md:pb-0">
+        <Header
+          currentOrg={adminFallbackOrg}
+          onSelectOrg={handleSelectOrg}
+          currentRole={currentRole}
+          onChangeRole={handleChangeRole}
+          selectedProfessional={undefined}
+          onToggleMobileMenu={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+          onOpenOnboarding={() => setIsOnboardingOpen(true)}
+          onNavigate={handleNavigate}
+          onOpenLogin={handleOpenLogin}
+          onNavigateToQueue={(slug) => handleNavigateToPublic('QUEUE', slug)}
+          onNavigateToBooking={(slug) => handleNavigateToPublic('BOOKING', slug)}
+          onNavigateToStore={(slug) => handleNavigateToPublic('STORE', slug)}
+        />
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+          <div className="mx-auto max-w-7xl">
+            <SuperAdminDashboard />
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // 4. Resolve Tenant Organization with instantaneous fallback
+  const resolvedOrg = currentOrg || StorageService.getAllOrganizations()[0];
+  if (!resolvedOrg) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center space-y-4 text-white font-sans">
+        <div className="h-14 w-14 rounded-2xl bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center justify-center mx-auto shadow-inner">
+          <Scissors className="h-7 w-7 text-amber-400" />
+        </div>
+        <div className="space-y-1">
+          <h2 className="text-xl font-bold text-white">BarberOS - Fila Virtual</h2>
+          <p className="text-xs text-slate-400 max-w-sm">
+            Nenhuma barbearia ativa encontrada no momento. Cadastre seu estabelecimento para começar ou recarregue a página.
+          </p>
+        </div>
+        <div className="flex gap-3 pt-2">
+          <button
+            onClick={() => setIsOnboardingOpen(true)}
+            className="px-5 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs hover:bg-amber-400 transition cursor-pointer"
+          >
+            Cadastrar Barbearia
+          </button>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-5 py-2.5 rounded-xl bg-slate-800 text-slate-200 font-bold text-xs hover:bg-slate-700 transition cursor-pointer"
+          >
+            Recarregar
+          </button>
+        </div>
+
+        <OnboardingWizard
+          isOpen={isOnboardingOpen}
+          onClose={() => setIsOnboardingOpen(false)}
+          onSuccess={handleOnboardingSuccess}
+          onOpenLogin={() => {
+            setIsOnboardingOpen(false);
+            handleOpenLogin('OWNER');
+          }}
+        />
+      </div>
+    );
+  }
+
+  const selectedProfessional = selectedProfessionalId
+    ? StorageService.getProfessionalById(selectedProfessionalId)
+    : undefined;
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950 pb-16 md:pb-0">
       {/* PWA Install Banner */}
@@ -518,7 +621,7 @@ export default function App() {
 
       {/* Main Top Header */}
       <Header
-        currentOrg={currentOrg}
+        currentOrg={resolvedOrg}
         onSelectOrg={handleSelectOrg}
         currentRole={currentRole}
         onChangeRole={handleChangeRole}
@@ -546,14 +649,14 @@ export default function App() {
           onNavigate={handleNavigate}
           isOpenMobile={isMobileMenuOpen}
           onCloseMobile={() => setIsMobileMenuOpen(false)}
-          orgName={currentOrg.name}
+          orgName={resolvedOrg.name}
         />
 
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
           <div className="mx-auto max-w-7xl">
             {/* Subscription Alert for Owner if pending/not fully active */}
-            {currentRole === 'OWNER' && currentOrg.subscription?.status !== 'ATIVA' && currentRoute !== 'assinatura' && (
+            {currentRole === 'OWNER' && resolvedOrg.subscription?.status !== 'ATIVA' && currentRoute !== 'assinatura' && (
               <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-2xl bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-slate-900 border border-amber-500/40 p-4 text-xs shadow-lg">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20">
@@ -566,7 +669,7 @@ export default function App() {
                         R$ 79,90 / mês
                       </span>
                       <span className="text-[10px] uppercase font-semibold text-amber-300">
-                        {currentOrg.subscription?.status === 'TESTE_GRATIS' ? 'Período de Testes' : 'Aguardando Pagamento'}
+                        {resolvedOrg.subscription?.status === 'TESTE_GRATIS' ? 'Período de Testes' : 'Aguardando Pagamento'}
                       </span>
                     </div>
                     <p className="text-slate-300 mt-0.5">
@@ -596,7 +699,7 @@ export default function App() {
             {/* View Switcher */}
             {currentRoute === 'dashboard' && (
               <OwnerDashboard
-                organization={currentOrg}
+                organization={resolvedOrg}
                 onNavigate={handleNavigate}
                 onOpenNewAppointmentModal={() => setIsNewAppointmentOpen(true)}
                 onOpenNewQueueModal={() => setIsNewQueueOpen(true)}
@@ -607,17 +710,17 @@ export default function App() {
 
             {currentRoute === 'operacional' && (
               <SubscriptionPaywallGate
-                organization={currentOrg}
+                organization={resolvedOrg}
                 featureTitle="Modo Barbearia (Painel das Cadeiras)"
                 featureDescription="Visualização em tempo real das cadeiras em atendimento, tempo de corte e chamada da fila."
                 onUnlocked={() => {
-                  const updated = StorageService.getOrganizationById(currentOrg.id);
+                  const updated = StorageService.getOrganizationById(resolvedOrg.id);
                   if (updated) setCurrentOrg({ ...updated });
                 }}
                 onBackToDashboard={() => handleNavigate('dashboard')}
               >
                 <OperationalBoard
-                  organization={currentOrg}
+                  organization={resolvedOrg}
                   selectedProfessionalId={selectedProfessionalId}
                   onOpenNewQueueModal={() => setIsNewQueueOpen(true)}
                   onOpenNewAppointmentModal={() => setIsNewAppointmentOpen(true)}
@@ -627,7 +730,7 @@ export default function App() {
 
             {currentRoute === 'agenda' && (
               <AgendaView
-                organization={currentOrg}
+                organization={resolvedOrg}
                 selectedProfessionalId={selectedProfessionalId}
                 onOpenNewAppointmentModal={() => setIsNewAppointmentOpen(true)}
               />
@@ -635,64 +738,64 @@ export default function App() {
 
             {currentRoute === 'fila' && (
               <QueueManagement
-                organization={currentOrg}
+                organization={resolvedOrg}
                 onNavigateToQueue={(slug) => handleNavigateToPublic('QUEUE', slug)}
               />
             )}
 
             {currentRoute === 'clientes' && (
-              <CustomersView organization={currentOrg} />
+              <CustomersView organization={resolvedOrg} />
             )}
 
             {currentRoute === 'profissionais' && (
-              <ProfessionalsView organization={currentOrg} />
+              <ProfessionalsView organization={resolvedOrg} />
             )}
 
             {currentRoute === 'servicos' && (
-              <ServicesView organization={currentOrg} />
+              <ServicesView organization={resolvedOrg} />
             )}
 
             {currentRoute === 'financeiro' && (
               <SubscriptionPaywallGate
-                organization={currentOrg}
+                organization={resolvedOrg}
                 featureTitle="Controle Financeiro, Caixa e Comissões"
                 featureDescription="Fluxo de caixa, DRE gerencial, distribuição automática de comissões por barbeiro e despesas."
                 onUnlocked={() => {
-                  const updated = StorageService.getOrganizationById(currentOrg.id);
+                  const updated = StorageService.getOrganizationById(resolvedOrg.id);
                   if (updated) setCurrentOrg({ ...updated });
                 }}
                 onBackToDashboard={() => handleNavigate('dashboard')}
               >
-                <FinancialView organization={currentOrg} />
+                <FinancialView organization={resolvedOrg} />
               </SubscriptionPaywallGate>
             )}
 
             {currentRoute === 'assinatura' && (
-              <SubscriptionView organization={currentOrg} />
+              <SubscriptionView organization={resolvedOrg} />
             )}
 
             {currentRoute === 'relatorios' && (
               <SubscriptionPaywallGate
-                organization={currentOrg}
+                organization={resolvedOrg}
                 featureTitle="Relatórios e Indicadores Gerenciais"
                 featureDescription="Estatísticas de faturamento, serviços mais lucrativos, taxa de no-show e ranking de desempenho."
                 onUnlocked={() => {
-                  const updated = StorageService.getOrganizationById(currentOrg.id);
+                  const updated = StorageService.getOrganizationById(resolvedOrg.id);
                   if (updated) setCurrentOrg({ ...updated });
                 }}
                 onBackToDashboard={() => handleNavigate('dashboard')}
               >
-                <ReportsView organization={currentOrg} />
+                <ReportsView organization={resolvedOrg} />
               </SubscriptionPaywallGate>
             )}
 
             {currentRoute === 'avaliacoes' && (
-              <ReviewsView organization={currentOrg} />
+              <ReviewsView organization={resolvedOrg} />
             )}
 
             {currentRoute === 'qrcodes' && (
               <QRCodesView
-                organization={currentOrg}
+                organization={resolvedOrg}
                 onNavigateToQueue={(slug) => handleNavigateToPublic('QUEUE', slug)}
                 onNavigateToBooking={(slug) => handleNavigateToPublic('BOOKING', slug)}
                 onNavigateToStore={(slug) => handleNavigateToPublic('STORE', slug)}
@@ -701,7 +804,7 @@ export default function App() {
 
             {currentRoute === 'configuracoes' && (
               <SettingsView
-                organization={currentOrg}
+                organization={resolvedOrg}
                 onNavigate={handleNavigate}
               />
             )}
@@ -717,7 +820,7 @@ export default function App() {
             {/* Client Portal View */}
             {currentRoute === 'client-portal' && (
               <ClientPortal
-                organization={currentOrg}
+                organization={resolvedOrg}
                 onNavigateToBooking={(slug) => {
                   setPublicRouteParams({ type: 'BOOKING', slug });
                   setCurrentRoute('public-booking');
@@ -746,7 +849,7 @@ export default function App() {
 
       {/* Global Quick Action Modals */}
       <GlobalModals
-        organization={currentOrg}
+        organization={resolvedOrg}
         isNewAppointmentOpen={isNewAppointmentOpen}
         onCloseNewAppointment={() => setIsNewAppointmentOpen(false)}
         isNewQueueOpen={isNewQueueOpen}
@@ -768,10 +871,10 @@ export default function App() {
       <SubscriptionCheckoutModal
         isOpen={isSubscriptionModalOpen}
         onClose={() => setIsSubscriptionModalOpen(false)}
-        organization={currentOrg}
+        organization={resolvedOrg}
         onSuccess={() => {
           setIsSubscriptionModalOpen(false);
-          const updated = StorageService.getOrganizationById(currentOrg.id);
+          const updated = StorageService.getOrganizationById(resolvedOrg.id);
           if (updated) setCurrentOrg({ ...updated });
         }}
       />

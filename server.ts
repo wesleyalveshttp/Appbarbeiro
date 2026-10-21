@@ -252,6 +252,40 @@ app.get('/api/health', (req: Request, res: Response) => {
   });
 });
 
+app.get('/api/db', async (req: Request, res: Response) => {
+  try {
+    const orgs = await SupabaseDBService.getAllOrganizations();
+    const services: any[] = [];
+    const professionals: any[] = [];
+    const queue: any[] = [];
+    for (const org of orgs) {
+      const [s, p, q] = await Promise.all([
+        SupabaseDBService.getServicesForOrg(org.id).catch(() => []),
+        SupabaseDBService.getProfessionalsForOrg(org.id).catch(() => []),
+        SupabaseDBService.getQueueForOrganization(org.id).catch(() => []),
+      ]);
+      services.push(...s);
+      professionals.push(...p);
+      queue.push(...q);
+    }
+    res.json({
+      organizations: orgs,
+      services,
+      professionals,
+      queue,
+      appointments: [],
+      customers: [],
+      transactions: [],
+      reviews: [],
+      notifications: [],
+      auditLogs: [],
+      plans: [],
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Erro ao sincronizar banco: ' + err.message });
+  }
+});
+
 app.get('/api/supabase/status', async (req: Request, res: Response) => {
   const isConfigured = SupabaseDBService.isConfigured();
   if (!isConfigured) {
