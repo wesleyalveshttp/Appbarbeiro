@@ -19,13 +19,18 @@ import {
   RefreshCw,
   Send,
   HelpCircle,
-  ShieldCheck,
-  User
+  User,
+  Users,
+  Download,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { NotificationService, PushPermissionState } from '../../services/notificationService';
 import { Organization, WaitingQueueItem, Service, Professional } from '../../types';
 import { QRCodeModal } from '../common/QRCodeModal';
+import { PWAInstallCard } from '../common/PWAInstallCard';
+import { PWATopPopup } from '../common/PWATopPopup';
 import { getPublicBaseUrl } from '../../utils/publicUrl';
 
 interface PublicQueueProps {
@@ -33,6 +38,13 @@ interface PublicQueueProps {
   onBackToHome: () => void;
   onNavigateToBooking: (slug: string) => void;
 }
+const maskCustomerName = (name: string): string => {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) {
+    return parts[0].length > 2 ? `${parts[0].slice(0, 2)}***` : parts[0];
+  }
+  return `${parts[0]} ${parts[parts.length - 1][0]}.`;
+};
 
 export const PublicQueue: React.FC<PublicQueueProps> = ({
   slug,
@@ -63,6 +75,7 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
   const [secondsRemaining, setSecondsRemaining] = useState<number | null>(null);
   const [showQR, setShowQR] = useState(false);
   const [isVisualVibrating, setIsVisualVibrating] = useState(false);
+  const [showQueueList, setShowQueueList] = useState(false);
 
   useEffect(() => {
     const handleVibrateEvent = () => {
@@ -197,6 +210,12 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
   const myPositionIndex = myQueueItem ? activeWaitingList.findIndex(q => q.id === myQueueItem.id) : -1;
   const peopleAhead = myPositionIndex > 0 ? myPositionIndex : 0;
   const estimatedTime = myQueueItem ? myQueueItem.estimatedWaitMinutes : (peopleAhead + 1) * 20;
+
+  const clientsOnChair = queue.filter(q => q.status === 'NA CADEIRA');
+  const totalWaiting = activeWaitingList.length;
+  const progressPercent = totalWaiting > 0
+    ? Math.min(100, Math.max(10, Math.round(((totalWaiting - peopleAhead) / totalWaiting) * 100)))
+    : 100;
 
   // Approximate forecast clock time (e.g. "17:45")
   const forecastTimeStr = (() => {
@@ -467,6 +486,9 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
 
   return (
     <div className="min-h-screen bg-slate-950 text-white selection:bg-amber-500 selection:text-slate-950 pb-20">
+      {/* Floating Top PWA Installer Pop ("Pop no topo") */}
+      <PWATopPopup organizationName={organization.name} />
+
       {/* Top Header */}
       <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-800 bg-slate-950/90 px-4 sm:px-6 backdrop-blur-md">
         <div className="flex items-center gap-3">
@@ -487,6 +509,9 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* PWA Direct Download / Install button in header */}
+          <PWAInstallCard variant="compact" organizationName={organization.name} />
+
           <button
             onClick={() => setShowQR(true)}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-white bg-slate-900 border border-slate-800 transition"
@@ -506,6 +531,9 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
 
       {/* Main Container */}
       <div className="mx-auto max-w-md px-4 pt-5 space-y-5">
+        {/* PWA INSTALL / DOWNLOAD HERO CARD (#USER REQUIREMENT) */}
+        <PWAInstallCard variant="card" organizationName={organization.name} />
+
         {/* PUSH NOTIFICATION PERMISSION ACTIVATION BANNER (#Requirement 3 & 4) */}
         {permissionState !== 'granted' && (
           <div className="rounded-2xl bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-slate-900 border border-amber-500/40 p-4 text-xs shadow-lg space-y-2.5">
@@ -787,29 +815,129 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
                 )}
               </div>
 
-              {/* 3 Metric Cards */}
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800/80 text-left">
-                  <span className="text-slate-400 text-[10px] uppercase font-bold block">Tempo Estimado</span>
-                  <div className="text-xl font-black text-amber-400 font-mono mt-0.5">
-                    ~{estimatedTime} min
+              {/* Visual Queue Progress Bar */}
+              {myQueueItem.status !== 'NA CADEIRA' && (
+                <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 text-left space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-400 font-semibold">Progresso da sua vez na fila:</span>
+                    <span className="font-mono font-bold text-amber-400">{progressPercent}%</span>
                   </div>
-                  <span className="text-[10px] text-slate-500 mt-0.5 block">Previsão: {forecastTimeStr}</span>
+                  <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
+                    <div
+                      className="bg-gradient-to-r from-amber-500 to-emerald-400 h-full rounded-full transition-all duration-700 ease-out"
+                      style={{ width: `${progressPercent}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-[10px] text-slate-500">
+                    <span>Entrada na fila</span>
+                    <span className="text-amber-300 font-semibold">
+                      {peopleAhead === 0 ? 'Você é o próximo!' : `Faltam ${peopleAhead} ${peopleAhead === 1 ? 'pessoa' : 'pessoas'}`}
+                    </span>
+                    <span>Cadeira</span>
+                  </div>
+                </div>
+              )}
+
+              {/* 4 LIVE QUEUE STATS CARDS (#USER REQUIREMENT) */}
+              <div className="grid grid-cols-2 gap-2.5 text-xs text-left">
+                {/* 1. Quantas pessoas tem na fila */}
+                <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-0.5">
+                  <div className="flex items-center gap-1.5 text-slate-400 text-[10px] uppercase font-bold tracking-wider">
+                    <Users className="h-3.5 w-3.5 text-blue-400" />
+                    <span>Total na Fila</span>
+                  </div>
+                  <div className="text-xl font-black text-white font-mono">
+                    {totalWaiting} {totalWaiting === 1 ? 'pessoa' : 'pessoas'}
+                  </div>
+                  <span className="text-[10px] text-slate-500 block">
+                    {clientsOnChair.length > 0 ? `${clientsOnChair.length} na cadeira` : 'Aguardando atendimento'}
+                  </span>
                 </div>
 
-                <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800/80 text-left">
-                  <span className="text-slate-400 text-[10px] uppercase font-bold block">Status do Atendimento</span>
-                  <div className="text-sm font-black text-white uppercase mt-1 truncate">
-                    {myQueueItem.status === 'PROXIMO'
-                      ? 'É o Próximo'
-                      : myQueueItem.status === 'CHAMADO'
-                      ? 'Chamado!'
-                      : myQueueItem.status === 'NA CADEIRA'
-                      ? 'Na Cadeira'
-                      : 'Aguardando'}
+                {/* 2. Quantas faltam para sua vez */}
+                <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-0.5">
+                  <div className="flex items-center gap-1.5 text-slate-400 text-[10px] uppercase font-bold tracking-wider">
+                    <User className="h-3.5 w-3.5 text-amber-400" />
+                    <span>Na Sua Frente</span>
                   </div>
-                  <span className="text-[10px] text-emerald-400 font-medium block mt-0.5">Ao vivo</span>
+                  <div className="text-xl font-black text-amber-400 font-mono">
+                    {peopleAhead === 0 ? '0 (Próximo!)' : `${peopleAhead} ${peopleAhead === 1 ? 'pessoa' : 'pessoas'}`}
+                  </div>
+                  <span className="text-[10px] text-emerald-400 font-semibold block">
+                    {peopleAhead === 0 ? 'Prepare-se para sentar' : `Faltam ${peopleAhead} p/ sua vez`}
+                  </span>
                 </div>
+
+                {/* 3. Tempo Estimado */}
+                <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-0.5">
+                  <div className="flex items-center gap-1.5 text-slate-400 text-[10px] uppercase font-bold tracking-wider">
+                    <Clock className="h-3.5 w-3.5 text-amber-400" />
+                    <span>Espera Estimada</span>
+                  </div>
+                  <div className="text-xl font-black text-amber-400 font-mono">
+                    ~{estimatedTime} min
+                  </div>
+                  <span className="text-[10px] text-slate-500 block">Previsão: {forecastTimeStr}</span>
+                </div>
+
+                {/* 4. Notificação no Celular */}
+                <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-0.5">
+                  <div className="flex items-center gap-1.5 text-slate-400 text-[10px] uppercase font-bold tracking-wider">
+                    <BellRing className="h-3.5 w-3.5 text-emerald-400" />
+                    <span>Alerta no Celular</span>
+                  </div>
+                  <div className="text-sm font-black text-emerald-400 mt-1 flex items-center gap-1">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    <span>Toque & Vibração</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 block">Mesmo com tela desligada</span>
+                </div>
+              </div>
+
+              {/* Expandable Live Queue List (#Transparency) */}
+              <div className="border border-slate-800 rounded-2xl bg-slate-950/80 overflow-hidden text-left">
+                <button
+                  type="button"
+                  onClick={() => setShowQueueList(!showQueueList)}
+                  className="w-full p-3.5 flex items-center justify-between text-xs font-bold text-slate-300 hover:text-white transition cursor-pointer"
+                >
+                  <div className="flex items-center gap-2">
+                    <Users className="h-4 w-4 text-amber-400" />
+                    <span>Ver quem está na fila agora ({activeWaitingList.length})</span>
+                  </div>
+                  {showQueueList ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </button>
+
+                {showQueueList && (
+                  <div className="border-t border-slate-800/80 p-3 space-y-1.5 text-xs divide-y divide-slate-850">
+                    {activeWaitingList.map((item, idx) => {
+                      const isMe = item.id === myQueueItem.id;
+                      return (
+                        <div
+                          key={item.id}
+                          className={`pt-1.5 first:pt-0 flex items-center justify-between py-1.5 px-2.5 rounded-xl transition ${
+                            isMe ? 'bg-amber-500/15 border border-amber-500/40 font-bold text-amber-200' : 'text-slate-400'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-[11px] font-bold text-slate-500 w-6">#{idx + 1}º</span>
+                            <span className={isMe ? 'text-white font-bold' : 'text-slate-300'}>
+                              {isMe ? '👉 VOCÊ (Sua Senha)' : maskCustomerName(item.customerName)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 font-mono text-[10px]">
+                            <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-amber-300">
+                              Senha #{item.ticketNumber}
+                            </span>
+                            <span className="text-slate-500">
+                              {item.status === 'PROXIMO' ? 'Próximo' : item.status === 'CHAMADO' ? 'Chamado' : 'Aguardando'}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Ticket Details Summary */}
@@ -925,6 +1053,9 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* PWA Install Banner */}
+            <PWAInstallCard variant="card" organizationName={organization.name} />
 
             {/* Quick 1-Click Form */}
             <form onSubmit={handleJoinQueue} className="rounded-3xl bg-slate-900 border border-slate-800 p-6 space-y-4 shadow-xl">

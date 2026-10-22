@@ -8,6 +8,7 @@ import { Header } from './components/common/Header';
 import { Sidebar } from './components/common/Sidebar';
 import { BottomNav } from './components/common/BottomNav';
 import { PWAInstallBanner } from './components/common/PWAInstallBanner';
+import { PWATopPopup } from './components/common/PWATopPopup';
 import { GlobalModals } from './components/common/GlobalModals';
 import { SubscriptionPaywallGate } from './components/common/SubscriptionPaywallGate';
 
@@ -408,62 +409,71 @@ export default function App() {
   if (currentRoute === 'public-booking') {
     const activeSlug = (publicRouteParams.slug || currentOrg?.slug || '').trim();
     return (
-      <PublicBooking
-        slug={activeSlug}
-        onNavigateToQueue={(slug) => {
-          handleNavigateToPublic('QUEUE', slug);
-        }}
-        onBookingSuccess={(token) => {
-          handleNavigateToPublic('TRACKER', token);
-        }}
-        onBackToHome={() => {
-          const session = StorageService.getAuthSession();
-          if (session.isAuthenticated) {
-            handleNavigate(session.role === 'SUPER_ADMIN' ? 'superadmin' : 'dashboard');
-          } else {
-            handleNavigate('landing');
-          }
-        }}
-      />
+      <>
+        <PWATopPopup organizationName={currentOrg?.name} />
+        <PublicBooking
+          slug={activeSlug}
+          onNavigateToQueue={(slug) => {
+            handleNavigateToPublic('QUEUE', slug);
+          }}
+          onBookingSuccess={(token) => {
+            handleNavigateToPublic('TRACKER', token);
+          }}
+          onBackToHome={() => {
+            const session = StorageService.getAuthSession();
+            if (session.isAuthenticated) {
+              handleNavigate(session.role === 'SUPER_ADMIN' ? 'superadmin' : 'dashboard');
+            } else {
+              handleNavigate('landing');
+            }
+          }}
+        />
+      </>
     );
   }
 
   if (currentRoute === 'public-store') {
     const activeSlug = (publicRouteParams.slug || currentOrg?.slug || '').trim();
     return (
-      <PublicStorefront
-        slug={activeSlug}
-        onNavigateToBooking={(slug) => {
-          handleNavigateToPublic('BOOKING', slug);
-        }}
-        onNavigateToQueue={(slug) => {
-          handleNavigateToPublic('QUEUE', slug);
-        }}
-        onBackToHome={() => {
-          const session = StorageService.getAuthSession();
-          if (session.isAuthenticated) {
-            handleNavigate(session.role === 'SUPER_ADMIN' ? 'superadmin' : 'dashboard');
-          } else {
-            handleNavigate('landing');
-          }
-        }}
-      />
+      <>
+        <PWATopPopup organizationName={currentOrg?.name} />
+        <PublicStorefront
+          slug={activeSlug}
+          onNavigateToBooking={(slug) => {
+            handleNavigateToPublic('BOOKING', slug);
+          }}
+          onNavigateToQueue={(slug) => {
+            handleNavigateToPublic('QUEUE', slug);
+          }}
+          onBackToHome={() => {
+            const session = StorageService.getAuthSession();
+            if (session.isAuthenticated) {
+              handleNavigate(session.role === 'SUPER_ADMIN' ? 'superadmin' : 'dashboard');
+            } else {
+              handleNavigate('landing');
+            }
+          }}
+        />
+      </>
     );
   }
 
   if (currentRoute === 'public-tracker' && publicRouteParams.token) {
     return (
-      <PublicAppointmentTracker
-        token={publicRouteParams.token}
-        onBackToHome={() => {
-          const session = StorageService.getAuthSession();
-          if (session.isAuthenticated) {
-            handleNavigate(session.role === 'SUPER_ADMIN' ? 'superadmin' : 'dashboard');
-          } else {
-            handleNavigate('landing');
-          }
-        }}
-      />
+      <>
+        <PWATopPopup organizationName={currentOrg?.name} />
+        <PublicAppointmentTracker
+          token={publicRouteParams.token}
+          onBackToHome={() => {
+            const session = StorageService.getAuthSession();
+            if (session.isAuthenticated) {
+              handleNavigate(session.role === 'SUPER_ADMIN' ? 'superadmin' : 'dashboard');
+            } else {
+              handleNavigate('landing');
+            }
+          }}
+        />
+      </>
     );
   }
 
@@ -480,6 +490,7 @@ export default function App() {
   if (currentRoute === 'landing' || (!isPublicRoute && !activeSession.isAuthenticated)) {
     return (
       <>
+        <PWATopPopup organizationName={currentOrg?.name} />
         <LandingPage
           onStartOnboarding={() => setIsOnboardingOpen(true)}
           onEnterDashboard={() => handleOpenLogin('OWNER')}
@@ -545,6 +556,7 @@ export default function App() {
     };
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950 pb-16 md:pb-0">
+        <PWATopPopup organizationName={adminFallbackOrg.name} />
         <Header
           currentOrg={adminFallbackOrg}
           onSelectOrg={handleSelectOrg}
@@ -616,6 +628,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950 pb-16 md:pb-0">
+      {/* Floating Top PWA Pop-up Installer */}
+      <PWATopPopup organizationName={resolvedOrg.name} />
+
       {/* PWA Install Banner */}
       <PWAInstallBanner />
 
