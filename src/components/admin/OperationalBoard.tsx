@@ -15,7 +15,9 @@ import {
   RefreshCw,
   Plus,
   Sparkles,
-  FastForward
+  FastForward,
+  Trash2,
+  X
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization, Appointment, WaitingQueueItem, Professional, PaymentMethod } from '../../types';
@@ -137,6 +139,17 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
       await loadData();
     } else {
       setBoardFeedback(res.error || 'Não há outro cliente aguardando na fila.');
+    }
+    setTimeout(() => setBoardFeedback(null), 5000);
+  };
+
+  const handleMarkQueueNoShow = async (queueId: string, customerName?: string) => {
+    try {
+      await StorageService.markCalledCustomerNoShow(queueId, organization.id);
+      setBoardFeedback(`🚫 ${customerName || 'Cliente'} marcado como não compareceu. Cadeira liberada para o próximo!`);
+      await loadData();
+    } catch (err: any) {
+      console.error('Error marking no show:', err);
     }
     setTimeout(() => setBoardFeedback(null), 5000);
   };
@@ -311,6 +324,13 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
                           <div className="text-[11px] text-slate-400">{item.serviceName}</div>
                         </div>
                       </div>
+                      <button
+                        onClick={() => handleMarkQueueNoShow(item.id, item.customerName)}
+                        className="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition cursor-pointer"
+                        title="Não Compareceu / Desistiu"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </div>
 
                     <div className="text-[10px] text-slate-400 flex items-center gap-1.5">
@@ -391,20 +411,30 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
                     <div className="pt-2 flex flex-col gap-1.5">
                       <button
                         onClick={() => handleQueueSitOnChair(item.id)}
-                        className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 py-1.5 text-xs font-bold text-slate-950 transition"
+                        className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 py-1.5 text-xs font-bold text-slate-950 transition cursor-pointer"
                       >
                         <Armchair className="h-3.5 w-3.5" />
-                        Sentar na Cadeira
+                        <span>Sentar na Cadeira</span>
                       </button>
 
-                      <button
-                        onClick={() => handleSkipAndCutNext(item.id)}
-                        className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-blue-600/90 hover:bg-blue-600 py-1.5 text-xs font-bold text-white transition"
-                        title="Cliente não chegou? Pule e atenda o próximo da fila, mantendo a vez deste cliente intacta!"
-                      >
-                        <FastForward className="h-3.5 w-3.5" />
-                        Pular e Atender Próximo
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => handleSkipAndCutNext(item.id)}
+                          className="flex-1 flex items-center justify-center gap-1 rounded-lg bg-blue-600/90 hover:bg-blue-600 py-1.5 text-xs font-bold text-white transition cursor-pointer"
+                          title="Cliente não chegou? Pule e atenda o próximo da fila, mantendo a vez deste cliente intacta!"
+                        >
+                          <FastForward className="h-3.5 w-3.5" />
+                          <span>Pular / Próximo</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleMarkQueueNoShow(item.id, item.customerName)}
+                          className="px-2.5 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/30 text-xs font-bold transition cursor-pointer"
+                          title="Marcar como não compareceu e retirar da fila"
+                        >
+                          <span>Não Compareceu</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}

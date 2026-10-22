@@ -233,19 +233,34 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
     setTimeout(() => setCallFeedback(null), 6000);
   };
 
-  const handleMarkNoShow = (item: WaitingQueueItem) => {
-    if (confirm(`Marcar ${item.customerName} como 'Não Compareceu' e liberar a cadeira?`)) {
-      StorageService.markCalledCustomerNoShow(item.id);
-      loadData();
+  const handleMarkNoShow = async (item: WaitingQueueItem) => {
+    try {
+      await StorageService.markCalledCustomerNoShow(item.id, organization.id);
+      setCallFeedback({
+        type: 'warning',
+        title: '🚫 Não Compareceu',
+        message: `${item.customerName} (Senha #${item.ticketNumber}) foi marcado como 'Não Compareceu' e retirado da fila. A cadeira está liberada para o próximo!`
+      });
+      await loadData();
+    } catch (err: any) {
+      console.error('Error marking no show:', err);
     }
+    setTimeout(() => setCallFeedback(null), 6000);
   };
 
-  const handleCancel = (item: WaitingQueueItem) => {
-    const reason = prompt('Motivo do cancelamento/desistência:', 'Cliente desistiu');
-    if (reason !== null) {
-      StorageService.cancelQueueItem(item.id, reason);
-      loadData();
+  const handleCancel = async (item: WaitingQueueItem) => {
+    try {
+      await StorageService.cancelQueueItem(item.id, 'Cancelado pelo barbeiro', organization.id);
+      setCallFeedback({
+        type: 'warning',
+        title: '🗑️ Cliente Removido da Fila',
+        message: `${item.customerName} (Senha #${item.ticketNumber}) foi removido da fila.`
+      });
+      await loadData();
+    } catch (err: any) {
+      console.error('Error cancelling queue item:', err);
     }
+    setTimeout(() => setCallFeedback(null), 5000);
   };
 
   // Skip absent client, keep their turn intact in the queue, and seat the next client! (#USER REQUIREMENT)
@@ -499,7 +514,7 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
             }`}
           >
             <X className="h-3.5 w-3.5" />
-            <span>Desistências ({droppedItems.length})</span>
+            <span>Faltas / Desistências ({droppedItems.length})</span>
           </button>
 
           <button
@@ -649,10 +664,11 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
 
                       <button
                         onClick={() => handleCancel(item)}
-                        className="p-2.5 rounded-xl text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition cursor-pointer"
-                        title="Remover da fila"
+                        className="flex items-center gap-1 px-2.5 py-2.5 rounded-xl bg-slate-800 hover:bg-rose-950/80 text-slate-400 hover:text-rose-300 border border-slate-700 hover:border-rose-500/30 text-xs font-semibold transition cursor-pointer"
+                        title="Remover cliente da fila (desistência ou não compareceu)"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Remover</span>
                       </button>
                     </div>
                   </div>
@@ -769,9 +785,10 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
 
                       <button
                         onClick={() => handleMarkNoShow(item)}
-                        className="px-2.5 py-2.5 rounded-xl bg-slate-800 hover:bg-rose-950 text-rose-400 border border-slate-700 text-xs font-semibold transition cursor-pointer"
-                        title="Marcar como não compareceu e liberar cadeira"
+                        className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/40 text-xs font-bold shadow-md transition cursor-pointer"
+                        title="Marcar como não compareceu e liberar cadeira para o próximo"
                       >
+                        <X className="h-3.5 w-3.5" />
                         <span>Não Compareceu</span>
                       </button>
                     </div>

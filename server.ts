@@ -1320,17 +1320,31 @@ app.post('/api/queue/finish', async (req: Request, res: Response) => {
 });
 
 app.post('/api/queue/cancel', async (req: Request, res: Response) => {
-  const { queueId, organizationId } = req.body;
+  const { queueId, organizationId, reason } = req.body;
   if (!queueId) return res.status(400).json({ error: 'Identificador do item é obrigatório' });
 
   try {
     const item = await SupabaseDBService.getQueueItemById(queueId);
-    if (!item) return res.status(404).json({ error: 'Item não encontrado na fila' });
+    const targetOrgId = organizationId || item?.organizationId;
+    if (!targetOrgId) return res.status(400).json({ error: 'organizationId não encontrado' });
 
-    const targetOrgId = organizationId || item.organizationId;
     const updated = await SupabaseDBService.updateQueueItemStatus(queueId, targetOrgId, {
       status: 'CANCELADO',
+      notes: reason ? `[Cancelado: ${reason}]` : '[Cancelado]',
     });
+
+    // Advance next customer to PROXIMO if no one is next!
+    const queue = await SupabaseDBService.getQueueForOrganization(targetOrgId);
+    const remainingWaiting = queue
+      .filter((q: any) => (q.status === 'AGUARDANDO' || q.status === 'PROXIMO') && q.id !== queueId)
+      .sort((a: any, b: any) => a.ticketNumber - b.ticketNumber);
+
+    if (remainingWaiting.length > 0 && !remainingWaiting.some((q: any) => q.status === 'PROXIMO')) {
+      await SupabaseDBService.updateQueueItemStatus(remainingWaiting[0].id, targetOrgId, {
+        status: 'PROXIMO',
+        estimatedWaitMinutes: 5,
+      }).catch(() => {});
+    }
 
     broadcastSSE('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId });
     res.json({ success: true, item: updated });
@@ -1339,17 +1353,51 @@ app.post('/api/queue/cancel', async (req: Request, res: Response) => {
   }
 });
 
-app.post('/api/queue/mark-noshow', requireTenantAuth, async (req: Request, res: Response) => {
+app.post('/api/queue/mark-noshow', async (req: Request, res: Response) => {
   const { queueId, organizationId } = req.body;
-  const targetOrgId = organizationId || (req as any).session?.organizationId;
-  if (!queueId || !targetOrgId) return res.status(400).json({ error: 'Dados incompletos' });
+  if (!queueId) return res.status(400).json({ error: 'Identificador do item é obrigatório' });
 
   try {
+    const item = await SupabaseDBService.getQueueItemById(queueId);
+    const targetOrgId = organizationId || item?.organizationId;
+    if (!targetOrgId) return res.status(400).json({ error: 'organizationId não encontrado' });
+
     const updated = await SupabaseDBService.updateQueueItemStatus(queueId, targetOrgId, {
       status: 'NAO_COMPARECEU',
+      notes: '[Não compareceu após ser chamado]',
     });
-    broadcastSSE('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId });
-    res.json({ success: true, item: updated });
+
+    // AUTOMATIC ADVANCEMENT: Advance the next waiting customer to PROXIMO!
+    const queue = await SupabaseDBService.getQueueForOrganization(targetOrgId);
+    const remainingWaiting = queue
+      .filter((q: any) => (q.status === 'AGUARDANDO' || q.status === 'PROXIMO') && q.id !== queueId)
+      .sort((a: any, b: any) => a.ticketNumber - b.ticketNumber);
+
+    let promotedItem: any = null;
+    if (remainingWaiting.length > 0 && !remainingWaiting.some((q: any) => q.status === 'PROXIMO')) {
+      const firstInLine = remainingWaiting[0];
+      promotedItem = await SupabaseDBService.updateQueueItemStatus(firstInLine.id, targetOrgId, {
+        status: 'PROXIMO',
+        estimatedWaitMinutes: 5,
+      }).catch(() => null);
+
+      if (firstInLine.notificationToken) {
+        sendQueuePushNotification(
+          targetOrgId,
+          firstInLine.notificationToken,
+          '✂️ Prepare-se: Você é o próximo!',
+          `A cadeira foi liberada. Você agora é o 1º da fila na barbearia! (Senha #${firstInLine.ticketNumber})`
+        );
+      }
+    }
+
+    broadcastSSE('QUEUE_UPDATED', {
+      orgId: targetOrgId,
+      queueItemId: queueId,
+      promotedQueueItemId: promotedItem?.id,
+      noShow: true,
+    });
+    res.json({ success: true, item: updated, promotedItem });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

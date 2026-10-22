@@ -1752,28 +1752,56 @@ export class StorageService {
     return item;
   }
 
-  // Mark customer as no-show when tolerance window expires
-  static markCalledCustomerNoShow(queueId: string): WaitingQueueItem {
+  // Mark customer as no-show when tolerance window expires or barber clicks Não Compareceu
+  static async markCalledCustomerNoShow(queueId: string, orgId?: string): Promise<WaitingQueueItem> {
     const db = this.getDB();
     const item = db.queue.find(q => q.id === queueId);
-    if (!item) throw new Error('Item da fila não encontrado');
+    const targetOrgId = orgId || item?.organizationId || this.getCurrentOrgId();
 
-    item.status = 'NAO_COMPARECEU';
-    item.notes = `${item.notes || ''} [Não compareceu após o tempo de tolerância]`;
+    if (item) {
+      item.status = 'NAO_COMPARECEU';
+      item.notes = `${item.notes || ''} [Não compareceu após ser chamado]`;
+      this.recalculateQueueAlerts(db, targetOrgId, item.id);
+      this.saveDB(db);
+    }
 
-    this.recalculateQueueAlerts(db, item.organizationId, item.id);
-    this.saveDB(db);
+    // Authoritative server update
+    try {
+      const token = this.getAuthToken();
+      const res = await fetch('/api/queue/mark-noshow', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          queueId,
+          organizationId: targetOrgId
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.item && item) {
+          Object.assign(item, data.item);
+          this.saveDB(db);
+        }
+      }
+    } catch (err) {
+      console.warn('API /api/queue/mark-noshow warning:', err);
+    }
 
-    this.createNotification({
-      organizationId: item.organizationId,
-      type: 'QUEUE_CALLED',
-      title: 'Cliente Não Compareceu',
-      message: `${item.customerName} não compareceu dentro do prazo de tolerância. Próximo liberado.`
-    });
+    if (item) {
+      this.createNotification({
+        organizationId: targetOrgId,
+        type: 'QUEUE_CALLED',
+        title: 'Cliente Não Compareceu',
+        message: `${item.customerName} não compareceu dentro do prazo de tolerância. Cadeira liberada.`
+      });
+      this.logAudit(targetOrgId, 'Sistema', `Cliente ${item.customerName} marcado como Não Compareceu`);
+    }
 
-    this.logAudit(item.organizationId, 'Sistema', `Cliente ${item.customerName} marcado como Não Compareceu`);
-    broadcastEvent('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id, noShow: true });
-    return item;
+    broadcastEvent('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId, noShow: true });
+    return item as any;
   }
 
   static getWhatsAppCallLink(queueId: string): string {
@@ -1982,25 +2010,47 @@ export class StorageService {
     return item;
   }
 
-  static cancelQueueItem(queueId: string, reason?: string): WaitingQueueItem {
+  static async cancelQueueItem(queueId: string, reason?: string, orgId?: string): Promise<WaitingQueueItem> {
     const db = this.getDB();
     const item = db.queue.find(q => q.id === queueId);
-    if (!item) throw new Error('Item da fila não encontrado');
+    const targetOrgId = orgId || item?.organizationId || this.getCurrentOrgId();
 
-    item.status = 'DESISTIU';
-    if (reason) item.notes = `${item.notes || ''} [Cancelado: ${reason}]`;
+    if (item) {
+      item.status = 'DESISTIU';
+      if (reason) item.notes = `${item.notes || ''} [Cancelado: ${reason}]`;
 
-    // Recalculate PROXIMO if needed
-    const remaining = db.queue.filter(
-      q => q.organizationId === item.organizationId && q.status === 'AGUARDANDO'
-    );
-    if (remaining.length > 0 && !db.queue.some(q => q.organizationId === item.organizationId && q.status === 'PROXIMO')) {
-      remaining[0].status = 'PROXIMO';
+      // Recalculate PROXIMO if needed
+      const remaining = db.queue.filter(
+        q => q.organizationId === targetOrgId && q.status === 'AGUARDANDO'
+      );
+      if (remaining.length > 0 && !db.queue.some(q => q.organizationId === targetOrgId && q.status === 'PROXIMO')) {
+        remaining[0].status = 'PROXIMO';
+      }
+
+      this.saveDB(db);
     }
 
-    this.saveDB(db);
-    broadcastEvent('QUEUE_UPDATED', { orgId: item.organizationId, queueItemId: item.id });
-    return item;
+    // Authoritative Server call
+    try {
+      const token = this.getAuthToken();
+      await fetch('/api/queue/cancel', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          queueId,
+          organizationId: targetOrgId,
+          reason: reason || 'Cancelado pelo barbeiro'
+        })
+      });
+    } catch (err) {
+      console.warn('API /api/queue/cancel warning:', err);
+    }
+
+    broadcastEvent('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId });
+    return item as any;
   }
 
   // --- Transactions & Finance ---
