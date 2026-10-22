@@ -23,7 +23,8 @@ import {
   Users,
   Download,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  MessageCircle
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { NotificationService, PushPermissionState } from '../../services/notificationService';
@@ -44,6 +45,13 @@ const maskCustomerName = (name: string): string => {
     return parts[0].length > 2 ? `${parts[0].slice(0, 2)}***` : parts[0];
   }
   return `${parts[0]} ${parts[parts.length - 1][0]}.`;
+};
+
+const formatPhoneInput = (val: string): string => {
+  const digits = val.replace(/\D/g, '').slice(0, 11);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
 };
 
 export const PublicQueue: React.FC<PublicQueueProps> = ({
@@ -366,9 +374,7 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
       organizationId: organization.id,
       customerName: customerName.trim(),
       customerPhone: customerPhone.trim() || '(Celular Web)',
-      serviceId: selectedServiceId,
-      preferredProfessionalId: preferredProfId || undefined,
-      notes: notes.trim() || undefined,
+      serviceId: selectedServiceId || (services[0]?.id || ''),
       notificationToken: NotificationService.getDeviceToken(),
       subscription: pushSub,
     });
@@ -947,17 +953,13 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
                   <span className="font-bold text-white">{myQueueItem.customerName}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Serviço:</span>
-                  <span className="text-slate-200 font-semibold">{myQueueItem.serviceName}</span>
+                  <span className="text-slate-400">WhatsApp:</span>
+                  <span className="text-slate-200 font-mono font-semibold">{myQueueItem.customerPhone}</span>
                 </div>
-                {myQueueItem.preferredProfessionalId && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Profissional:</span>
-                    <span className="text-amber-300 font-medium">
-                      {professionals.find(p => p.id === myQueueItem.preferredProfessionalId)?.name || 'Qualquer'}
-                    </span>
-                  </div>
-                )}
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Corte Desejado:</span>
+                  <span className="text-amber-300 font-bold">{myQueueItem.serviceName}</span>
+                </div>
                 <div className="flex justify-between pt-1 border-t border-slate-800/80">
                   <span className="text-slate-400">Notificações no Celular:</span>
                   <span className="text-emerald-400 font-semibold flex items-center gap-1">
@@ -1057,11 +1059,19 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
             {/* PWA Install Banner */}
             <PWAInstallCard variant="card" organizationName={organization.name} />
 
-            {/* Quick 1-Click Form */}
-            <form onSubmit={handleJoinQueue} className="rounded-3xl bg-slate-900 border border-slate-800 p-6 space-y-4 shadow-xl">
+            {/* Ultra-Simplified 3-Field Form (#USER REQUIREMENT: Só Nome, WhatsApp e Corte Desejado) */}
+            <form onSubmit={handleJoinQueue} className="rounded-3xl bg-slate-900 border border-slate-800 p-5 sm:p-6 space-y-4 shadow-xl">
               <div>
-                <label className="text-xs font-bold text-slate-200 block mb-1">
-                  Seu Nome *
+                <h3 className="text-base font-black text-white">Preencha seus dados para entrar na fila:</h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Simples e rápido! Você será notificado no seu celular quando for sua vez.
+                </p>
+              </div>
+
+              {/* CAMPO 1: SEU NOME */}
+              <div>
+                <label className="text-xs font-bold text-slate-200 block mb-1.5">
+                  1. Seu Nome *
                 </label>
                 <div className="relative">
                   <input
@@ -1069,83 +1079,103 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
                     required
                     value={customerName}
                     onChange={(e) => setCustomerName(e.target.value)}
-                    placeholder="Ex: Pedro Ramos"
-                    className="w-full rounded-xl bg-slate-950 border border-slate-800 pl-10 pr-3.5 py-3 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500"
+                    placeholder="Como quer ser chamado? Ex: Lucas Silva"
+                    className="w-full rounded-2xl bg-slate-950 border border-slate-800 pl-11 pr-4 py-3.5 text-sm text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500 transition"
                   />
-                  <User className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500" />
+                  <User className="absolute left-3.5 top-3.5 h-5 w-5 text-slate-500" />
                 </div>
               </div>
 
+              {/* CAMPO 2: NÚMERO DE WHATSAPP */}
               <div>
-                <label className="text-xs font-bold text-slate-200 block mb-1">
-                  Seu Celular / WhatsApp <span className="text-slate-400 font-normal">(Opcional)</span>
+                <label className="text-xs font-bold text-slate-200 block mb-1.5 flex items-center justify-between">
+                  <span>2. Seu WhatsApp *</span>
+                  <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+                    <MessageCircle className="h-3 w-3" />
+                    <span>Aviso no Celular</span>
+                  </span>
                 </label>
                 <div className="relative">
                   <input
-                    type="text"
+                    type="tel"
+                    required
                     value={customerPhone}
-                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    onChange={(e) => setCustomerPhone(formatPhoneInput(e.target.value))}
                     placeholder="(11) 98765-4321"
-                    className="w-full rounded-xl bg-slate-950 border border-slate-800 pl-10 pr-3.5 py-3 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500 font-mono"
+                    className="w-full rounded-2xl bg-slate-950 border border-slate-800 pl-11 pr-4 py-3.5 text-sm text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500 font-mono transition"
                   />
-                  <Smartphone className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500" />
+                  <MessageCircle className="absolute left-3.5 top-3.5 h-5 w-5 text-emerald-400" />
                 </div>
               </div>
 
+              {/* CAMPO 3: CORTE DESEJADO */}
               <div>
-                <label className="text-xs font-bold text-slate-200 block mb-1">
-                  Serviço Desejado *
+                <label className="text-xs font-bold text-slate-200 block mb-2 flex items-center justify-between">
+                  <span>3. Corte Desejado *</span>
+                  <span className="text-[10px] text-slate-400">Toque para selecionar</span>
                 </label>
-                <select
-                  required
-                  value={selectedServiceId}
-                  onChange={(e) => setSelectedServiceId(e.target.value)}
-                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-3 text-xs text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
-                >
-                  {services.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} — R$ {s.price.toFixed(2)} ({s.durationMinutes} min)
-                    </option>
-                  ))}
-                </select>
+
+                {services.length === 0 ? (
+                  <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-xs text-slate-400 text-center">
+                    Corte Padrão da Barbearia
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                    {services.map((s) => {
+                      const isSelected = selectedServiceId === s.id;
+                      return (
+                        <button
+                          type="button"
+                          key={s.id}
+                          onClick={() => setSelectedServiceId(s.id)}
+                          className={`w-full p-3.5 rounded-2xl border text-left transition flex items-center justify-between cursor-pointer ${
+                            isSelected
+                              ? 'bg-amber-500/15 border-amber-500 ring-2 ring-amber-500/30 text-white shadow-md'
+                              : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0 pr-2">
+                            <div
+                              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl font-bold transition ${
+                                isSelected
+                                  ? 'bg-amber-500 text-slate-950'
+                                  : 'bg-slate-900 text-slate-400 border border-slate-800'
+                              }`}
+                            >
+                              <Scissors className="h-4 w-4" />
+                            </div>
+                            <div className="min-w-0">
+                              <span className="font-bold text-xs sm:text-sm block text-white truncate">{s.name}</span>
+                              <span className="text-[11px] text-slate-400 block mt-0.5">
+                                Duração: ~{s.durationMinutes || 30} min
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="text-right shrink-0">
+                            <span className="text-sm font-black text-amber-400 font-mono block">
+                              R$ {s.price.toFixed(2)}
+                            </span>
+                            {isSelected && (
+                              <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded uppercase mt-0.5 inline-block">
+                                Selecionado ✓
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-slate-200 block mb-1">
-                  Profissional de Preferência
-                </label>
-                <select
-                  value={preferredProfId}
-                  onChange={(e) => setPreferredProfId(e.target.value)}
-                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-3 text-xs text-white focus:outline-hidden focus:border-amber-500 cursor-pointer"
-                >
-                  <option value="">Qualquer profissional disponível (Mais Rápido)</option>
-                  {professionals.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-200 block mb-1">
-                  Observação <span className="text-slate-400 font-normal">(Opcional)</span>
-                </label>
-                <input
-                  type="text"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Ex: Estou no café em frente aguardando"
-                  className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500"
-                />
-              </div>
-
+              {/* BOTÃO GRANDE DE ENTRAR NA FILA */}
               <button
                 type="submit"
-                className="w-full flex items-center justify-center gap-2 rounded-2xl bg-amber-500 hover:bg-amber-400 py-4 text-xs font-black text-slate-950 shadow-xl shadow-amber-500/25 transition cursor-pointer"
+                disabled={!customerName.trim() || !customerPhone.trim() || !selectedServiceId}
+                className="w-full flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 py-4 text-sm font-black text-slate-950 shadow-xl shadow-amber-500/25 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transform active:scale-98"
               >
-                <span>ENTRAR NA FILA VIRTUAL AGORA</span>
+                <span>ENTRAR NA FILA AGORA</span>
                 <ArrowRight className="h-4 w-4" />
               </button>
             </form>
