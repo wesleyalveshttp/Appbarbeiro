@@ -30,8 +30,6 @@ import { StorageService } from '../../services/storage';
 import { NotificationService, PushPermissionState } from '../../services/notificationService';
 import { Organization, WaitingQueueItem, Service, Professional } from '../../types';
 import { QRCodeModal } from '../common/QRCodeModal';
-import { PWAInstallCard } from '../common/PWAInstallCard';
-import { PWATopPopup } from '../common/PWATopPopup';
 import { getPublicBaseUrl } from '../../utils/publicUrl';
 
 interface PublicQueueProps {
@@ -492,9 +490,6 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
 
   return (
     <div className="min-h-screen bg-slate-950 text-white selection:bg-amber-500 selection:text-slate-950 pb-20">
-      {/* Floating Top PWA Installer Pop ("Pop no topo") */}
-      <PWATopPopup organizationName={organization.name} />
-
       {/* Top Header */}
       <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-800 bg-slate-950/90 px-4 sm:px-6 backdrop-blur-md">
         <div className="flex items-center gap-3">
@@ -515,9 +510,6 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* PWA Direct Download / Install button in header */}
-          <PWAInstallCard variant="compact" organizationName={organization.name} />
-
           <button
             onClick={() => setShowQR(true)}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-white bg-slate-900 border border-slate-800 transition"
@@ -537,8 +529,6 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
 
       {/* Main Container */}
       <div className="mx-auto max-w-md px-4 pt-5 space-y-5">
-        {/* PWA INSTALL / DOWNLOAD HERO CARD (#USER REQUIREMENT) */}
-        <PWAInstallCard variant="card" organizationName={organization.name} />
 
         {/* PUSH NOTIFICATION PERMISSION ACTIVATION BANNER (#Requirement 3 & 4) */}
         {permissionState !== 'granted' && (
@@ -1055,9 +1045,6 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
                 </div>
               </div>
             </div>
-
-            {/* PWA Install Banner */}
-            <PWAInstallCard variant="card" organizationName={organization.name} />
 
             {/* Ultra-Simplified 3-Field Form (#USER REQUIREMENT: Só Nome, WhatsApp e Corte Desejado) */}
             <form onSubmit={handleJoinQueue} className="rounded-3xl bg-slate-900 border border-slate-800 p-5 sm:p-6 space-y-4 shadow-xl">
