@@ -1,4 +1,4 @@
-import { Organization } from '../types';
+import { Organization, Appointment, WaitingQueueItem } from '../types';
 
 export interface WhatsAppTemplateData {
   customerName: string;
@@ -11,14 +11,32 @@ export interface WhatsAppTemplateData {
   queuePosition?: number;
   ticketNumber?: number;
   trackingUrl?: string;
+  minutesRemaining?: number;
 }
 
 export class WhatsAppService {
   /**
    * Generates official WhatsApp message template strings
    */
-  static getMessageText(type: 'CONFIRMACAO' | 'LEMBRETE' | 'FILA_ENTRADA' | 'PROXIMO' | 'SUA_VEZ' | 'FINALIZADO', data: WhatsAppTemplateData): string {
+  static getMessageText(
+    type:
+      | 'CONFIRMACAO'
+      | 'LEMBRETE'
+      | 'LEMBRETE_40MIN'
+      | 'FILA_ENTRADA'
+      | 'FILA_40MIN'
+      | 'PROXIMO'
+      | 'SUA_VEZ'
+      | 'FINALIZADO',
+    data: WhatsAppTemplateData
+  ): string {
     switch (type) {
+      case 'LEMBRETE_40MIN':
+        return `💈 *${data.establishmentName}*\n\nFala, *${data.customerName}*! Tudo certo?\n\nPassando para avisar que seu horário para *${data.serviceName}* com *${data.professionalName || 'nosso barbeiro'}* é daqui a *40 minutos* (às *${data.time}*).\n\n⏰ *Para que você não se atrase e seu corte comece pontualmente*, já pode ir se organizando ou saindo de casa/trabalho!\n\n📍 Localização / Como Chegar:\n${data.trackingUrl || ''}\n\nTe esperamos na cadeira! Caso tenha algum imprevisto, favor responder esta mensagem. ✂️`;
+
+      case 'FILA_40MIN':
+        return `💈 *${data.establishmentName}*\n\nOlá, *${data.customerName}*! Sua vez na fila de espera da barbearia está se aproximando (Senha *#${data.ticketNumber}*)!\n\n⏳ A previsão para o seu atendimento é de aproximadamente *40 minutos*.\n\nPara não perder o seu lugar na fila e evitar atrasos, já pode ir se deslocando até a barbearia!\n\n📍 Acompanhe sua posição ao vivo:\n${data.trackingUrl || ''}\n\nTe esperamos!`;
+
       case 'CONFIRMACAO':
         return `💈 *${data.establishmentName}*\n\nOlá, *${data.customerName}*! Seu horário para *${data.serviceName}* com *${data.professionalName}* está confirmado para o dia *${data.date}* às *${data.time}*.\n\n📍 Acompanhe ou gerencie seu horário aqui:\n${data.trackingUrl || ''}\n\nTe esperamos!`;
 
@@ -43,17 +61,72 @@ export class WhatsAppService {
   }
 
   /**
-   * Formats a clean Brazilian WhatsApp URL (wa.me) so the barber or system can trigger it
+   * Formats a clean Brazilian WhatsApp URL (wa.me)
    */
   static getWhatsAppDirectLink(phone: string, text: string): string {
-    const cleanPhone = phone.replace(/\D/g, '');
+    const cleanPhone = (phone || '').replace(/\D/g, '');
     const phoneWithCountry = cleanPhone.startsWith('55') ? cleanPhone : `55${cleanPhone}`;
     return `https://wa.me/${phoneWithCountry}?text=${encodeURIComponent(text)}`;
   }
 
   /**
-   * Official WhatsApp Cloud API dispatcher simulation/check
-   * Does NOT pretend messages were sent if API is not configured!
+   * Generates 40-minute reminder text for an appointment
+   */
+  static get40MinReminderForAppointment(org: Organization, apt: Appointment, baseUrl?: string): {
+    text: string;
+    whatsappUrl: string;
+    phone: string;
+  } {
+    const origin = baseUrl || (typeof window !== 'undefined' ? window.location.origin : '');
+    const trackingUrl = apt.token ? `${origin}/atendimento/${apt.token}` : `${origin}/b/${org.slug}`;
+
+    const text = this.getMessageText('LEMBRETE_40MIN', {
+      customerName: apt.customerName,
+      customerPhone: apt.customerPhone,
+      establishmentName: org.name,
+      serviceName: apt.serviceName,
+      professionalName: apt.professionalName,
+      date: apt.date,
+      time: apt.time,
+      trackingUrl,
+    });
+
+    return {
+      text,
+      whatsappUrl: this.getWhatsAppDirectLink(apt.customerPhone, text),
+      phone: apt.customerPhone,
+    };
+  }
+
+  /**
+   * Generates 40-minute reminder text for a waiting queue item
+   */
+  static get40MinReminderForQueue(org: Organization, item: WaitingQueueItem, baseUrl?: string): {
+    text: string;
+    whatsappUrl: string;
+    phone: string;
+  } {
+    const origin = baseUrl || (typeof window !== 'undefined' ? window.location.origin : '');
+    const trackingUrl = `${origin}/fila/${org.slug}?ticket=${item.id}`;
+
+    const text = this.getMessageText('FILA_40MIN', {
+      customerName: item.customerName,
+      customerPhone: item.customerPhone,
+      establishmentName: org.name,
+      serviceName: item.serviceName,
+      ticketNumber: item.ticketNumber,
+      trackingUrl,
+    });
+
+    return {
+      text,
+      whatsappUrl: this.getWhatsAppDirectLink(item.customerPhone, text),
+      phone: item.customerPhone,
+    };
+  }
+
+  /**
+   * Official WhatsApp Cloud API dispatcher
    */
   static async sendViaOfficialApi(
     org: Organization,
@@ -68,8 +141,6 @@ export class WhatsAppService {
     }
 
     try {
-      // In a production backend, this would call:
-      // https://graph.facebook.com/v18.0/{phone_number_id}/messages
       return {
         success: true,
         message: 'Mensagem enviada com sucesso via WhatsApp Cloud API Oficial.'

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization, Appointment, Professional, Service, AppointmentStatus } from '../../types';
+import { WhatsAppReminder40MinCard } from '../common/WhatsAppReminder40MinCard';
 
 interface AgendaViewProps {
   organization: Organization;
@@ -183,6 +184,9 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
         </div>
       </div>
 
+      {/* 40-Minute WhatsApp Client Reminder Warning Card */}
+      <WhatsAppReminder40MinCard organization={organization} />
+
       {/* Filter by Professional Bar */}
       <div className="flex items-center justify-between gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
         <div className="flex items-center gap-2">
@@ -334,8 +338,29 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
               </div>
             </div>
 
+            {/* Quick 1-Click Fast Actions for Barber */}
+            <div className="mt-4 p-3 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
+              <span className="text-[10px] uppercase font-bold text-amber-400 tracking-wider">Ações Rápidas do Barbeiro:</span>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => handleStatusChange('NA CADEIRA')}
+                  className="flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs transition cursor-pointer"
+                >
+                  <Scissors className="h-4 w-4" />
+                  <span>SENTAR NA CADEIRA</span>
+                </button>
+                <button
+                  onClick={() => handleStatusChange('FINALIZADO')}
+                  className="flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition cursor-pointer"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>FINALIZAR CORTE</span>
+                </button>
+              </div>
+            </div>
+
             {/* Status Transition Actions (#11) */}
-            <div className="mt-4 space-y-2">
+            <div className="mt-3 space-y-2">
               <label className="text-xs font-semibold text-slate-300">Alterar Status:</label>
               <div className="flex flex-wrap gap-1.5">
                 {[

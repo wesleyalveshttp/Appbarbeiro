@@ -5,7 +5,20 @@ import { Download, Smartphone, X, Share2, PlusSquare } from 'lucide-react';
 export const PWAInstallBanner: React.FC = () => {
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissed, setDismissed] = useState(() => {
+    try {
+      return localStorage.getItem('pwa_banner_dismissed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleDismiss = () => {
+    setDismissed(true);
+    try {
+      localStorage.setItem('pwa_banner_dismissed', 'true');
+    } catch {}
+  };
 
   if (isInstalled || dismissed) return null;
 
@@ -20,14 +33,15 @@ export const PWAInstallBanner: React.FC = () => {
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={install}
-              className="flex items-center gap-1 rounded-md bg-amber-500 px-3 py-1 font-semibold text-slate-950 hover:bg-amber-400 transition"
+              className="flex items-center gap-1 rounded-md bg-amber-500 px-3 py-1 font-semibold text-slate-950 hover:bg-amber-400 transition cursor-pointer"
             >
               <Download className="h-3.5 w-3.5" />
               Instalar App
             </button>
             <button
-              onClick={() => setDismissed(true)}
-              className="p-1 text-slate-400 hover:text-white"
+              onClick={handleDismiss}
+              className="p-1 text-slate-400 hover:text-white transition cursor-pointer"
+              title="Fechar aviso"
             >
               <X className="h-3.5 w-3.5" />
             </button>

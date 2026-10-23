@@ -120,6 +120,12 @@ export interface Organization {
     whatsappApiKey?: string;
     whatsappPhoneNumberId?: string;
     publicAppUrl?: string;
+    enable40MinReminder?: boolean;
+    reminder40MinTemplate?: string;
+    autoPilotEnabled?: boolean; // Piloto Automático 100% autônomo ativo
+    autoCallNextClient?: boolean; // Chama o próximo cliente sozinho quando cadeira libera
+    autoSend40MinWhatsApp?: boolean; // Dispara lembrete de 40 min sozinho
+    autoOpenWhatsAppTab?: boolean; // Abre aba do WhatsApp automaticamente
   };
   planId: 'gratuito' | 'profissional' | 'premium';
   subscription: OrgSubscription;
@@ -207,6 +213,8 @@ export interface Appointment {
   onChairAt?: string;
   finishedAt?: string;
   reviewId?: string;
+  reminderSent40Min?: boolean;
+  reminderSent40MinAt?: string;
   createdAt: string;
 }
 
@@ -218,6 +226,7 @@ export interface WaitingQueueItem {
   customerPhone: string;
   serviceId: string;
   serviceName: string;
+  servicePrice?: number;
   preferredProfessionalId?: string; // or "ANY"
   assignedProfessionalId?: string;
   status: QueueStatus;
@@ -232,6 +241,8 @@ export interface WaitingQueueItem {
   notes?: string;
   estimatedWaitMinutes: number;
   // Native Push & In-App Notification tracking
+  notified40Min?: boolean;   // Lembrete WhatsApp 40 min antes
+  notified40MinAt?: string;
   notifiedStep3?: boolean;   // Aviso 1: Faltam 3 pessoas
   notifiedNext?: boolean;    // Aviso 2: Você é o próximo
   notifiedCalled?: boolean;  // Aviso 3: Chegou sua vez!

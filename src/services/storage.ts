@@ -16,6 +16,7 @@ import {
   AuthSession
 } from '../types';
 import { NotificationService } from './notificationService';
+import { WhatsAppService } from './whatsapp';
 import { supabase } from '../lib/supabase';
 
 const STORAGE_KEY = 'barberos_saas_data_v7_real';
@@ -1398,6 +1399,125 @@ export class StorageService {
     this.saveDB(db);
     broadcastEvent('APPOINTMENT_UPDATED', { appointmentId: apt.id, orgId: apt.organizationId });
     return apt;
+  }
+
+  // --- 40-Minute WhatsApp Reminder System (#USER REQUIREMENT) ---
+  static getPending40MinReminders(orgId: string): {
+    appointments: {
+      item: Appointment;
+      minutesUntil: number;
+      type: 'APPOINTMENT';
+      whatsappText: string;
+      whatsappUrl: string;
+      phone: string;
+    }[];
+    queue: {
+      item: WaitingQueueItem;
+      minutesUntil: number;
+      type: 'QUEUE';
+      whatsappText: string;
+      whatsappUrl: string;
+      phone: string;
+    }[];
+  } {
+    const db = this.getDB();
+    const org = db.organizations.find(o => o.id === orgId);
+    if (!org) return { appointments: [], queue: [] };
+
+    const todayStr = getTodayStr();
+    const nowMs = Date.now();
+
+    // 1. Check Appointments scheduled for today
+    const eligibleApts = db.appointments.filter(a => {
+      if (a.organizationId !== orgId) return false;
+      if (a.date !== todayStr) return false;
+      if (a.status === 'CANCELADO' || a.status === 'FINALIZADO' || a.status === 'NA CADEIRA' || a.status === 'FALTOU') {
+        return false;
+      }
+      if (a.reminderSent40Min) return false;
+      return true;
+    });
+
+    const pendingApts = eligibleApts
+      .map(apt => {
+        try {
+          const aptTimeMs = new Date(`${apt.date}T${apt.time}:00`).getTime();
+          const minutesUntil = Math.round((aptTimeMs - nowMs) / 60000);
+          // Target window: between -5 and 45 minutes from appointment
+          if (minutesUntil >= -5 && minutesUntil <= 45) {
+            const reminder = WhatsAppService.get40MinReminderForAppointment(org, apt);
+            return {
+              item: apt,
+              minutesUntil,
+              type: 'APPOINTMENT' as const,
+              whatsappText: reminder.text,
+              whatsappUrl: reminder.whatsappUrl,
+              phone: reminder.phone,
+            };
+          }
+        } catch {}
+        return null;
+      })
+      .filter(Boolean) as any[];
+
+    // 2. Check Queue Tickets (customers with ~40 min wait time)
+    const eligibleQueue = db.queue.filter(q => {
+      if (q.organizationId !== orgId) return false;
+      if (q.status !== 'AGUARDANDO' && q.status !== 'PROXIMO') return false;
+      if (q.notified40Min) return false;
+      const wait = q.estimatedWaitMinutes || 40;
+      return wait >= 20 && wait <= 45;
+    });
+
+    const pendingQueue = eligibleQueue.map(q => {
+      const reminder = WhatsAppService.get40MinReminderForQueue(org, q);
+      return {
+        item: q,
+        minutesUntil: q.estimatedWaitMinutes || 40,
+        type: 'QUEUE' as const,
+        whatsappText: reminder.text,
+        whatsappUrl: reminder.whatsappUrl,
+        phone: reminder.phone,
+      };
+    });
+
+    return {
+      appointments: pendingApts,
+      queue: pendingQueue,
+    };
+  }
+
+  static async mark40MinReminderSent(
+    id: string,
+    type: 'APPOINTMENT' | 'QUEUE',
+    orgId: string
+  ): Promise<{ success: boolean; item?: any }> {
+    const db = this.getDB();
+    const nowIso = new Date().toISOString();
+
+    if (type === 'APPOINTMENT') {
+      const apt = db.appointments.find(a => a.id === id);
+      if (apt) {
+        apt.reminderSent40Min = true;
+        apt.reminderSent40MinAt = nowIso;
+        this.saveDB(db);
+        this.logAudit(orgId, 'Sistema', `Lembrete WhatsApp de 40 min enviado para ${apt.customerName}`);
+        broadcastEvent('APPOINTMENT_UPDATED', { appointmentId: id, orgId, reminder40Min: true });
+        return { success: true, item: apt };
+      }
+    } else {
+      const q = db.queue.find(item => item.id === id);
+      if (q) {
+        q.notified40Min = true;
+        q.notified40MinAt = nowIso;
+        this.saveDB(db);
+        this.logAudit(orgId, 'Sistema', `Lembrete WhatsApp de 40 min na fila enviado para ${q.customerName}`);
+        broadcastEvent('QUEUE_UPDATED', { queueItemId: id, orgId, reminder40Min: true });
+        return { success: true, item: q };
+      }
+    }
+
+    return { success: false };
   }
 
   // --- Real-Time Waiting Queue ---

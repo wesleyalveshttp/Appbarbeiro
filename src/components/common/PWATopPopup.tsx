@@ -7,9 +7,7 @@ import {
   Share2,
   PlusSquare,
   X,
-  Sparkles,
-  ArrowRight,
-  ChevronDown
+  Sparkles
 } from 'lucide-react';
 
 interface PWATopPopupProps {
@@ -24,21 +22,22 @@ export const PWATopPopup: React.FC<PWATopPopupProps> = ({
   const [showGenericModal, setShowGenericModal] = useState(false);
   const [isInstalling, setIsInstalling] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
 
-  // Check if user previously minimized this in the current session
+  // Check if user previously closed this popup
   useEffect(() => {
     try {
-      const stored = sessionStorage.getItem('pwa_top_pop_minimized');
+      const stored =
+        localStorage.getItem('pwa_top_popup_dismissed_v2') ||
+        sessionStorage.getItem('pwa_top_popup_dismissed_v2');
       if (stored === 'true') {
-        setIsMinimized(true);
+        setIsDismissed(true);
       }
     } catch {
       // Ignore storage errors in private browsing
     }
   }, []);
 
-  // Do not show if the app is already installed and opened from the home screen
+  // Do not show if the app is already installed or if user clicked X to close
   if (isInstalled || isDismissed) {
     return null;
   }
@@ -58,94 +57,75 @@ export const PWATopPopup: React.FC<PWATopPopupProps> = ({
     }
   };
 
-  const handleMinimize = () => {
-    setIsMinimized(true);
+  // When clicking X, the popup COMPLETELY disappears from the dashboard and never blocks again
+  const handleClose = () => {
+    setIsDismissed(true);
     try {
-      sessionStorage.setItem('pwa_top_pop_minimized', 'true');
+      localStorage.setItem('pwa_top_popup_dismissed_v2', 'true');
+      sessionStorage.setItem('pwa_top_popup_dismissed_v2', 'true');
     } catch {
-      // Ignore
-    }
-  };
-
-  const handleRestore = () => {
-    setIsMinimized(false);
-    try {
-      sessionStorage.removeItem('pwa_top_pop_minimized');
-    } catch {
-      // Ignore
+      // Ignore storage errors
     }
   };
 
   return (
     <>
-      {/* If minimized, show a compact floating pill at the top right */}
-      {isMinimized ? (
-        <div className="fixed top-2 right-2 sm:right-4 z-50 animate-fade-in">
-          <button
-            onClick={handleRestore}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 font-black text-xs shadow-xl shadow-amber-500/30 border border-amber-300 hover:scale-105 active:scale-95 transition cursor-pointer"
-            title="Abrir instalador do app para a tela de início"
-          >
-            <Smartphone className="h-3.5 w-3.5 text-slate-950" />
-            <span>📲 Instalar App</span>
-          </button>
-        </div>
-      ) : (
-        /* Top Floating Pop-up Installer Card ("Pop no topo") */
-        <div className="fixed top-2 inset-x-2 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 sm:w-[480px] z-50 animate-in slide-in-from-top-3 duration-300">
-          <div className="relative rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 border-2 border-amber-500/70 p-3 sm:p-3.5 shadow-2xl shadow-amber-500/20 backdrop-blur-md">
-            {/* Top Amber Accent Glow Line */}
-            <div className="absolute top-0 inset-x-6 h-0.5 bg-gradient-to-r from-transparent via-amber-400 to-transparent" />
+      {/* Top Floating Pop-up Installer Card */}
+      <div className="fixed top-2 inset-x-2 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 sm:w-[480px] z-50 animate-in slide-in-from-top-3 duration-300">
+        <div className="relative rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 border-2 border-amber-500/70 p-3 sm:p-3.5 shadow-2xl shadow-amber-500/20 backdrop-blur-md">
+          {/* Top Amber Accent Glow Line */}
+          <div className="absolute top-0 inset-x-6 h-0.5 bg-gradient-to-r from-transparent via-amber-400 to-transparent" />
 
-            <div className="flex items-center justify-between gap-2.5">
-              {/* App Icon with neon pulse */}
-              <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500 to-amber-400 text-slate-950 font-black shadow-lg shadow-amber-500/30">
-                <Smartphone className="h-6 w-6 text-slate-950" />
-                <span className="absolute -top-1 -right-1 flex h-3 w-3">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+          <div className="flex items-center justify-between gap-2.5">
+            {/* App Icon with neon pulse */}
+            <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500 to-amber-400 text-slate-950 font-black shadow-lg shadow-amber-500/30">
+              <Smartphone className="h-6 w-6 text-slate-950" />
+              <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+              </span>
+            </div>
+
+            {/* Text Info */}
+            <div className="flex-1 min-w-0 pr-1">
+              <div className="flex items-center gap-1.5">
+                <span className="font-black text-white text-xs sm:text-sm tracking-tight truncate">
+                  Instalar App na Tela de Início
+                </span>
+                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-amber-500 text-slate-950 uppercase shrink-0">
+                  Novo
                 </span>
               </div>
+              <p className="text-slate-300 text-[10px] sm:text-[11px] leading-tight line-clamp-2 mt-0.5">
+                Acompanhe sua vez sem navegador aberto. O celular toca e vibra quando for sua vez!
+              </p>
+            </div>
 
-              {/* Text Info */}
-              <div className="flex-1 min-w-0 pr-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="font-black text-white text-xs sm:text-sm tracking-tight truncate">
-                    Instalar App na Tela de Início
-                  </span>
-                  <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-amber-500 text-slate-950 uppercase shrink-0">
-                    Novo
-                  </span>
-                </div>
-                <p className="text-slate-300 text-[10px] sm:text-[11px] leading-tight line-clamp-2 mt-0.5">
-                  Acompanhe sua vez sem navegador aberto. O celular toca e vibra quando for sua vez!
-                </p>
-              </div>
+            {/* Action & Close Buttons */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={handleInstallClick}
+                disabled={isInstalling}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-md shadow-amber-500/25 active:scale-95 transition cursor-pointer disabled:opacity-50"
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span className="hidden xs:inline">{isInstalling ? 'Instalando...' : 'Instalar'}</span>
+                <span className="xs:hidden">Instalar</span>
+              </button>
 
-              {/* Action & Close Buttons */}
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  onClick={handleInstallClick}
-                  disabled={isInstalling}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-md shadow-amber-500/25 active:scale-95 transition cursor-pointer disabled:opacity-50"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  <span className="hidden xs:inline">{isInstalling ? 'Instalando...' : 'Instalar'}</span>
-                  <span className="xs:hidden">Instalar</span>
-                </button>
-
-                <button
-                  onClick={handleMinimize}
-                  className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-                  title="Minimizar pop"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
+              {/* X BUTTON: DISAPPEARS COMPLETELY */}
+              <button
+                onClick={handleClose}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                title="Fechar e dispensar instalador"
+                aria-label="Fechar pop-up"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
           </div>
         </div>
-      )}
+      </div>
 
       {/* iOS Safari step-by-step installation guide */}
       {showIOSModal && (

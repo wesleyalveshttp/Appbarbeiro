@@ -43,6 +43,7 @@ app.use((req, res, next) => {
     url.startsWith('/mercadopago/') ||
     url.startsWith('/push/') ||
     url.startsWith('/health') ||
+    url.startsWith('/reminders') ||
     url.startsWith('/organizations')
   )) {
     req.url = '/api' + url;
@@ -222,7 +223,7 @@ async function sendQueuePushNotification(
   title: string,
   body: string,
   options?: {
-    type?: 'CALLED' | 'NEXT' | 'STEP_3';
+    type?: 'CALLED' | 'NEXT' | 'STEP_3' | 'REMINDER_40MIN' | string;
     ticketNumber?: number;
     url?: string;
   }
@@ -1800,6 +1801,121 @@ app.delete('/api/appointments/:id', requireTenantAuth, async (req: Request, res:
 });
 
 // ---------------------------------------------------------------------------
+// 13.1 40-MINUTE WHATSAPP REMINDER ENDPOINTS (#USER REQUIREMENT)
+// ---------------------------------------------------------------------------
+app.get('/api/reminders/40min/:orgId', async (req: Request, res: Response) => {
+  const { orgId } = req.params;
+  if (!orgId) return res.status(400).json({ error: 'orgId é obrigatório' });
+
+  try {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const nowMs = Date.now();
+
+    const [appointments, queue, org] = await Promise.all([
+      SupabaseDBService.getAppointmentsForOrg(orgId, todayStr).catch(() => []),
+      SupabaseDBService.getQueueForOrganization(orgId).catch(() => []),
+      SupabaseDBService.getOrganizationById(orgId).catch(() => null),
+    ]);
+
+    const orgName = org?.name || 'Barbearia';
+
+    const pendingAppointments = (appointments || [])
+      .filter((a: any) => {
+        if (a.date !== todayStr) return false;
+        if (['CANCELADO', 'FINALIZADO', 'NA CADEIRA', 'FALTOU'].includes(a.status)) return false;
+        if (a.reminderSent40Min) return false;
+        try {
+          const aptTimeMs = new Date(`${a.date}T${a.time}:00`).getTime();
+          const minutesUntil = Math.round((aptTimeMs - nowMs) / 60000);
+          return minutesUntil >= -5 && minutesUntil <= 45;
+        } catch {
+          return false;
+        }
+      })
+      .map((a: any) => {
+        const aptTimeMs = new Date(`${a.date}T${a.time}:00`).getTime();
+        const minutesUntil = Math.max(0, Math.round((aptTimeMs - nowMs) / 60000));
+        const rawPhone = (a.customerPhone || '').replace(/\D/g, '');
+        const phone = rawPhone.length <= 11 && !rawPhone.startsWith('55') ? `55${rawPhone}` : rawPhone;
+        const text = `Olá ${a.customerName}! 💈 Lembrando que seu corte na *${orgName}* está agendado para hoje às *${a.time}* (em aproximadamente ~40 minutos). Já estamos preparando tudo para você. Por favor, avise se houver algum imprevisto. Até logo! ✂️`;
+        return {
+          id: a.id,
+          customerName: a.customerName,
+          phone,
+          serviceName: a.serviceName,
+          time: a.time,
+          minutesUntil,
+          type: 'APPOINTMENT',
+          whatsappText: text,
+          whatsappUrl: `https://wa.me/${phone}?text=${encodeURIComponent(text)}`,
+        };
+      });
+
+    const pendingQueue = (queue || [])
+      .filter((q: any) => {
+        if (q.status !== 'AGUARDANDO' && q.status !== 'PROXIMO') return false;
+        if (q.notified40Min) return false;
+        const wait = q.estimatedWaitMinutes || 40;
+        return wait >= 20 && wait <= 45;
+      })
+      .map((q: any) => {
+        const wait = q.estimatedWaitMinutes || 40;
+        const rawPhone = (q.customerPhone || '').replace(/\D/g, '');
+        const phone = rawPhone.length <= 11 && !rawPhone.startsWith('55') ? `55${rawPhone}` : rawPhone;
+        const text = `Olá ${q.customerName}! 💈 Sua vez na *${orgName}* (Senha *#${q.ticketNumber}*) está prevista para daqui a aproximadamente *${wait} minutos*. Fique à vontade para se aproximar da barbearia! ✂️`;
+        return {
+          id: q.id,
+          customerName: q.customerName,
+          phone,
+          serviceName: q.serviceName,
+          minutesUntil: wait,
+          ticketNumber: q.ticketNumber,
+          type: 'QUEUE',
+          whatsappText: text,
+          whatsappUrl: `https://wa.me/${phone}?text=${encodeURIComponent(text)}`,
+        };
+      });
+
+    return res.json({
+      success: true,
+      pendingAppointments,
+      pendingQueue,
+      totalPending: pendingAppointments.length + pendingQueue.length,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/reminders/mark-sent', async (req: Request, res: Response) => {
+  const { id, type, organizationId } = req.body;
+  if (!id || !type || !organizationId) {
+    return res.status(400).json({ error: 'id, type e organizationId são obrigatórios' });
+  }
+
+  try {
+    const nowIso = new Date().toISOString();
+    if (type === 'APPOINTMENT') {
+      await SupabaseDBService.updateAppointment(id, organizationId, {
+        reminderSent40Min: true,
+        reminderSent40MinAt: nowIso,
+      } as any).catch(() => null);
+      broadcastSSE('APPOINTMENTS_UPDATED', { orgId: organizationId, appointmentId: id });
+    } else {
+      await SupabaseDBService.updateQueueItemStatus(id, organizationId, {
+        notified40Min: true,
+        notified40MinAt: nowIso,
+      } as any).catch(() => null);
+      broadcastSSE('QUEUE_UPDATED', { orgId: organizationId, queueItemId: id });
+    }
+
+    return res.json({ success: true, id, type, sentAt: nowIso });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // 14. CUSTOMERS & TRANSACTIONS (TENANT ISOLATED & PROTECTED)
 // ---------------------------------------------------------------------------
 app.get('/api/customers', requireTenantAuth, async (req: Request, res: Response) => {
@@ -2062,6 +2178,94 @@ app.all('/api/*', (req: Request, res: Response) => {
     status: 404,
   });
 });
+
+// ---------------------------------------------------------------------------
+// 16.1 SERVER-SIDE AUTONOMOUS ENGINE (PILOTO AUTOMÁTICO DE LEMBRETES & FILA)
+// ---------------------------------------------------------------------------
+async function runServerAutoPilotCycle() {
+  try {
+    const orgs = await SupabaseDBService.getAllOrganizations().catch(() => []);
+    const todayStr = new Date().toISOString().split('T')[0];
+    const nowMs = Date.now();
+
+    for (const org of orgs) {
+      if (!org.isActive) continue;
+      const orgId = org.id;
+
+      // 1. Process 40-Minute Reminders
+      const [appointments, queue] = await Promise.all([
+        SupabaseDBService.getAppointmentsForOrg(orgId, todayStr).catch(() => []),
+        SupabaseDBService.getQueueForOrganization(orgId).catch(() => []),
+      ]);
+
+      // Check appointments for today
+      for (const apt of appointments || []) {
+        if (['CANCELADO', 'FINALIZADO', 'NA CADEIRA', 'FALTOU'].includes(apt.status)) continue;
+        if (apt.reminderSent40Min) continue;
+        try {
+          const aptTimeMs = new Date(`${apt.date}T${apt.time}:00`).getTime();
+          const minutesUntil = Math.round((aptTimeMs - nowMs) / 60000);
+          if (minutesUntil >= -5 && minutesUntil <= 45) {
+            await SupabaseDBService.updateAppointment(apt.id, orgId, {
+              reminderSent40Min: true,
+              reminderSent40MinAt: new Date().toISOString(),
+            } as any).catch(() => null);
+
+            broadcastSSE('AUTOPILOT_REMINDER', {
+              orgId,
+              type: 'APPOINTMENT',
+              customerName: apt.customerName,
+              serviceName: apt.serviceName,
+              time: apt.time,
+              minutesUntil,
+            });
+            broadcastSSE('APPOINTMENTS_UPDATED', { orgId, appointmentId: apt.id });
+          }
+        } catch {}
+      }
+
+      // Check queue tickets ~40 min wait
+      for (const q of queue || []) {
+        if (q.status !== 'AGUARDANDO' && q.status !== 'PROXIMO') continue;
+        if (q.notified40Min) continue;
+        const wait = q.estimatedWaitMinutes || 40;
+        if (wait >= 20 && wait <= 45) {
+          await SupabaseDBService.updateQueueItemStatus(q.id, orgId, {
+            notified40Min: true,
+            notified40MinAt: new Date().toISOString(),
+          } as any).catch(() => null);
+
+          if (q.notificationToken) {
+            sendQueuePushNotification(
+              orgId,
+              q.notificationToken,
+              `💈 ${org.name}: Sua vez está chegando!`,
+              `Sua previsão de corte (Senha #${q.ticketNumber}) é em aproximadamente ${wait} minutos. Venha para a barbearia!`,
+              { type: 'REMINDER_40MIN', ticketNumber: q.ticketNumber }
+            );
+          }
+
+          broadcastSSE('AUTOPILOT_REMINDER', {
+            orgId,
+            type: 'QUEUE',
+            customerName: q.customerName,
+            serviceName: q.serviceName,
+            ticketNumber: q.ticketNumber,
+            minutesUntil: wait,
+          });
+          broadcastSSE('QUEUE_UPDATED', { orgId, queueItemId: q.id });
+        }
+      }
+    }
+  } catch (err) {
+    // Suppress background errors
+  }
+}
+
+// Start recurring server-side autonomous engine every 30s
+if (!isVercel) {
+  setInterval(runServerAutoPilotCycle, 30000);
+}
 
 // ---------------------------------------------------------------------------
 // 17. SERVER STARTUP & VITE (DEV OR PROD)

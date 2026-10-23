@@ -22,6 +22,9 @@ import {
 import { StorageService } from '../../services/storage';
 import { Organization, Appointment, WaitingQueueItem, Professional, PaymentMethod } from '../../types';
 import { WhatsAppService } from '../../services/whatsapp';
+import { WhatsAppReminder40MinCard } from '../common/WhatsAppReminder40MinCard';
+import { AutoPilotChairsBar } from './AutoPilotChairsBar';
+import { AutoPilotService } from '../../services/autoPilot';
 
 interface OperationalBoardProps {
   organization: Organization;
@@ -175,8 +178,79 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
     } else {
       StorageService.finishQueueItem(finishingItem.id, selectedPaymentMethod);
     }
+    AutoPilotService.playChime('finish');
     setFinishingItem(null);
     loadData();
+    AutoPilotService.runCycle(organization).catch(() => {});
+  };
+
+  // Autonomous next candidate to be seated on any free chair
+  const nextCandidate = (() => {
+    // 1. Arrived appointment
+    const arrivedApt = waitingAppointments.find(a => a.status === 'CHEGOU');
+    if (arrivedApt) {
+      return {
+        type: 'APPOINTMENT' as const,
+        name: arrivedApt.customerName,
+        serviceName: arrivedApt.serviceName,
+        time: arrivedApt.time,
+        id: arrivedApt.id,
+        raw: arrivedApt,
+      };
+    }
+
+    // 2. Called/Next in Queue
+    const calledQ = nextQueue.find(q => q.status === 'CHAMADO' || q.status === 'PROXIMO' || q.status === 'A_CAMINHO');
+    if (calledQ) {
+      return {
+        type: 'QUEUE' as const,
+        name: calledQ.customerName,
+        serviceName: calledQ.serviceName,
+        ticketNumber: calledQ.ticketNumber,
+        id: calledQ.id,
+        raw: calledQ,
+      };
+    }
+
+    // 3. Upcoming appointment
+    const upcomingApt = nextAppointments[0];
+    if (upcomingApt) {
+      return {
+        type: 'APPOINTMENT' as const,
+        name: upcomingApt.customerName,
+        serviceName: upcomingApt.serviceName,
+        time: upcomingApt.time,
+        id: upcomingApt.id,
+        raw: upcomingApt,
+      };
+    }
+
+    // 4. First waiting queue customer
+    const firstQ = waitingQueue[0];
+    if (firstQ) {
+      return {
+        type: 'QUEUE' as const,
+        name: firstQ.customerName,
+        serviceName: firstQ.serviceName,
+        ticketNumber: firstQ.ticketNumber,
+        id: firstQ.id,
+        raw: firstQ,
+      };
+    }
+
+    return null;
+  })();
+
+  const handleSeatCandidate = async (candidate: any, professionalId: string) => {
+    if (candidate.type === 'APPOINTMENT') {
+      StorageService.updateAppointmentStatus(candidate.id, 'NA CADEIRA');
+      setBoardFeedback(`💈 ${candidate.name} acomodado na cadeira! Bom atendimento.`);
+    } else {
+      await StorageService.moveQueueToChair(candidate.id, professionalId, organization.id);
+      setBoardFeedback(`💈 ${candidate.name} (${candidate.ticketNumber ? `Senha #${candidate.ticketNumber}` : 'Fila'}) acomodado na cadeira!`);
+    }
+    await loadData();
+    setTimeout(() => setBoardFeedback(null), 5000);
   };
 
   const calculateMinutesElapsed = (timestampStr?: string) => {
@@ -245,6 +319,20 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
           </button>
         </div>
       </div>
+
+      {/* 100% Autonomous Pilot Chairs Fast-Track Bar */}
+      <AutoPilotChairsBar
+        organization={organization}
+        professionals={professionals}
+        onChairAppointments={onChairAppointments}
+        onChairQueue={onChairQueue}
+        nextCandidate={nextCandidate}
+        onSeatNext={handleSeatCandidate}
+        onFinishChair={handleOpenFinishModal}
+      />
+
+      {/* 40-Minute Automatic WhatsApp Warning Card */}
+      <WhatsAppReminder40MinCard organization={organization} />
 
       {/* Real-time Feedback Toast */}
       {boardFeedback && (

@@ -32,6 +32,8 @@ import { StorageService } from '../../services/storage';
 import { Organization, WaitingQueueItem, Professional, Service } from '../../types';
 import { QRCodeModal } from '../common/QRCodeModal';
 import { getPublicBaseUrl } from '../../utils/publicUrl';
+import { WhatsAppReminder40MinCard } from '../common/WhatsAppReminder40MinCard';
+import { AutoPilotService } from '../../services/autoPilot';
 
 interface QueueManagementProps {
   organization: Organization;
@@ -108,9 +110,13 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
       loadData();
     });
 
+    // Start autonomous pilot loop
+    AutoPilotService.startAutoPilot(organization, 12000);
+
     return () => {
       clearInterval(interval);
       unsub();
+      AutoPilotService.stopAutoPilot(organization.id);
     };
   }, [organization.id]);
 
@@ -452,6 +458,9 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
           </div>
         </div>
       </div>
+
+      {/* 40-Minute Automatic WhatsApp Warning Card */}
+      <WhatsAppReminder40MinCard organization={organization} />
 
       {/* FILTER & STATS BAR */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-4 rounded-2xl bg-slate-900 border border-slate-800">
