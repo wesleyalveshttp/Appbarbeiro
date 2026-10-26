@@ -101,7 +101,8 @@ class NotificationServiceClass {
 
       // Listen for push messages dispatched to active window
       navigator.serviceWorker.addEventListener('message', (event) => {
-        const { type, payload } = event.data || {};
+        const { type, payload, playAlarm, action } = event.data || {};
+
         if (type === 'REMOTE_PUSH_RECEIVED' && payload) {
           console.log('🔔 Remote push notification received in client:', payload);
           // Only play ringtone if it's the customer's call or turn
@@ -115,6 +116,15 @@ class NotificationServiceClass {
           // Emit local event so components update immediately
           window.dispatchEvent(
             new CustomEvent('barberos_remote_push_alert', { detail: payload })
+          );
+        } else if (type === 'PUSH_NOTIFICATION_CLICKED') {
+          console.log('🎯 Push notification clicked, focusing window and sounding confirmation chime:', { payload, action });
+          this.unlockAudio();
+          this.playSound('CALLED');
+          this.vibrate([500, 150, 500, 150, 800]);
+
+          window.dispatchEvent(
+            new CustomEvent('barberos_push_clicked', { detail: { payload, action } })
           );
         }
       });

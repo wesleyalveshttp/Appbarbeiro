@@ -226,6 +226,7 @@ async function sendQueuePushNotification(
     type?: 'CALLED' | 'NEXT' | 'STEP_3' | 'REMINDER_40MIN' | string;
     ticketNumber?: number;
     url?: string;
+    queueId?: string;
   }
 ) {
   try {
@@ -238,6 +239,8 @@ async function sendQueuePushNotification(
       body,
       type,
       ticketNumber: options?.ticketNumber,
+      queueId: (options as any)?.queueId,
+      organizationId: orgId,
       url: options?.url || `/fila/${orgId}`,
       tag: `barberos-${type}-${options?.ticketNumber || Date.now()}`,
       vibratePattern: isCalled
@@ -379,6 +382,125 @@ app.get('/api/db', async (req: Request, res: Response) => {
   }
 });
 
+app.post('/api/db/sync', requireTenantAuth, async (req: Request, res: Response) => {
+  const session = (req as any).session;
+  if (!session) {
+    return res.status(401).json({ error: 'Sessão não autorizada para sincronização.' });
+  }
+
+  const targetOrgId = session.organizationId;
+  const isSuperAdmin = session.role === 'SUPERADMIN' || session.role === 'SUPER_ADMIN';
+
+  if (!targetOrgId && !isSuperAdmin) {
+    return res.status(400).json({ error: 'Organização não identificada na sessão.' });
+  }
+
+  try {
+    const payload = req.body;
+    const syncedEntities: string[] = [];
+
+    // 1. Organization details
+    if (payload.organization && targetOrgId) {
+      try {
+        await SupabaseDBService.updateOrganization(targetOrgId, payload.organization);
+      } catch (orgErr: any) {
+        console.warn(`[Sync] Falha ao atualizar organização ${targetOrgId}:`, orgErr.message);
+        if (payload.organization.name) {
+          const fallbackSlug = (payload.organization.slug || payload.organization.name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+          await SupabaseDBService.createOrganization({
+            id: targetOrgId,
+            name: payload.organization.name,
+            slug: fallbackSlug,
+            ownerName: payload.organization.ownerName || 'Proprietário',
+            ownerEmail: payload.organization.ownerEmail || `admin-${targetOrgId}@barberos.local`,
+            ...payload.organization,
+          }).catch((createErr: any) => console.warn(`[Sync] createOrg fallback:`, createErr.message));
+        }
+      }
+      syncedEntities.push('organization');
+    } else if (Array.isArray(payload.organizations)) {
+      for (const org of payload.organizations) {
+        if (isSuperAdmin || org.id === targetOrgId) {
+          try {
+            await SupabaseDBService.updateOrganization(org.id, org);
+          } catch (orgErr: any) {
+            console.warn(`[Sync] Falha ao atualizar organização ${org.id}:`, orgErr.message);
+          }
+          syncedEntities.push(`organization:${org.id}`);
+        }
+      }
+    }
+
+    // 2. Services
+    if (Array.isArray(payload.services) && targetOrgId) {
+      for (const srv of payload.services) {
+        if (srv.organizationId === targetOrgId) {
+          try {
+            await SupabaseDBService.updateService(srv.id, targetOrgId, srv);
+          } catch {
+            await SupabaseDBService.createService({ ...srv, organizationId: targetOrgId }).catch(() => null);
+          }
+        }
+      }
+      syncedEntities.push('services');
+    }
+
+    // 3. Professionals
+    if (Array.isArray(payload.professionals) && targetOrgId) {
+      for (const prof of payload.professionals) {
+        if (prof.organizationId === targetOrgId) {
+          try {
+            await SupabaseDBService.updateProfessional(prof.id, targetOrgId, prof);
+          } catch {
+            await SupabaseDBService.createProfessional({ ...prof, organizationId: targetOrgId }).catch(() => null);
+          }
+        }
+      }
+      syncedEntities.push('professionals');
+    }
+
+    // 4. Appointments
+    if (Array.isArray(payload.appointments) && targetOrgId) {
+      for (const appt of payload.appointments) {
+        if (appt.organizationId === targetOrgId) {
+          try {
+            await SupabaseDBService.updateAppointment(appt.id, targetOrgId, appt);
+          } catch {
+            await SupabaseDBService.createAppointment({ ...appt, organizationId: targetOrgId }).catch(() => null);
+          }
+        }
+      }
+      syncedEntities.push('appointments');
+    }
+
+    // 5. Customers
+    if (Array.isArray(payload.customers) && targetOrgId) {
+      for (const cust of payload.customers) {
+        if (cust.organizationId === targetOrgId || !cust.organizationId) {
+          await SupabaseDBService.createOrUpdateCustomer({
+            ...cust,
+            organizationId: targetOrgId,
+          }).catch(() => null);
+        }
+      }
+      syncedEntities.push('customers');
+    }
+
+    broadcastSSE('DB_SYNCED', { orgId: targetOrgId });
+    return res.json({
+      success: true,
+      syncedAt: new Date().toISOString(),
+      entities: syncedEntities,
+    });
+  } catch (err: any) {
+    console.error('Erro na sincronização /api/db/sync:', err);
+    return res.status(500).json({
+      success: false,
+      error: `Erro ao persistir sincronização no banco de dados: ${err.message}`,
+    });
+  }
+});
+
 app.get('/api/supabase/status', async (req: Request, res: Response) => {
   const isConfigured = SupabaseDBService.isConfigured();
   if (!isConfigured) {
@@ -428,6 +550,19 @@ app.get('/api/public/establishment/:slug', async (req: Request, res: Response) =
 
     const data = await SupabaseDBService.getPublicEstablishment(rawTerm);
     if (data && data.organization) {
+      if ((data as any).isInactive) {
+        return res.status(403).json({
+          error: `O estabelecimento "${data.organization.name}" está temporariamente inativo ou com assinatura pendente.`,
+          code: 'ESTABLISHMENT_INACTIVE',
+          status: 403,
+          organization: {
+            id: data.organization.id,
+            name: data.organization.name,
+            slug: data.organization.slug,
+            isActive: false,
+          }
+        });
+      }
       return res.json(data);
     }
 
@@ -549,18 +684,36 @@ app.post('/api/auth/register-organization', async (req: Request, res: Response) 
 
   const emailClean = organization.ownerEmail.trim().toLowerCase();
 
-  // Generate unique slug
+  // 1. Check if an organization with this email already exists
+  const existingUser = await SupabaseDBService.getOrganizationByLogin(emailClean).catch(() => null);
+  if (existingUser) {
+    return res.status(409).json({
+      error: 'Já existe uma barbearia cadastrada com este e-mail. Por favor, faça login ou use outro e-mail.',
+      code: 'EMAIL_ALREADY_EXISTS',
+    });
+  }
+
+  // 2. Generate and resolve unique slug collision
   let baseSlug = organization.slug
     ? organization.slug.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '')
     : organization.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
   if (!baseSlug) baseSlug = `salao-${Date.now()}`;
+
+  let finalSlug = baseSlug;
+  let counter = 1;
+  while (true) {
+    const existingSlug = await SupabaseDBService.getOrganizationBySlug(finalSlug).catch(() => null);
+    if (!existingSlug) break;
+    counter++;
+    finalSlug = `${baseSlug}-${counter}`;
+  }
 
   const orgId = organization.id || `org-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
 
   const completeOrg = {
     ...organization,
     id: orgId,
-    slug: baseSlug,
+    slug: finalSlug,
     ownerEmail: emailClean,
     ownerPassword: organization.ownerPassword.trim(),
     ownerName: organization.ownerName || organization.name,
@@ -717,7 +870,13 @@ app.post('/api/auth/login-owner', async (req: Request, res: Response) => {
   }
 });
 
-let dynamicSuperAdminPassword = process.env.SUPERADMIN_PASSWORD || 'Anna123!@';
+// Secure Super Admin credential management:
+// Prioritizes process.env.SUPERADMIN_PASSWORD. If not set, generates a secure random token on server boot.
+let dynamicSuperAdminPassword = process.env.SUPERADMIN_PASSWORD || '';
+if (!dynamicSuperAdminPassword) {
+  dynamicSuperAdminPassword = crypto.randomBytes(16).toString('hex');
+  console.log('🔐 [SEGURANÇA] SUPERADMIN_PASSWORD não configurada no ambiente. Chave temporária de inicialização:', dynamicSuperAdminPassword);
+}
 
 app.post('/api/auth/login-superadmin', async (req: Request, res: Response) => {
   const { password } = req.body;
@@ -725,9 +884,12 @@ app.post('/api/auth/login-superadmin', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Informe a senha de Administrador Geral.' });
   }
 
-  const superAdminPassword = process.env.SUPERADMIN_PASSWORD || dynamicSuperAdminPassword || 'Anna123!@';
+  const superAdminPassword = process.env.SUPERADMIN_PASSWORD || dynamicSuperAdminPassword;
+  const inputBuffer = Buffer.from(String(password).trim());
+  const expectedBuffer = Buffer.from(superAdminPassword.trim());
+  const isValid = inputBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(inputBuffer, expectedBuffer);
 
-  if (String(password).trim() !== superAdminPassword.trim()) {
+  if (!isValid) {
     return res.status(401).json({ error: 'Senha de administrador incorreta.' });
   }
 
@@ -1101,7 +1263,7 @@ app.post('/api/queue/call-next', async (req: Request, res: Response) => {
         eligibleItem.notificationToken,
         '✂️ Chegou sua vez!',
         `Dirija-se ao atendimento agora! (Senha #${eligibleItem.ticketNumber})`,
-        { type: 'CALLED', ticketNumber: eligibleItem.ticketNumber }
+        { type: 'CALLED', ticketNumber: eligibleItem.ticketNumber, queueId: eligibleItem.id }
       );
     }
 
@@ -1165,7 +1327,7 @@ app.post('/api/queue/call-specific', async (req: Request, res: Response) => {
         item.notificationToken,
         '✂️ Chegou sua vez!',
         `O barbeiro está te chamando para a cadeira agora! (Senha #${item.ticketNumber})`,
-        { type: 'CALLED', ticketNumber: item.ticketNumber }
+        { type: 'CALLED', ticketNumber: item.ticketNumber, queueId: item.id }
       );
     }
 
@@ -1196,6 +1358,90 @@ app.post('/api/queue/call-specific', async (req: Request, res: Response) => {
     res.json({ success: true, item: updated });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/queue/recall', async (req: Request, res: Response) => {
+  const { queueId, organizationId } = req.body;
+  if (!queueId) return res.status(400).json({ error: 'queueId é obrigatório' });
+
+  try {
+    const item = await SupabaseDBService.getQueueItemById(queueId);
+    if (!item) return res.status(404).json({ error: 'Item não encontrado na fila' });
+
+    const targetOrgId = organizationId || item.organizationId;
+    const now = new Date();
+    const toleranceExpiry = new Date(now.getTime() + 4 * 60 * 1000); // give 4 more minutes
+
+    const recallCount = ((item as any).recallCount || 0) + 1;
+    const notesUpdated = `${item.notes || ''} [Chamado novamente ${recallCount}x às ${now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}]`.trim();
+
+    const updated = await SupabaseDBService.updateQueueItemStatus(queueId, targetOrgId, {
+      status: 'CHAMADO',
+      calledAt: now.toISOString(),
+      calledToleranceExpiresAt: toleranceExpiry.toISOString(),
+      notes: notesUpdated,
+    });
+
+    if (item.notificationToken) {
+      sendQueuePushNotification(
+        targetOrgId,
+        item.notificationToken,
+        '🔔 O Barbeiro está chamando você novamente!',
+        `Sua senha #${item.ticketNumber} foi chamada mais uma vez! Por favor dirija-se à cadeira agora para iniciar o corte.`,
+        { type: 'CALLED', ticketNumber: item.ticketNumber, queueId: item.id }
+      );
+    }
+
+    broadcastSSE('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: queueId, recalled: true, recallCount });
+    res.json({ success: true, item: updated, recallCount });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/queue/respond', async (req: Request, res: Response) => {
+  const { queueId, organizationId } = req.body;
+  const response = req.body.response || req.body.action;
+  if (!queueId || !response) {
+    return res.status(400).json({ error: 'queueId e response (ou action) são obrigatórios.' });
+  }
+
+  try {
+    const item = await SupabaseDBService.getQueueItemById(queueId);
+    if (!item) return res.status(404).json({ error: 'Item não encontrado na fila.' });
+
+    const targetOrgId = organizationId || item.organizationId;
+    const now = new Date();
+    const updates: any = {
+      clientResponse: response,
+      clientResponseTime: now.toISOString(),
+    };
+
+    if (response === 'A_CAMINHO') {
+      updates.status = 'A_CAMINHO';
+    } else if (response === 'PEDIU_TOLERANCIA') {
+      updates.status = 'PEDIU_TOLERANCIA';
+      const curExpiry = item.calledToleranceExpiresAt ? new Date(item.calledToleranceExpiresAt) : now;
+      updates.calledToleranceExpiresAt = new Date(curExpiry.getTime() + 3 * 60000).toISOString();
+      updates.toleranceExtraMinutes = ((item as any).toleranceExtraMinutes || 0) + 3;
+    } else if (response === 'NAO_PODE') {
+      updates.status = 'DESISTIU';
+      updates.notes = `${item.notes || ''} [Cliente não pode comparecer]`.trim();
+    }
+
+    const updated = await SupabaseDBService.updateQueueItemStatus(queueId, targetOrgId, updates);
+    broadcastSSE('QUEUE_UPDATED', {
+      orgId: targetOrgId,
+      queueItemId: queueId,
+      clientResponse: response,
+      status: updates.status,
+    });
+
+    console.log(`📡 Resposta do cliente recebida (${response}) para senha #${item.ticketNumber} via Service Worker / Web UI`);
+    return res.json({ success: true, item: updated });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
@@ -2119,6 +2365,35 @@ app.post('/api/mercadopago/create-checkout', async (req: Request, res: Response)
 });
 
 app.post('/api/mercadopago/webhook', async (req: Request, res: Response) => {
+  // If MP_WEBHOOK_SECRET is configured, validate HMAC SHA-256 signature
+  if (MP_WEBHOOK_SECRET) {
+    const xSignature = req.headers['x-signature'] as string;
+    const xRequestId = req.headers['x-request-id'] as string;
+    if (xSignature) {
+      try {
+        const parts = xSignature.split(',');
+        let ts = '';
+        let hash = '';
+        for (const p of parts) {
+          const [k, v] = p.split('=');
+          if (k && k.trim() === 'ts') ts = v.trim();
+          if (k && k.trim() === 'v1') hash = v.trim();
+        }
+        const dataId = req.query['data.id'] || req.body?.data?.id || req.query.id;
+        if (dataId && ts) {
+          const manifest = `id:${dataId};request-id:${xRequestId || ''};ts:${ts};`;
+          const expectedHash = crypto.createHmac('sha256', MP_WEBHOOK_SECRET).update(manifest).digest('hex');
+          if (hash && hash !== expectedHash) {
+            console.warn('⚠️ [Segurança] Assinatura do webhook Mercado Pago não confere. Rejeitando.');
+            return res.status(401).json({ error: 'Assinatura inválida' });
+          }
+        }
+      } catch (sigErr) {
+        console.warn('⚠️ Erro ao validar assinatura do webhook:', sigErr);
+      }
+    }
+  }
+
   res.status(200).send('OK');
 
   if (!MP_ACCESS_TOKEN || !mpClient) return;

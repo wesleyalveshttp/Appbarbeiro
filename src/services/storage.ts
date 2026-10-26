@@ -392,14 +392,45 @@ export class StorageService {
     }
   }
 
+  static async saveDBAsync(db?: AppDatabase): Promise<{ success: boolean; error?: string }> {
+    if (typeof window === 'undefined') return { success: true };
+    const currentDb = db || this.getDB();
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(currentDb));
+      const token = this.getAuthToken();
+      const res = await fetch('/api/db/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify(currentDb)
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        const msg = errData?.error || `Falha na sincronização com o banco de dados (Status ${res.status})`;
+        console.error('saveDBAsync erro:', msg);
+        return { success: false, error: msg };
+      }
+      return { success: true };
+    } catch (e: any) {
+      console.error('saveDBAsync erro de rede:', e);
+      return { success: false, error: `Falha de conexão com o banco de dados: ${e.message || 'Erro de rede'}` };
+    }
+  }
+
   private static saveDB(db: AppDatabase): void {
     if (typeof window === 'undefined') return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
       // Durably sync with server Express backend
+      const token = this.getAuthToken();
       fetch('/api/db/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
         body: JSON.stringify(db)
       }).catch(err => {
         console.warn('Background sync with server failed:', err);
@@ -1785,6 +1816,58 @@ export class StorageService {
     return { success: false, error: 'Item não encontrado na fila' };
   }
 
+  static async recallCustomer(
+    queueId: string,
+    orgId?: string
+  ): Promise<{ success: boolean; item?: WaitingQueueItem; error?: string }> {
+    const db = this.getDB();
+    const localItem = db.queue.find(q => q.id === queueId);
+    const targetOrgId = orgId || localItem?.organizationId || this.getCurrentOrgId();
+
+    try {
+      const token = this.getAuthToken();
+      const res = await fetch('/api/queue/recall', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          queueId,
+          organizationId: targetOrgId,
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.item) {
+        const itemIdx = db.queue.findIndex(q => q.id === queueId);
+        if (itemIdx >= 0) {
+          db.queue[itemIdx] = { ...db.queue[itemIdx], ...data.item };
+        }
+        this.saveDB(db);
+        broadcastEvent('QUEUE_UPDATED', { orgId: targetOrgId, queueItemId: data.item.id, recalled: true });
+        return data;
+      }
+    } catch (e: any) {
+      console.warn('recallCustomer API sync warning:', e);
+    }
+
+    if (localItem) {
+      const now = new Date();
+      const toleranceMinutes = db.organizations.find(o => o.id === localItem.organizationId)?.settings?.callToleranceMinutes || 3;
+      localItem.status = 'CHAMADO';
+      localItem.calledAt = now.toISOString();
+      localItem.calledToleranceExpiresAt = new Date(now.getTime() + toleranceMinutes * 60000).toISOString();
+      localItem.notifiedCalled = true;
+      const count = ((localItem as any).recallCount || 0) + 1;
+      (localItem as any).recallCount = count;
+      localItem.notes = `${localItem.notes || ''} [Chamado novamente ${count}x às ${now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}]`.trim();
+      this.saveDB(db);
+      broadcastEvent('QUEUE_UPDATED', { orgId: localItem.organizationId, queueItemId: localItem.id, recalled: true });
+      return { success: true, item: localItem };
+    }
+    return { success: false, error: 'Item não encontrado na fila' };
+  }
+
   static callQueueCustomerLocal(queueId: string, assignedProfessionalId: string): WaitingQueueItem {
     const db = this.getDB();
     const item = db.queue.find(q => q.id === queueId);
@@ -2629,28 +2712,34 @@ export class StorageService {
 
   // --- Authentication & Passwords ---
   static getSuperAdminPassword(): string {
-    if (typeof window === 'undefined') return 'Anna123!@';
-    const saved = localStorage.getItem(SUPER_ADMIN_PASSWORD_KEY);
-    if (!saved || saved === 'admin123') {
-      localStorage.setItem(SUPER_ADMIN_PASSWORD_KEY, 'Anna123!@');
-      return 'Anna123!@';
-    }
-    return saved;
+    // Deprecated for security: credentials are never stored or exposed client-side
+    return '';
   }
 
-  static async updateSuperAdminPassword(newPassword: string): Promise<void> {
-    if (typeof window === 'undefined') return;
+  static async updateSuperAdminPassword(newPassword: string): Promise<{ success: boolean; error?: string }> {
+    if (typeof window === 'undefined') return { success: false, error: 'Ambiente inválido' };
     const cleanPass = newPassword.trim();
-    localStorage.setItem(SUPER_ADMIN_PASSWORD_KEY, cleanPass);
+    if (cleanPass.length < 6) return { success: false, error: 'A senha deve ter pelo menos 6 caracteres' };
+    const token = this.getAuthToken();
     try {
-      await fetch('/api/auth/update-superadmin-password', {
+      const res = await fetch('/api/auth/update-superadmin-password', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({ newPassword: cleanPass })
       });
-    } catch {}
-    this.logAudit('global', 'Super Admin', `Senha mestra do Super Admin alterada com sucesso`);
-    broadcastEvent('SUPER_ADMIN_PASSWORD_UPDATED');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { success: false, error: data.error || 'Falha ao atualizar senha mestra no servidor.' };
+      }
+      this.logAudit('global', 'Super Admin', `Senha mestra do Super Admin alterada com sucesso`);
+      broadcastEvent('SUPER_ADMIN_PASSWORD_UPDATED');
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Erro de rede ao atualizar senha.' };
+    }
   }
 
   static getAuthSession(): AuthSession {

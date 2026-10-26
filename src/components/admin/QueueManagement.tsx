@@ -765,6 +765,28 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      {/* BOTAO DE CHAMAR NOVAMENTE (#USER REQUIREMENT) */}
+                      <button
+                        onClick={async () => {
+                          const res = await StorageService.recallCustomer(item.id, organization.id);
+                          if (res.success) {
+                            AutoPilotService.playChime('call');
+                            setCallFeedback({
+                              type: 'success',
+                              title: '🔔 Cliente Chamado Novamente!',
+                              message: `Um novo alerta sonoro e notificação push foram disparados no celular de ${item.customerName} (Senha #${item.ticketNumber}).`
+                            });
+                            await loadData();
+                          }
+                          setTimeout(() => setCallFeedback(null), 6000);
+                        }}
+                        className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black shadow-md transition cursor-pointer animate-pulse hover:animate-none"
+                        title="Cliente chamado ainda não apareceu? Toque para apitar e vibrar o aparelho dele novamente!"
+                      >
+                        <BellRing className="h-3.5 w-3.5 text-slate-950" />
+                        <span>Chamar Novamente</span>
+                      </button>
+
                       <button
                         onClick={() => handleMoveToChair(item)}
                         className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold shadow-md transition cursor-pointer"

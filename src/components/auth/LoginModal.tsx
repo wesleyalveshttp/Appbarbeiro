@@ -41,9 +41,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   // Super Admin Form
   const [adminPassword, setAdminPassword] = useState('');
   const [showAdminPassword, setShowAdminPassword] = useState(false);
-  const [isConfiguringNewPass, setIsConfiguringNewPass] = useState(false);
-  const [newCustomPass, setNewCustomPass] = useState('');
-  const [passSavedNotice, setPassSavedNotice] = useState('');
 
   // Error & Loading
   const [errorMsg, setErrorMsg] = useState('');
@@ -238,112 +235,43 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           <div className="space-y-4">
             <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-300 text-xs">
               <span className="font-semibold block mb-0.5">Área do Dono da Plataforma SaaS</span>
-              Acesso protegido por senha para conferir pagamentos de R$ 79,90, liberar estabelecimentos e gerenciar o sistema.
+              Acesso protegido por autenticação no servidor para conferir pagamentos, liberar estabelecimentos e gerenciar o sistema.
             </div>
 
-            {passSavedNotice && (
-              <div className="p-3 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-semibold flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
-                <span>{passSavedNotice}</span>
-              </div>
-            )}
-
-            {!isConfiguringNewPass ? (
-              <form onSubmit={handleAdminLogin} className="space-y-4">
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-semibold text-slate-300">Senha do Dono da SaaS *</label>
-                  </div>
-                  <div className="relative">
-                    <input
-                      type={showAdminPassword ? 'text' : 'password'}
-                      required
-                      value={adminPassword}
-                      onChange={(e) => setAdminPassword(e.target.value)}
-                      placeholder="Digite sua senha de acesso"
-                      className="w-full rounded-xl bg-slate-950 border border-slate-800 pl-10 pr-10 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-purple-500 font-mono"
-                    />
-                    <Key className="absolute left-3.5 top-3 h-4 w-4 text-purple-400" />
-                    <button
-                      type="button"
-                      onClick={() => setShowAdminPassword(!showAdminPassword)}
-                      className="absolute right-3 top-2.5 text-slate-400 hover:text-white p-0.5"
-                    >
-                      {showAdminPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
+            <form onSubmit={handleAdminLogin} className="space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-semibold text-slate-300">Senha do Dono da SaaS *</label>
                 </div>
-
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-purple-600 hover:bg-purple-500 py-3 text-xs font-bold text-white shadow-lg shadow-purple-600/25 transition disabled:opacity-50 cursor-pointer"
-                >
-                  <Shield className="h-4 w-4" />
-                  <span>{isLoading ? 'Verificando...' : 'Acessar Painel do Dono da SaaS'}</span>
-                </button>
-
-                <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-800/80">
-                  <span className="text-slate-400 text-[11px]">Deseja alterar a senha mestra?</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsConfiguringNewPass(true);
-                      setErrorMsg('');
-                    }}
-                    className="text-purple-400 hover:text-purple-300 font-bold underline cursor-pointer"
-                  >
-                    Alterar Senha do Dono da SaaS
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  if (!newCustomPass.trim()) return;
-                  await StorageService.updateSuperAdminPassword(newCustomPass.trim());
-                  setPassSavedNotice(`Nova senha salva com sucesso! Você já está autenticado.`);
-                  setTimeout(() => {
-                    onSuccess('SUPER_ADMIN');
-                  }, 1000);
-                }}
-                className="space-y-4"
-              >
-                <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">
-                    Nova Senha do Dono da SaaS *
-                  </label>
+                <div className="relative">
                   <input
-                    type="text"
+                    type={showAdminPassword ? 'text' : 'password'}
                     required
-                    value={newCustomPass}
-                    onChange={(e) => setNewCustomPass(e.target.value)}
-                    placeholder="Digite a nova senha desejada"
-                    className="w-full rounded-xl bg-slate-950 border border-slate-800 px-3.5 py-2.5 text-xs text-purple-300 font-mono focus:outline-hidden focus:border-purple-500"
+                    value={adminPassword}
+                    onChange={(e) => setAdminPassword(e.target.value)}
+                    placeholder="Digite sua senha de acesso"
+                    className="w-full rounded-xl bg-slate-950 border border-slate-800 pl-10 pr-10 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-purple-500 font-mono"
                   />
-                  <span className="text-[10px] text-slate-500 mt-1 block">
-                    Esta senha será gravada no servidor e exigida para acessar o painel global do Dono da SaaS.
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2">
+                  <Key className="absolute left-3.5 top-3 h-4 w-4 text-purple-400" />
                   <button
                     type="button"
-                    onClick={() => setIsConfiguringNewPass(false)}
-                    className="flex-1 rounded-xl bg-slate-800 hover:bg-slate-750 py-2.5 text-xs font-semibold text-slate-300 cursor-pointer"
+                    onClick={() => setShowAdminPassword(!showAdminPassword)}
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-white p-0.5"
                   >
-                    Voltar ao Login
-                  </button>
-                  <button
-                    type="submit"
-                    className="flex-1 rounded-xl bg-purple-600 hover:bg-purple-500 py-2.5 text-xs font-bold text-white shadow-md shadow-purple-600/30 cursor-pointer"
-                  >
-                    Salvar e Entrar
+                    {showAdminPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-              </form>
-            )}
+              </div>
+
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full flex items-center justify-center gap-2 rounded-xl bg-purple-600 hover:bg-purple-500 py-3 text-xs font-bold text-white shadow-lg shadow-purple-600/25 transition disabled:opacity-50 cursor-pointer"
+              >
+                <Shield className="h-4 w-4" />
+                <span>{isLoading ? 'Verificando...' : 'Acessar Painel do Dono da SaaS'}</span>
+              </button>
+            </form>
           </div>
         )}
       </div>

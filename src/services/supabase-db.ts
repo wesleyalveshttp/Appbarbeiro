@@ -357,10 +357,57 @@ export class SupabaseDBService {
       .update(dbUpdates)
       .eq('id', id)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
       throw new Error(`Falha ao atualizar estabelecimento no Supabase [${error.code}]: ${error.message}`);
+    }
+
+    if (!data) {
+      // The row does not exist in the database yet.
+      // If we have minimal details, create/upsert it:
+      if (updates.name) {
+        let slug = (updates.slug || updates.name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || `org-${id}`;
+        const existingWithSlug = await this.getOrganizationBySlug(slug).catch(() => null);
+        if (existingWithSlug && existingWithSlug.id !== id) {
+          slug = `${slug}-${id.slice(0, 6)}`;
+        }
+
+        try {
+          return await this.createOrganization({
+            id,
+            name: updates.name,
+            slug,
+            type: updates.type || 'Barbearia',
+            description: updates.description,
+            phone: updates.phone,
+            whatsapp: updates.whatsapp,
+            instagram: updates.instagram,
+            ownerName: updates.ownerName || 'Proprietário',
+            ownerEmail: updates.ownerEmail || `admin-${id}@barberos.local`,
+            ownerPassword: updates.ownerPassword,
+            address: updates.address,
+            workingHours: updates.workingHours,
+            settings: dbUpdates.settings || updates.settings || {},
+            planId: updates.planId || 'premium',
+            isActive: updates.isActive !== false,
+            subscription: updates.subscription,
+          });
+        } catch (createErr: any) {
+          console.warn(`[SupabaseDBService] Failed to auto-create missing organization on update [${id}]:`, createErr.message);
+        }
+      }
+
+      // Check if it already exists under another lookup or return safe mapped object
+      const existing = await this.getOrganizationById(id).catch(() => null);
+      if (existing) return existing;
+
+      return {
+        id,
+        name: updates.name || 'Barbearia',
+        slug: updates.slug || id,
+        ...updates,
+      };
     }
 
     return this.mapOrgFromDb(data);
@@ -411,7 +458,7 @@ export class SupabaseDBService {
       })
       .eq('id', organizationId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (orgErr) {
       throw new Error(`Erro ao atualizar assinatura no Supabase [${orgErr.code}]: ${orgErr.message}`);
@@ -496,12 +543,11 @@ export class SupabaseDBService {
     const cleanSlug = decodeURIComponent(slug).trim().toLowerCase();
     const client = getSupabaseAdminClient();
 
-    // 1. Fetch organization (only active)
+    // 1. Fetch organization
     const { data: orgData, error: orgErr } = await client
       .from('organizations')
       .select('id, name, slug, type, description, phone, whatsapp, instagram, address, working_hours, settings, is_active, created_at')
       .or(`slug.ilike.${cleanSlug},id.eq.${cleanSlug}`)
-      .eq('is_active', true)
       .maybeSingle();
 
     if (orgErr) {
@@ -515,13 +561,22 @@ export class SupabaseDBService {
           .from('organizations')
           .select('id, name, slug, type, description, phone, whatsapp, instagram, address, working_hours, settings, is_active, created_at')
           .or(`slug.ilike.${cleanSlug},id.eq.${cleanSlug}`)
-          .eq('is_active', true)
           .maybeSingle();
         if (retry.data) {
           return this.getPublicEstablishment(retry.data.slug);
         }
       }
       return null;
+    }
+
+    if (orgData.is_active === false) {
+      return {
+        organization: this.mapOrgFromDb(orgData),
+        isInactive: true,
+        services: [],
+        professionals: [],
+        queue: [],
+      } as any;
     }
 
     const orgId = orgData.id;
@@ -820,9 +875,10 @@ export class SupabaseDBService {
       .eq('id', id)
       .eq('organization_id', organizationId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) throw new Error(`Erro ao atualizar item da fila [${error.code}]: ${error.message}`);
+    if (!data) return null;
     return this.mapQueueItemFromDb(data);
   }
 
@@ -923,9 +979,10 @@ export class SupabaseDBService {
       .eq('id', id)
       .eq('organization_id', organizationId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) throw new Error(`Erro ao atualizar serviço [${error.code}]: ${error.message}`);
+    if (!data) throw new Error(`Serviço ${id} não encontrado para atualização`);
     return data;
   }
 
@@ -1037,9 +1094,10 @@ export class SupabaseDBService {
       .eq('id', id)
       .eq('organization_id', organizationId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) throw new Error(`Erro ao atualizar profissional [${error.code}]: ${error.message}`);
+    if (!data) throw new Error(`Profissional ${id} não encontrado para atualização`);
     return data;
   }
 
@@ -1145,9 +1203,10 @@ export class SupabaseDBService {
       .eq('id', id)
       .eq('organization_id', organizationId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) throw new Error(`Erro ao atualizar agendamento [${error.code}]: ${error.message}`);
+    if (!data) throw new Error(`Agendamento ${id} não encontrado para atualização`);
     return data;
   }
 
@@ -1217,7 +1276,7 @@ export class SupabaseDBService {
         })
         .eq('id', existingCust.id)
         .select()
-        .single();
+        .maybeSingle();
       if (error) throw new Error(`Erro ao atualizar cliente [${error.code}]: ${error.message}`);
       return data;
     } else {

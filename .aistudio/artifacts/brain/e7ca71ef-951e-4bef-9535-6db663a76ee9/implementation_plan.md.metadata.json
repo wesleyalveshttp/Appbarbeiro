@@ -1,0 +1,6 @@
+{
+  "summary":  "Plano de implementação para o Service Worker com suporte a notificações push persistentes em segundo plano, botões de ação rápida ('Estou a caminho' e '+3 min') e foco imediato com confirmação sonora ao vivo ao tocar.",
+  "updatedAt":  "2026-10-26T02:42:27.847704692Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

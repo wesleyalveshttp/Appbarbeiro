@@ -88,9 +88,29 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
       setIsVisualVibrating(true);
       setTimeout(() => setIsVisualVibrating(false), 2000);
     };
+
+    const handlePushReceived = () => {
+      setIsVisualVibrating(true);
+      loadData();
+      setTimeout(() => setIsVisualVibrating(false), 3000);
+    };
+
+    const handlePushClicked = () => {
+      setIsVisualVibrating(true);
+      loadData();
+      setTimeout(() => setIsVisualVibrating(false), 3000);
+    };
+
     window.addEventListener('barberos_vibrate', handleVibrateEvent);
-    return () => window.removeEventListener('barberos_vibrate', handleVibrateEvent);
-  }, []);
+    window.addEventListener('barberos_remote_push_alert', handlePushReceived);
+    window.addEventListener('barberos_push_clicked', handlePushClicked);
+
+    return () => {
+      window.removeEventListener('barberos_vibrate', handleVibrateEvent);
+      window.removeEventListener('barberos_remote_push_alert', handlePushReceived);
+      window.removeEventListener('barberos_push_clicked', handlePushClicked);
+    };
+  }, [slug]);
 
   const [isLoading, setIsLoading] = useState(true);
   const [orgNotFound, setOrgNotFound] = useState(false);
@@ -530,47 +550,163 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
       {/* Main Container */}
       <div className="mx-auto max-w-md px-4 pt-5 space-y-5">
 
-        {/* PUSH NOTIFICATION PERMISSION ACTIVATION BANNER (#Requirement 3 & 4) */}
-        {permissionState !== 'granted' && (
-          <div className="rounded-2xl bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-slate-900 border border-amber-500/40 p-4 text-xs shadow-lg space-y-2.5">
-            <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20">
-                <BellRing className="h-5 w-5" />
-              </div>
-              <div>
-                <span className="font-bold text-white text-sm block">Ativar Notificação com Som & Vibração</span>
-                <p className="text-slate-300 text-[11px] mt-0.5 leading-relaxed">
-                  Não dependa de WhatsApp ou SMS. Permita que o próprio app avise e vibre seu celular quando chegar sua vez de cortar!
-                </p>
-              </div>
+        {/* 1. PERMANENT BROWSER PUSH NOTIFICATION CARD (#User Request) */}
+        <div className="rounded-2xl bg-gradient-to-r from-amber-500/20 via-slate-900 to-slate-900 border-2 border-amber-500/40 p-4 text-xs shadow-xl space-y-3">
+          <div className="flex items-start gap-3">
+            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl font-bold shadow-md ${
+              permissionState === 'granted'
+                ? 'bg-emerald-500 text-slate-950 shadow-emerald-500/20'
+                : 'bg-amber-500 text-slate-950 shadow-amber-500/20 animate-pulse'
+            }`}>
+              <BellRing className="h-5 w-5" />
             </div>
-
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                onClick={handleRequestNotificationPermission}
-                className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 py-2.5 px-3 text-xs font-bold text-slate-950 shadow-md shadow-amber-500/20 transition cursor-pointer"
-              >
-                <Vibrate className="h-3.5 w-3.5" />
-                <span>Ativar Alerta no Celular</span>
-              </button>
-              <button
-                onClick={handleTestNotification}
-                className="rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 py-2.5 px-3 text-[11px] font-semibold text-slate-300 transition cursor-pointer"
-                title="Testar som e vibração"
-              >
-                Testar Som
-              </button>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-extrabold text-white text-sm">Notificações Push no Navegador</span>
+                {permissionState === 'granted' ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-[10px] font-bold text-emerald-300">
+                    <CheckCircle2 className="h-3 w-3" />
+                    Ativas
+                  </span>
+                ) : permissionState === 'denied' ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-500/20 border border-rose-500/40 text-[10px] font-bold text-rose-300">
+                    <AlertCircle className="h-3 w-3" />
+                    Bloqueadas
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-[10px] font-bold text-amber-300">
+                    <Sparkles className="h-3 w-3" />
+                    Recomendado
+                  </span>
+                )}
+              </div>
+              <p className="text-slate-300 text-[11px] mt-1 leading-relaxed">
+                Receba avisos instantâneos com som e vibração sobre a fila direto no seu navegador — sem depender de SMS ou WhatsApp!
+              </p>
             </div>
           </div>
-        )}
+
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1 border-t border-slate-800">
+            {permissionState !== 'granted' ? (
+              <button
+                onClick={handleRequestNotificationPermission}
+                className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 py-3 px-4 text-xs font-black text-slate-950 shadow-lg shadow-amber-500/25 transition cursor-pointer active:scale-98"
+              >
+                <BellRing className="h-4 w-4" />
+                <span>Ativar Notificações Push no Navegador</span>
+              </button>
+            ) : (
+              <div className="flex-1 flex items-center gap-2 text-emerald-400 text-xs font-semibold py-1">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                <span>Navegador configurado para apitar e vibrar quando for sua vez!</span>
+              </div>
+            )}
+
+            <button
+              onClick={handleTestNotification}
+              className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 py-2.5 px-3.5 text-xs font-semibold text-slate-200 transition cursor-pointer shrink-0"
+              title="Testar som e vibração no navegador"
+            >
+              <Volume2 className="h-3.5 w-3.5 text-amber-400" />
+              <span>Testar Som & Vibração</span>
+            </button>
+          </div>
+        </div>
 
         {/* NOTIFICATION FEEDBACK TOAST */}
         {testNotificationFeedback && (
-          <div className="p-3 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-semibold flex items-center gap-2 shadow-lg animate-fade-in">
+          <div className="p-3.5 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-semibold flex items-center gap-2 shadow-lg animate-fade-in">
             <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
             <span>{testNotificationFeedback}</span>
           </div>
         )}
+
+        {/* 2. FILA DIGITAL EM TEMPO REAL: CHAMADAS AO VIVO NA CADEIRA (#User Request) */}
+        <div className="rounded-2xl bg-slate-900/90 border border-slate-800 p-4 space-y-3 shadow-xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+              </span>
+              <div>
+                <h3 className="text-xs font-black uppercase tracking-wider text-white">
+                  Fila Digital em Tempo Real
+                </h3>
+                <p className="text-[10px] text-amber-400 font-semibold">
+                  Ordem de chegada e chamadas ao vivo
+                </p>
+              </div>
+            </div>
+            <span className="text-[10px] font-mono text-slate-500 bg-slate-950 px-2 py-0.5 rounded-md border border-slate-800">
+              Ao vivo
+            </span>
+          </div>
+
+          {/* Chamada ao Vivo na Cadeira */}
+          {(() => {
+            const liveCalled = queue.find(
+              q => q.status === 'CHAMADO' || q.status === 'A_CAMINHO' || q.status === 'PEDIU_TOLERANCIA'
+            );
+            const liveOnChair = queue.find(q => q.status === 'NA CADEIRA');
+
+            if (liveCalled) {
+              const isMe = myQueueItem && liveCalled.id === myQueueItem.id;
+              return (
+                <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-500/25 via-emerald-500/15 to-slate-950 border-2 border-emerald-400/60 shadow-lg space-y-1.5 animate-pulse">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="inline-flex items-center gap-1.5 font-black uppercase text-emerald-400 text-[11px] tracking-wide">
+                      <Scissors className="h-3.5 w-3.5 animate-bounce" />
+                      Chamada ao Vivo na Cadeira
+                    </span>
+                    <span className="font-mono text-xs font-black text-white bg-slate-950/80 px-2 py-0.5 rounded border border-emerald-400/40">
+                      Senha #{liveCalled.ticketNumber}
+                    </span>
+                  </div>
+                  <div className="text-sm font-bold text-white flex items-center justify-between">
+                    <span>
+                      {isMe ? '👉 VOCÊ ESTÁ SENDO CHAMADO!' : `${maskCustomerName(liveCalled.customerName)}`}
+                    </span>
+                    <span className="text-xs font-semibold text-emerald-300">
+                      {liveCalled.serviceName}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-300">
+                    {isMe
+                      ? 'Dirija-se à cadeira agora! Seu barbeiro está aguardando você.'
+                      : 'Cliente chamado para a cadeira. Aproxime-se caso seja você!'}
+                  </p>
+                </div>
+              );
+            }
+
+            if (liveOnChair) {
+              return (
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Armchair className="h-4 w-4 text-emerald-400 shrink-0" />
+                    <div>
+                      <span className="font-bold text-slate-200 block text-[11px]">
+                        Na Cadeira de Barbeiro: Senha #{liveOnChair.ticketNumber} ({maskCustomerName(liveOnChair.customerName)})
+                      </span>
+                      <span className="text-[10px] text-slate-400">Atendimento em andamento • {liveOnChair.serviceName}</span>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                    Cortando
+                  </span>
+                </div>
+              );
+            }
+
+            return (
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs flex items-center gap-2 text-slate-400">
+                <Clock className="h-4 w-4 text-amber-400 shrink-0" />
+                <span className="text-[11px]">Barbearia pronta para atendimentos. Aguarde o anúncio da sua senha na tela!</span>
+              </div>
+            );
+          })()}
+        </div>
 
         {/* CASE 0: CLIENT HAIRCUT COMPLETED (#Requirement) */}
         {myQueueItem && myQueueItem.status === 'FINALIZADO' ? (
@@ -890,50 +1026,77 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
                 </div>
               </div>
 
-              {/* Expandable Live Queue List (#Transparency) */}
-              <div className="border border-slate-800 rounded-2xl bg-slate-950/80 overflow-hidden text-left">
-                <button
-                  type="button"
-                  onClick={() => setShowQueueList(!showQueueList)}
-                  className="w-full p-3.5 flex items-center justify-between text-xs font-bold text-slate-300 hover:text-white transition cursor-pointer"
-                >
+              {/* ORDEM DE CHEGADA NA FILA EM TEMPO REAL (#User Request) */}
+              <div className="border-2 border-slate-800 rounded-2xl bg-slate-950 overflow-hidden text-left shadow-lg">
+                <div className="p-3.5 border-b border-slate-800/80 bg-slate-900/60 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Users className="h-4 w-4 text-amber-400" />
-                    <span>Ver quem está na fila agora ({activeWaitingList.length})</span>
+                    <span className="text-xs font-bold text-white">Ordem de Chegada na Fila</span>
                   </div>
-                  {showQueueList ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                </button>
+                  <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                    {activeWaitingList.length} na fila
+                  </span>
+                </div>
 
-                {showQueueList && (
-                  <div className="border-t border-slate-800/80 p-3 space-y-1.5 text-xs divide-y divide-slate-850">
-                    {activeWaitingList.map((item, idx) => {
-                      const isMe = item.id === myQueueItem.id;
+                <div className="p-3 space-y-2 text-xs divide-y divide-slate-850">
+                  {activeWaitingList.length === 0 ? (
+                    <p className="text-slate-500 text-center py-3 text-[11px]">
+                      Nenhum outro cliente aguardando no momento.
+                    </p>
+                  ) : (
+                    activeWaitingList.map((item, idx) => {
+                      const isMe = myQueueItem && item.id === myQueueItem.id;
+                      const isCalled = item.status === 'CHAMADO' || item.status === 'A_CAMINHO' || item.status === 'PEDIU_TOLERANCIA';
+                      const isNext = item.status === 'PROXIMO';
+
                       return (
                         <div
                           key={item.id}
-                          className={`pt-1.5 first:pt-0 flex items-center justify-between py-1.5 px-2.5 rounded-xl transition ${
-                            isMe ? 'bg-amber-500/15 border border-amber-500/40 font-bold text-amber-200' : 'text-slate-400'
+                          className={`pt-2 first:pt-0 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 p-2 rounded-xl transition ${
+                            isMe
+                              ? 'bg-amber-500/20 border border-amber-500/50 shadow-sm ring-1 ring-amber-500/30'
+                              : isCalled
+                              ? 'bg-emerald-500/10 border border-emerald-500/30'
+                              : 'hover:bg-slate-900/60'
                           }`}
                         >
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-[11px] font-bold text-slate-500 w-6">#{idx + 1}º</span>
-                            <span className={isMe ? 'text-white font-bold' : 'text-slate-300'}>
-                              {isMe ? '👉 VOCÊ (Sua Senha)' : maskCustomerName(item.customerName)}
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span className={`font-mono text-xs font-black w-7 shrink-0 ${
+                              isMe ? 'text-amber-300' : 'text-slate-400'
+                            }`}>
+                              #{idx + 1}º
                             </span>
+                            <div className="min-w-0">
+                              <span className={`block truncate ${
+                                isMe ? 'text-white font-black text-xs' : 'text-slate-200 font-semibold text-xs'
+                              }`}>
+                                {isMe ? '👉 VOCÊ (Sua Vez)' : maskCustomerName(item.customerName)}
+                              </span>
+                              <span className="text-[10px] text-slate-400 block truncate">
+                                {item.serviceName}
+                              </span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2 font-mono text-[10px]">
-                            <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-amber-300">
+
+                          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center font-mono text-[10px]">
+                            <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-amber-300 font-bold">
                               Senha #{item.ticketNumber}
                             </span>
-                            <span className="text-slate-500">
-                              {item.status === 'PROXIMO' ? 'Próximo' : item.status === 'CHAMADO' ? 'Chamado' : 'Aguardando'}
+                            <span className={`px-2 py-0.5 rounded font-bold ${
+                              isCalled
+                                ? 'bg-emerald-500 text-slate-950 animate-pulse'
+                                : isNext
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                : 'bg-slate-850 text-slate-400'
+                            }`}>
+                              {isCalled ? '🔔 Chamado!' : isNext ? '💈 Próximo' : '⏳ Aguardando'}
                             </span>
                           </div>
                         </div>
                       );
-                    })}
-                  </div>
-                )}
+                    })
+                  )}
+                </div>
               </div>
 
               {/* Ticket Details Summary */}
@@ -1166,6 +1329,84 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
                 <ArrowRight className="h-4 w-4" />
               </button>
             </form>
+
+            {/* ORDEM DE CHEGADA NA FILA EM TEMPO REAL (#User Request) */}
+            <div className="border border-slate-800 rounded-3xl bg-slate-900/80 overflow-hidden text-left shadow-xl space-y-0">
+              <div className="p-4 border-b border-slate-800 bg-slate-950/60 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                    <Users className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-white uppercase tracking-wider">
+                      Ordem de Chegada na Fila
+                    </h4>
+                    <p className="text-[10px] text-slate-400">Atualização em tempo real</p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-mono text-amber-300 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/30 font-bold">
+                  {activeWaitingList.length} aguardando
+                </span>
+              </div>
+
+              <div className="p-4 space-y-2 text-xs divide-y divide-slate-800/80">
+                {activeWaitingList.length === 0 ? (
+                  <div className="py-6 text-center space-y-1">
+                    <p className="text-xs font-bold text-slate-300">A fila está livre no momento!</p>
+                    <p className="text-[11px] text-slate-500">
+                      Entre na fila acima para ser o próximo chamado na cadeira.
+                    </p>
+                  </div>
+                ) : (
+                  activeWaitingList.map((item, idx) => {
+                    const isCalled = item.status === 'CHAMADO' || item.status === 'A_CAMINHO' || item.status === 'PEDIU_TOLERANCIA';
+                    const isNext = item.status === 'PROXIMO';
+
+                    return (
+                      <div
+                        key={item.id}
+                        className={`pt-2.5 first:pt-0 flex items-center justify-between gap-2 p-2 rounded-xl transition ${
+                          isCalled
+                            ? 'bg-emerald-500/10 border border-emerald-400/30'
+                            : isNext
+                            ? 'bg-amber-500/10 border border-amber-400/30'
+                            : 'hover:bg-slate-950/40'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="font-mono text-xs font-black text-slate-400 w-7 shrink-0">
+                            #{idx + 1}º
+                          </span>
+                          <div className="min-w-0">
+                            <span className="block truncate text-slate-200 font-bold text-xs">
+                              {maskCustomerName(item.customerName)}
+                            </span>
+                            <span className="text-[10px] text-slate-400 block truncate">
+                              {item.serviceName}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0 font-mono text-[10px]">
+                          <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-amber-300 font-bold">
+                            Senha #{item.ticketNumber}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded font-bold ${
+                            isCalled
+                              ? 'bg-emerald-500 text-slate-950 animate-pulse'
+                              : isNext
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                              : 'bg-slate-800 text-slate-400'
+                          }`}>
+                            {isCalled ? '🔔 Chamado' : isNext ? '💈 Próximo' : '⏳ Aguardando'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>

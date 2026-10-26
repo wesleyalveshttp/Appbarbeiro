@@ -17,6 +17,7 @@ import {
   Sparkles,
   FastForward,
   Trash2,
+  BellRing,
   X
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
@@ -503,6 +504,24 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
                       >
                         <Armchair className="h-3.5 w-3.5" />
                         <span>Sentar na Cadeira</span>
+                      </button>
+
+                      {/* BOTAO DE CHAMAR NOVAMENTE CASO O CLIENTE NAO CHEGUE (#USER REQUIREMENT) */}
+                      <button
+                        onClick={async () => {
+                          const res = await StorageService.recallCustomer(item.id, organization.id);
+                          if (res.success) {
+                            AutoPilotService.playChime('call');
+                            setBoardFeedback(`🔔 Chamada reforçada para ${item.customerName}! O celular dele vai tocar e vibrar novamente.`);
+                            await loadData();
+                          }
+                          setTimeout(() => setBoardFeedback(null), 6000);
+                        }}
+                        className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 py-1.5 text-xs font-black text-slate-950 transition cursor-pointer shadow-sm animate-pulse hover:animate-none"
+                        title="Cliente chamado ainda não apareceu? Toque para apitar e vibrar o aparelho dele novamente!"
+                      >
+                        <BellRing className="h-3.5 w-3.5 text-slate-950" />
+                        <span>CHAMAR NOVAMENTE</span>
                       </button>
 
                       <div className="flex items-center gap-1.5">
