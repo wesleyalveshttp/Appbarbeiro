@@ -51,7 +51,7 @@ export const WhatsAppReminder40MinCard: React.FC<WhatsAppReminder40MinCardProps>
 
   useEffect(() => {
     checkReminders();
-    // Check every 15 seconds for clients reaching the 40-minute window
+    // Check every 15 seconds for clients reaching the 15-minute window
     const interval = setInterval(checkReminders, 15000);
 
     const unsub = StorageService.subscribeToRealtimeEvents(() => {
@@ -79,7 +79,7 @@ export const WhatsAppReminder40MinCard: React.FC<WhatsAppReminder40MinCardProps>
     // 2. Open WhatsApp Web / App directly
     window.open(itemData.whatsappUrl, '_blank', 'noopener,noreferrer');
 
-    setFeedback(`✅ Lembrete de 40 min aberto no WhatsApp para ${itemData.customerName}!`);
+    setFeedback(`✅ Lembrete de 15 min aberto no WhatsApp para ${itemData.customerName}!`);
     setTimeout(() => setFeedback(null), 5000);
   };
 
@@ -103,9 +103,9 @@ export const WhatsAppReminder40MinCard: React.FC<WhatsAppReminder40MinCardProps>
             <Clock className="h-4 w-4" />
           </div>
           <div>
-            <span className="font-bold text-slate-300 block">Lembretes WhatsApp de 40 Minutos</span>
+            <span className="font-bold text-slate-300 block">Lembretes WhatsApp de 15 Minutos</span>
             <span className="text-[11px] text-slate-500">
-              Nenhum cliente no raio de 40 minutos neste momento • Monitoramento automático ativo
+              Nenhum cliente no raio de 15 minutos neste momento • Monitoramento automático ativo
             </span>
           </div>
         </div>
@@ -135,7 +135,7 @@ export const WhatsAppReminder40MinCard: React.FC<WhatsAppReminder40MinCardProps>
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="font-black text-white text-sm sm:text-base tracking-tight">
-                Lembretes de 40 Minutos (Evitar Atrasos)
+                Lembretes de 15 Minutos (Evitar Atrasos)
               </h3>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-slate-950 uppercase animate-pulse">
                 {totalPending} {totalPending === 1 ? 'Pendente' : 'Pendentes'}
@@ -146,7 +146,7 @@ export const WhatsAppReminder40MinCard: React.FC<WhatsAppReminder40MinCardProps>
               </span>
             </div>
             <p className="text-slate-300 text-[11px] mt-0.5 leading-relaxed">
-              O Piloto Automático avisa os clientes de 40 min sozinho. Você também pode disparar manualmente abaixo se desejar abrir no WhatsApp Web.
+              O Piloto Automático avisa os clientes com 15 min de antecedência sozinho. Você também pode disparar manualmente abaixo se desejar abrir no WhatsApp Web.
             </p>
           </div>
         </div>
@@ -318,7 +318,7 @@ export const WhatsAppReminder40MinCard: React.FC<WhatsAppReminder40MinCardProps>
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <div className="flex items-center gap-2">
                 <MessageCircle className="h-5 w-5 text-emerald-400" />
-                <h3 className="font-bold text-white text-sm">Mensagem de Lembrete (40 Minutos)</h3>
+                <h3 className="font-bold text-white text-sm">Mensagem de Lembrete (15 Minutos)</h3>
               </div>
               <button
                 onClick={() => setPreviewItem(null)}

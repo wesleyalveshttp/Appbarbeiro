@@ -2047,9 +2047,10 @@ app.delete('/api/appointments/:id', requireTenantAuth, async (req: Request, res:
 });
 
 // ---------------------------------------------------------------------------
-// 13.1 40-MINUTE WHATSAPP REMINDER ENDPOINTS (#USER REQUIREMENT)
 // ---------------------------------------------------------------------------
-app.get('/api/reminders/40min/:orgId', async (req: Request, res: Response) => {
+// 13.1 15-MINUTE WHATSAPP REMINDER ENDPOINTS (#USER REQUIREMENT)
+// ---------------------------------------------------------------------------
+const handleRemindersRequest = async (req: Request, res: Response) => {
   const { orgId } = req.params;
   if (!orgId) return res.status(400).json({ error: 'orgId é obrigatório' });
 
@@ -2073,7 +2074,8 @@ app.get('/api/reminders/40min/:orgId', async (req: Request, res: Response) => {
         try {
           const aptTimeMs = new Date(`${a.date}T${a.time}:00`).getTime();
           const minutesUntil = Math.round((aptTimeMs - nowMs) / 60000);
-          return minutesUntil >= -5 && minutesUntil <= 45;
+          // Target window: between -5 and 20 minutes from appointment (~15 min anticipation)
+          return minutesUntil >= -5 && minutesUntil <= 20;
         } catch {
           return false;
         }
@@ -2083,7 +2085,7 @@ app.get('/api/reminders/40min/:orgId', async (req: Request, res: Response) => {
         const minutesUntil = Math.max(0, Math.round((aptTimeMs - nowMs) / 60000));
         const rawPhone = (a.customerPhone || '').replace(/\D/g, '');
         const phone = rawPhone.length <= 11 && !rawPhone.startsWith('55') ? `55${rawPhone}` : rawPhone;
-        const text = `Olá ${a.customerName}! 💈 Lembrando que seu corte na *${orgName}* está agendado para hoje às *${a.time}* (em aproximadamente ~40 minutos). Já estamos preparando tudo para você. Por favor, avise se houver algum imprevisto. Até logo! ✂️`;
+        const text = `Olá ${a.customerName}! 💈 Lembrando que seu corte na *${orgName}* está agendado para hoje às *${a.time}* (em aproximadamente ~15 minutos). Já estamos preparando tudo para você. Por favor, avise se houver algum imprevisto. Até logo! ✂️`;
         return {
           id: a.id,
           customerName: a.customerName,
@@ -2101,14 +2103,14 @@ app.get('/api/reminders/40min/:orgId', async (req: Request, res: Response) => {
       .filter((q: any) => {
         if (q.status !== 'AGUARDANDO' && q.status !== 'PROXIMO') return false;
         if (q.notified40Min) return false;
-        const wait = q.estimatedWaitMinutes || 40;
-        return wait >= 20 && wait <= 45;
+        const wait = q.estimatedWaitMinutes || 15;
+        return wait >= 3 && wait <= 20;
       })
       .map((q: any) => {
-        const wait = q.estimatedWaitMinutes || 40;
+        const wait = q.estimatedWaitMinutes || 15;
         const rawPhone = (q.customerPhone || '').replace(/\D/g, '');
         const phone = rawPhone.length <= 11 && !rawPhone.startsWith('55') ? `55${rawPhone}` : rawPhone;
-        const text = `Olá ${q.customerName}! 💈 Sua vez na *${orgName}* (Senha *#${q.ticketNumber}*) está prevista para daqui a aproximadamente *${wait} minutos*. Fique à vontade para se aproximar da barbearia! ✂️`;
+        const text = `Olá ${q.customerName}! 💈 Sua vez na *${orgName}* (Senha *#${q.ticketNumber}*) está prevista para daqui a aproximadamente *${wait} minutos*. Fique à vontade para ir se aproximando da barbearia! ✂️`;
         return {
           id: q.id,
           customerName: q.customerName,
@@ -2131,7 +2133,10 @@ app.get('/api/reminders/40min/:orgId', async (req: Request, res: Response) => {
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
-});
+};
+
+app.get('/api/reminders/15min/:orgId', handleRemindersRequest);
+app.get('/api/reminders/40min/:orgId', handleRemindersRequest);
 
 app.post('/api/reminders/mark-sent', async (req: Request, res: Response) => {
   const { id, type, organizationId } = req.body;
@@ -2467,7 +2472,7 @@ async function runServerAutoPilotCycle() {
       if (!org.isActive) continue;
       const orgId = org.id;
 
-      // 1. Process 40-Minute Reminders
+      // 1. Process 15-Minute Reminders
       const [appointments, queue] = await Promise.all([
         SupabaseDBService.getAppointmentsForOrg(orgId, todayStr).catch(() => []),
         SupabaseDBService.getQueueForOrganization(orgId).catch(() => []),
@@ -2480,7 +2485,8 @@ async function runServerAutoPilotCycle() {
         try {
           const aptTimeMs = new Date(`${apt.date}T${apt.time}:00`).getTime();
           const minutesUntil = Math.round((aptTimeMs - nowMs) / 60000);
-          if (minutesUntil >= -5 && minutesUntil <= 45) {
+          // Target 15-minute anticipation window
+          if (minutesUntil >= -5 && minutesUntil <= 20) {
             await SupabaseDBService.updateAppointment(apt.id, orgId, {
               reminderSent40Min: true,
               reminderSent40MinAt: new Date().toISOString(),
@@ -2499,12 +2505,12 @@ async function runServerAutoPilotCycle() {
         } catch {}
       }
 
-      // Check queue tickets ~40 min wait
+      // Check queue tickets ~15 min wait
       for (const q of queue || []) {
         if (q.status !== 'AGUARDANDO' && q.status !== 'PROXIMO') continue;
         if (q.notified40Min) continue;
-        const wait = q.estimatedWaitMinutes || 40;
-        if (wait >= 20 && wait <= 45) {
+        const wait = q.estimatedWaitMinutes || 15;
+        if (wait >= 3 && wait <= 20) {
           await SupabaseDBService.updateQueueItemStatus(q.id, orgId, {
             notified40Min: true,
             notified40MinAt: new Date().toISOString(),
@@ -2516,7 +2522,7 @@ async function runServerAutoPilotCycle() {
               q.notificationToken,
               `💈 ${org.name}: Sua vez está chegando!`,
               `Sua previsão de corte (Senha #${q.ticketNumber}) é em aproximadamente ${wait} minutos. Venha para a barbearia!`,
-              { type: 'REMINDER_40MIN', ticketNumber: q.ticketNumber }
+              { type: 'REMINDER_15MIN', ticketNumber: q.ticketNumber }
             );
           }
 

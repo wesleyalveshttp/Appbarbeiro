@@ -117,7 +117,7 @@ export class AutoPilotService {
     let queueCallsMade = 0;
 
     // -------------------------------------------------------------------------
-    // 1. AUTO 40-MINUTE REMINDER (AGENDAMENTO & FILA VIRTUAL)
+    // 1. AUTO 15-MINUTE REMINDER (AGENDAMENTO & FILA VIRTUAL)
     // -------------------------------------------------------------------------
     if (settings.autoSend40MinWhatsApp !== false) {
       try {
@@ -131,7 +131,7 @@ export class AutoPilotService {
 
           this.addLog(orgId, {
             type: 'REMINDER_40MIN',
-            title: '⚡ Lembrete 40min Enviado (Agendamento)',
+            title: '⚡ Lembrete 15min Enviado (Agendamento)',
             description: `Aviso preventivo automático para ${apt.customerName} (Horário: ${apt.time} - ${apt.serviceName}).`,
             customerName: apt.customerName,
             whatsappUrl: r.whatsappUrl,
@@ -144,7 +144,7 @@ export class AutoPilotService {
 
           this.playChime('reminder');
           remindersSent++;
-          actionsTaken.push(`Lembrete 40 min enviado para ${apt.customerName}`);
+          actionsTaken.push(`Lembrete 15 min enviado para ${apt.customerName}`);
         }
 
         // Process virtual queue reminders
@@ -154,8 +154,8 @@ export class AutoPilotService {
 
           this.addLog(orgId, {
             type: 'REMINDER_40MIN',
-            title: '⚡ Lembrete 40min Enviado (Fila Virtual)',
-            description: `Aviso preventivo automático para ${item.customerName} (Senha #${item.ticketNumber} - tempo estimado ~${item.estimatedWaitMinutes || 40} min).`,
+            title: '⚡ Lembrete 15min Enviado (Fila Virtual)',
+            description: `Aviso preventivo automático para ${item.customerName} (Senha #${item.ticketNumber} - tempo estimado ~${item.estimatedWaitMinutes || 15} min).`,
             customerName: item.customerName,
             whatsappUrl: q.whatsappUrl,
           });
@@ -166,10 +166,10 @@ export class AutoPilotService {
 
           this.playChime('reminder');
           remindersSent++;
-          actionsTaken.push(`Lembrete de fila enviado para ${item.customerName} (Senha #${item.ticketNumber})`);
+          actionsTaken.push(`Lembrete 15 min de fila enviado para ${item.customerName} (Senha #${item.ticketNumber})`);
         }
       } catch (err) {
-        console.error('[AutoPilot] Erro ao processar lembretes 40 min:', err);
+        console.error('[AutoPilot] Erro ao processar lembretes 15 min:', err);
       }
     }
 

@@ -23,19 +23,23 @@ export class WhatsAppService {
       | 'CONFIRMACAO'
       | 'LEMBRETE'
       | 'LEMBRETE_40MIN'
+      | 'LEMBRETE_15MIN'
       | 'FILA_ENTRADA'
       | 'FILA_40MIN'
+      | 'FILA_15MIN'
       | 'PROXIMO'
       | 'SUA_VEZ'
       | 'FINALIZADO',
     data: WhatsAppTemplateData
   ): string {
     switch (type) {
+      case 'LEMBRETE_15MIN':
       case 'LEMBRETE_40MIN':
-        return `💈 *${data.establishmentName}*\n\nFala, *${data.customerName}*! Tudo certo?\n\nPassando para avisar que seu horário para *${data.serviceName}* com *${data.professionalName || 'nosso barbeiro'}* é daqui a *40 minutos* (às *${data.time}*).\n\n⏰ *Para que você não se atrase e seu corte comece pontualmente*, já pode ir se organizando ou saindo de casa/trabalho!\n\n📍 Localização / Como Chegar:\n${data.trackingUrl || ''}\n\nTe esperamos na cadeira! Caso tenha algum imprevisto, favor responder esta mensagem. ✂️`;
+        return `💈 *${data.establishmentName}*\n\nFala, *${data.customerName}*! Tudo certo?\n\nPassando para avisar que seu horário para *${data.serviceName}* com *${data.professionalName || 'nosso barbeiro'}* é daqui a *15 minutos* (às *${data.time}*).\n\n⏰ *Para que você não se atrase e seu corte comece pontualmente*, já pode ir se organizando ou se deslocando até a barbearia!\n\n📍 Localização / Como Chegar:\n${data.trackingUrl || ''}\n\nTe esperamos na cadeira! Caso tenha algum imprevisto, favor responder esta mensagem. ✂️`;
 
+      case 'FILA_15MIN':
       case 'FILA_40MIN':
-        return `💈 *${data.establishmentName}*\n\nOlá, *${data.customerName}*! Sua vez na fila de espera da barbearia está se aproximando (Senha *#${data.ticketNumber}*)!\n\n⏳ A previsão para o seu atendimento é de aproximadamente *40 minutos*.\n\nPara não perder o seu lugar na fila e evitar atrasos, já pode ir se deslocando até a barbearia!\n\n📍 Acompanhe sua posição ao vivo:\n${data.trackingUrl || ''}\n\nTe esperamos!`;
+        return `💈 *${data.establishmentName}*\n\nOlá, *${data.customerName}*! Sua vez na fila de espera da barbearia está se aproximando (Senha *#${data.ticketNumber}*)!\n\n⏳ A previsão para o seu atendimento é de aproximadamente *15 minutos*.\n\nPara não perder o seu lugar na fila e evitar atrasos, já pode ir se deslocando até a barbearia!\n\n📍 Acompanhe sua posição ao vivo:\n${data.trackingUrl || ''}\n\nTe esperamos!`;
 
       case 'CONFIRMACAO':
         return `💈 *${data.establishmentName}*\n\nOlá, *${data.customerName}*! Seu horário para *${data.serviceName}* com *${data.professionalName}* está confirmado para o dia *${data.date}* às *${data.time}*.\n\n📍 Acompanhe ou gerencie seu horário aqui:\n${data.trackingUrl || ''}\n\nTe esperamos!`;
@@ -70,9 +74,9 @@ export class WhatsAppService {
   }
 
   /**
-   * Generates 40-minute reminder text for an appointment
+   * Generates 15-minute reminder text for an appointment
    */
-  static get40MinReminderForAppointment(org: Organization, apt: Appointment, baseUrl?: string): {
+  static get15MinReminderForAppointment(org: Organization, apt: Appointment, baseUrl?: string): {
     text: string;
     whatsappUrl: string;
     phone: string;
@@ -80,7 +84,7 @@ export class WhatsAppService {
     const origin = baseUrl || (typeof window !== 'undefined' ? window.location.origin : '');
     const trackingUrl = apt.token ? `${origin}/atendimento/${apt.token}` : `${origin}/b/${org.slug}`;
 
-    const text = this.getMessageText('LEMBRETE_40MIN', {
+    const text = this.getMessageText('LEMBRETE_15MIN', {
       customerName: apt.customerName,
       customerPhone: apt.customerPhone,
       establishmentName: org.name,
@@ -98,10 +102,14 @@ export class WhatsAppService {
     };
   }
 
+  static get40MinReminderForAppointment(org: Organization, apt: Appointment, baseUrl?: string) {
+    return this.get15MinReminderForAppointment(org, apt, baseUrl);
+  }
+
   /**
-   * Generates 40-minute reminder text for a waiting queue item
+   * Generates 15-minute reminder text for a waiting queue item
    */
-  static get40MinReminderForQueue(org: Organization, item: WaitingQueueItem, baseUrl?: string): {
+  static get15MinReminderForQueue(org: Organization, item: WaitingQueueItem, baseUrl?: string): {
     text: string;
     whatsappUrl: string;
     phone: string;
@@ -109,7 +117,7 @@ export class WhatsAppService {
     const origin = baseUrl || (typeof window !== 'undefined' ? window.location.origin : '');
     const trackingUrl = `${origin}/fila/${org.slug}?ticket=${item.id}`;
 
-    const text = this.getMessageText('FILA_40MIN', {
+    const text = this.getMessageText('FILA_15MIN', {
       customerName: item.customerName,
       customerPhone: item.customerPhone,
       establishmentName: org.name,
@@ -123,6 +131,10 @@ export class WhatsAppService {
       whatsappUrl: this.getWhatsAppDirectLink(item.customerPhone, text),
       phone: item.customerPhone,
     };
+  }
+
+  static get40MinReminderForQueue(org: Organization, item: WaitingQueueItem, baseUrl?: string) {
+    return this.get15MinReminderForQueue(org, item, baseUrl);
   }
 
   /**

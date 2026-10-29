@@ -1432,7 +1432,7 @@ export class StorageService {
     return apt;
   }
 
-  // --- 40-Minute WhatsApp Reminder System (#USER REQUIREMENT) ---
+  // --- 15-Minute WhatsApp Reminder System (#USER REQUIREMENT) ---
   static getPending40MinReminders(orgId: string): {
     appointments: {
       item: Appointment;
@@ -1474,9 +1474,9 @@ export class StorageService {
         try {
           const aptTimeMs = new Date(`${apt.date}T${apt.time}:00`).getTime();
           const minutesUntil = Math.round((aptTimeMs - nowMs) / 60000);
-          // Target window: between -5 and 45 minutes from appointment
-          if (minutesUntil >= -5 && minutesUntil <= 45) {
-            const reminder = WhatsAppService.get40MinReminderForAppointment(org, apt);
+          // Target window: between -5 and 20 minutes from appointment (~15 min anticipation)
+          if (minutesUntil >= -5 && minutesUntil <= 20) {
+            const reminder = WhatsAppService.get15MinReminderForAppointment(org, apt);
             return {
               item: apt,
               minutesUntil,
@@ -1491,20 +1491,20 @@ export class StorageService {
       })
       .filter(Boolean) as any[];
 
-    // 2. Check Queue Tickets (customers with ~40 min wait time)
+    // 2. Check Queue Tickets (customers with ~15 min wait time)
     const eligibleQueue = db.queue.filter(q => {
       if (q.organizationId !== orgId) return false;
       if (q.status !== 'AGUARDANDO' && q.status !== 'PROXIMO') return false;
       if (q.notified40Min) return false;
-      const wait = q.estimatedWaitMinutes || 40;
-      return wait >= 20 && wait <= 45;
+      const wait = q.estimatedWaitMinutes || 15;
+      return wait >= 3 && wait <= 20;
     });
 
     const pendingQueue = eligibleQueue.map(q => {
-      const reminder = WhatsAppService.get40MinReminderForQueue(org, q);
+      const reminder = WhatsAppService.get15MinReminderForQueue(org, q);
       return {
         item: q,
-        minutesUntil: q.estimatedWaitMinutes || 40,
+        minutesUntil: q.estimatedWaitMinutes || 15,
         type: 'QUEUE' as const,
         whatsappText: reminder.text,
         whatsappUrl: reminder.whatsappUrl,
@@ -1516,6 +1516,10 @@ export class StorageService {
       appointments: pendingApts,
       queue: pendingQueue,
     };
+  }
+
+  static getPending15MinReminders(orgId: string) {
+    return this.getPending40MinReminders(orgId);
   }
 
   static async mark40MinReminderSent(
@@ -1532,8 +1536,8 @@ export class StorageService {
         apt.reminderSent40Min = true;
         apt.reminderSent40MinAt = nowIso;
         this.saveDB(db);
-        this.logAudit(orgId, 'Sistema', `Lembrete WhatsApp de 40 min enviado para ${apt.customerName}`);
-        broadcastEvent('APPOINTMENT_UPDATED', { appointmentId: id, orgId, reminder40Min: true });
+        this.logAudit(orgId, 'Sistema', `Lembrete WhatsApp de 15 min enviado para ${apt.customerName}`);
+        broadcastEvent('APPOINTMENT_UPDATED', { appointmentId: id, orgId, reminder40Min: true, reminder15Min: true });
         return { success: true, item: apt };
       }
     } else {
@@ -1542,13 +1546,17 @@ export class StorageService {
         q.notified40Min = true;
         q.notified40MinAt = nowIso;
         this.saveDB(db);
-        this.logAudit(orgId, 'Sistema', `Lembrete WhatsApp de 40 min na fila enviado para ${q.customerName}`);
-        broadcastEvent('QUEUE_UPDATED', { queueItemId: id, orgId, reminder40Min: true });
+        this.logAudit(orgId, 'Sistema', `Lembrete WhatsApp de 15 min na fila enviado para ${q.customerName}`);
+        broadcastEvent('QUEUE_UPDATED', { queueItemId: id, orgId, reminder40Min: true, reminder15Min: true });
         return { success: true, item: q };
       }
     }
 
     return { success: false };
+  }
+
+  static async mark15MinReminderSent(id: string, type: 'APPOINTMENT' | 'QUEUE', orgId: string) {
+    return this.mark40MinReminderSent(id, type, orgId);
   }
 
   // --- Real-Time Waiting Queue ---

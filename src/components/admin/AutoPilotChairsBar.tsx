@@ -99,7 +99,7 @@ export const AutoPilotChairsBar: React.FC<AutoPilotChairsBarProps> = ({
               </span>
             </div>
             <p className="text-xs text-slate-300">
-              O app avisa os clientes de 40 min e organiza a fila sozinho. <strong className="text-amber-400">Sua única tarefa é sentar o cliente e finalizar o corte!</strong>
+              O app avisa os clientes com 15 min de antecedência e organiza a fila sozinho. <strong className="text-amber-400">Sua única tarefa é sentar o cliente e finalizar o corte!</strong>
             </p>
           </div>
         </div>
@@ -118,7 +118,7 @@ export const AutoPilotChairsBar: React.FC<AutoPilotChairsBarProps> = ({
 
           <div className="flex items-center gap-1 text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2.5 py-1.5 rounded-xl border border-emerald-500/20">
             <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Fila & 40min Automáticos</span>
+            <span>Fila & 15min Automáticos</span>
           </div>
         </div>
       </div>
