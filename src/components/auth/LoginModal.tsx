@@ -256,9 +256,24 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowAdminPassword(!showAdminPassword)}
-                    className="absolute right-3 top-2.5 text-slate-400 hover:text-white p-0.5"
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-white p-0.5 cursor-pointer"
                   >
                     {showAdminPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-slate-400 mt-1.5 px-0.5">
+                  <span>
+                    Senha master: <strong className="text-purple-300 font-mono">Anna123!@</strong>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdminPassword('Anna123!@');
+                      setErrorMsg('');
+                    }}
+                    className="text-purple-400 hover:text-purple-300 font-semibold underline cursor-pointer"
+                  >
+                    Preencher agora
                   </button>
                 </div>
               </div>
