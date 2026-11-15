@@ -145,7 +145,7 @@ const DEFAULT_PLANS: SaaSPlan[] = [
     popular: true,
     features: [
       'Valor total anual: R$ 838,80 à vista (Economia de R$ 120 no ano!)',
-      'Parcele em até 12x no cartão (juros por conta do comprador)',
+      'Pagamento à vista ou em até 12x no cartão (taxas de parcelamento aplicadas no checkout)',
       'Equivalente a R$ 69,90/mês no valor à vista sem descontos',
       'Todas as ferramentas 100% Liberadas por 12 meses',
       'Fila virtual com chamada e notificações ao vivo',

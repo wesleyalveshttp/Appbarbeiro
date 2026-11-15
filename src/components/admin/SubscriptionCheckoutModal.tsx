@@ -366,7 +366,7 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
                 <span>Parcelamento em até 12x no cartão de crédito disponível</span>
               </div>
               <p className="text-[10px] text-slate-400 leading-tight">
-                ⚡ Os juros da operadora de cartão de crédito ficam a cargo do comprador (cliente). O valor integral de R$ 838,80 é preservado sem descontos de parcelamento.
+                Pagamento à vista ou em até 12x no cartão (taxas de parcelamento aplicadas no checkout).
               </p>
             </div>
           )}
