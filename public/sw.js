@@ -48,14 +48,14 @@ self.addEventListener('push', (event) => {
     data.type === 'CALLED' ||
     (data.title && (data.title.includes('vez') || data.title.includes('chamando') || data.title.includes('CADEIRA'))) ||
     (data.body && (data.body.includes('vez') || data.body.includes('cadeira')));
-  const isNext = data.type === 'NEXT';
+  const isNext = data.type === 'NEXT' || data.type === 'REMINDER_15MIN' || data.type === 'ADVANCE_WARNING';
 
   const vibration =
     data.vibratePattern ||
     (isCalled
       ? [600, 200, 600, 200, 1000, 250, 1000, 250, 1200]
       : isNext
-      ? [350, 150, 350, 150, 350]
+      ? [350, 150, 350, 150, 450]
       : [250, 100, 250]);
 
   // Action buttons rendered directly on native push notification (Android / Desktop)
@@ -64,7 +64,7 @@ self.addEventListener('push', (event) => {
     actionButtons.push(
       {
         action: 'on_my_way',
-        title: '🏃 Estou a Caminho',
+        title: '🏃 Já estou indo!',
       },
       {
         action: 'tolerance',
@@ -76,10 +76,16 @@ self.addEventListener('push', (event) => {
       }
     );
   } else if (isNext) {
-    actionButtons.push({
-      action: 'open_ticket',
-      title: '💈 Ver Minha Posição',
-    });
+    actionButtons.push(
+      {
+        action: 'on_my_way',
+        title: '🏃 Já estou indo!',
+      },
+      {
+        action: 'open_ticket',
+        title: '💈 Ver Minha Posição',
+      }
+    );
   }
 
   const notificationOptions = {
@@ -89,12 +95,13 @@ self.addEventListener('push', (event) => {
     tag: data.tag || `barberos-${data.type || 'called'}-${data.ticketNumber || Date.now()}`,
     vibrate: vibration,
     renotify: true,
-    requireInteraction: isCalled, // Keeps notification persistently on screen until user interacts!
+    requireInteraction: isCalled || isNext, // Keeps notification persistently on screen until user confirms!
     silent: false, // Forces device ringtone and physical vibration
     actions: actionButtons,
     data: {
       ...data,
       isCalled,
+      isNext,
       receivedAt: Date.now(),
     },
   };
@@ -106,7 +113,7 @@ self.addEventListener('push', (event) => {
       clientList.forEach((client) => {
         client.postMessage({
           type: 'REMOTE_PUSH_RECEIVED',
-          payload: { ...data, isCalled },
+          payload: { ...data, isCalled, isNext },
         });
       });
     });
@@ -129,9 +136,17 @@ self.addEventListener('notificationclick', (event) => {
   const queueId = notifData.queueId;
   const action = event.action; // 'on_my_way', 'tolerance', 'open_ticket', or empty string (body clicked)
   const targetUrl = notifData.url || '/';
+  const shouldSilence = action === 'on_my_way' || action === 'tolerance' || action === 'silence_alarm';
 
-  // 1. If user clicked a direct action button, dispatch response to backend in background
+  // 1. If user clicked a direct action button, dispatch response to backend in background & close all notifications
   const backgroundActionPromise = (async () => {
+    if (shouldSilence && self.registration.getNotifications) {
+      try {
+        const openNotifs = await self.registration.getNotifications();
+        openNotifs.forEach((n) => n.close());
+      } catch {}
+    }
+
     if (action === 'on_my_way' && queueId) {
       try {
         await fetch('/api/queue/respond', {
@@ -163,26 +178,32 @@ self.addEventListener('notificationclick', (event) => {
     }
   })();
 
-  // 2. Bring window to front or open new window, and trigger audio confirmation
+  // 2. Bring window to front or open new window, and silence alarm if user responded
   const windowFocusPromise = self.clients
     .matchAll({ type: 'window', includeUncontrolled: true })
     .then(async (clientList) => {
-      // Find matching client by url or origin
       for (const client of clientList) {
-        if ('focus' in client) {
+        if (shouldSilence) {
+          client.postMessage({
+            type: 'SILENCE_ALARM',
+            silenceAlarm: true,
+            payload: notifData,
+            action,
+          });
+        } else if ('focus' in client) {
           await client.focus();
           client.postMessage({
             type: 'PUSH_NOTIFICATION_CLICKED',
             payload: notifData,
             action: action || 'BODY_CLICK',
-            playAlarm: true,
+            silenceAlarm: false,
           });
           return;
         }
       }
 
-      // If no window open, open window with the ticket URL
-      if (self.clients.openWindow) {
+      // If no window open and user didn't just silence via button, open window with the ticket URL
+      if (!shouldSilence && self.clients.openWindow) {
         const newWindow = await self.clients.openWindow(targetUrl);
         if (newWindow && 'focus' in newWindow) {
           await newWindow.focus();

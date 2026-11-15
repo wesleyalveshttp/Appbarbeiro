@@ -10,6 +10,7 @@ import {
   UserCheck,
   Armchair,
   Volume2,
+  VolumeX,
   LogOut,
   Bell,
   BellRing,
@@ -77,6 +78,8 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
   const [permissionState, setPermissionState] = useState<PushPermissionState>('default');
   const [testNotificationFeedback, setTestNotificationFeedback] = useState<string | null>(null);
   const lastAlertedStatusRef = useRef<string | null>(null);
+  const silencedAlertKeyRef = useRef<string | null>(null);
+  const [isAlarmPlaying, setIsAlarmPlaying] = useState<boolean>(false);
 
   const [secondsRemaining, setSecondsRemaining] = useState<number | null>(null);
   const [showQR, setShowQR] = useState(false);
@@ -91,6 +94,7 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
 
     const handlePushReceived = () => {
       setIsVisualVibrating(true);
+      setIsAlarmPlaying(NotificationService.isAlarmPlaying());
       loadData();
       setTimeout(() => setIsVisualVibrating(false), 3000);
     };
@@ -101,14 +105,28 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
       setTimeout(() => setIsVisualVibrating(false), 3000);
     };
 
+    const handleAlarmState = (e: any) => {
+      setIsAlarmPlaying(Boolean(e?.detail?.playing));
+    };
+
+    const handleAlarmSilenced = () => {
+      setIsAlarmPlaying(false);
+      setIsVisualVibrating(false);
+      loadData();
+    };
+
     window.addEventListener('barberos_vibrate', handleVibrateEvent);
     window.addEventListener('barberos_remote_push_alert', handlePushReceived);
     window.addEventListener('barberos_push_clicked', handlePushClicked);
+    window.addEventListener('barberos_alarm_state', handleAlarmState);
+    window.addEventListener('barberos_alarm_silenced', handleAlarmSilenced);
 
     return () => {
       window.removeEventListener('barberos_vibrate', handleVibrateEvent);
       window.removeEventListener('barberos_remote_push_alert', handlePushReceived);
       window.removeEventListener('barberos_push_clicked', handlePushClicked);
+      window.removeEventListener('barberos_alarm_state', handleAlarmState);
+      window.removeEventListener('barberos_alarm_silenced', handleAlarmSilenced);
     };
   }, [slug]);
 
@@ -250,55 +268,80 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   })();
 
-  // Sound, Vibration, and Push alert when status changes to PROXIMO, CHAMADO, or NA CADEIRA
+  const isAdvanceNoticeWaiting =
+    !!myQueueItem &&
+    (myQueueItem.status === 'PROXIMO' ||
+      (myQueueItem.status === 'AGUARDANDO' && myPositionIndex >= 0 && myPositionIndex <= 1 && estimatedTime <= 15));
+
+  const currentAlertKey = myQueueItem
+    ? myQueueItem.status === 'CHAMADO'
+      ? `CHAMADO_${myQueueItem.calledAt || ''}`
+      : isAdvanceNoticeWaiting
+      ? `ADVANCE_${myQueueItem.id}`
+      : myQueueItem.status
+    : null;
+
+  // Sound, Vibration, and Push alert when status reaches advance notice (PROXIMO/<=15min), CHAMADO, or NA CADEIRA
   useEffect(() => {
-    if (!myQueueItem) return;
+    if (!myQueueItem || !currentAlertKey) return;
     const currentStatus = myQueueItem.status;
 
-    if (currentStatus !== lastAlertedStatusRef.current) {
+    // If client already confirmed "Já estou indo" for this phase, ensure sound stays silenced
+    if (
+      currentStatus === 'A_CAMINHO' ||
+      (isAdvanceNoticeWaiting && myQueueItem.clientResponse === 'A_CAMINHO') ||
+      silencedAlertKeyRef.current === currentAlertKey
+    ) {
+      NotificationService.stopRepeatingAlarm();
+      lastAlertedStatusRef.current = currentAlertKey;
+      return;
+    }
+
+    if (currentAlertKey !== lastAlertedStatusRef.current) {
       if (currentStatus === 'CHAMADO') {
         NotificationService.startRepeatingAlarm('CALLED', 3500);
         NotificationService.dispatchNotification({
           title: '✂️ O BARBEIRO ESTÁ TE CHAMANDO!',
-          body: `Chegou a sua vez (${myQueueItem.serviceName})! Dirija-se à cadeira agora!`,
+          body: `Chegou a sua vez de sentar na cadeira (${myQueueItem.serviceName})! Aperte "Já estou indo!" para confirmar.`,
           type: 'CALLED',
           ticketNumber: myQueueItem.ticketNumber,
+          skipSound: true,
         });
-        lastAlertedStatusRef.current = 'CHAMADO';
+        lastAlertedStatusRef.current = currentAlertKey;
       } else if (currentStatus === 'NA CADEIRA') {
         NotificationService.stopRepeatingAlarm();
-        NotificationService.playSound('CALLED');
-        NotificationService.vibrate([400, 150, 400]);
+        NotificationService.playSound('NEXT');
+        NotificationService.vibrate([300, 120, 300]);
         NotificationService.dispatchNotification({
           title: '💈 Você está na cadeira!',
           body: `Seu atendimento de ${myQueueItem.serviceName} começou!`,
           type: 'NEXT',
           ticketNumber: myQueueItem.ticketNumber,
+          skipSound: true,
         });
-        lastAlertedStatusRef.current = 'NA CADEIRA';
-      } else if (currentStatus === 'PROXIMO') {
-        NotificationService.stopRepeatingAlarm();
-        NotificationService.playSound('NEXT');
-        NotificationService.vibrate([350, 150, 350, 150, 350]);
+        lastAlertedStatusRef.current = currentAlertKey;
+      } else if (isAdvanceNoticeWaiting) {
+        NotificationService.startRepeatingAlarm('NEXT', 4500);
         NotificationService.dispatchNotification({
-          title: '💈 Você é o próximo da fila!',
-          body: `Prepare-se! Sua senha é #${myQueueItem.ticketNumber}. Faltam poucos minutos.`,
+          title: '💈 Sua vez de sentar na cadeira está chegando!',
+          body: `Prepare-se! Sua senha é #${myQueueItem.ticketNumber}. Aperte "Já estou indo!" para parar o som do aviso.`,
           type: 'NEXT',
           ticketNumber: myQueueItem.ticketNumber,
+          skipSound: true,
         });
-        lastAlertedStatusRef.current = 'PROXIMO';
+        lastAlertedStatusRef.current = currentAlertKey;
       } else {
         NotificationService.stopRepeatingAlarm();
-        lastAlertedStatusRef.current = currentStatus;
+        lastAlertedStatusRef.current = currentAlertKey;
       }
     }
 
     return () => {
-      if (currentStatus !== 'CHAMADO') {
+      if (currentStatus !== 'CHAMADO' && !isAdvanceNoticeWaiting) {
         NotificationService.stopRepeatingAlarm();
       }
     };
-  }, [myQueueItem?.status]);
+  }, [myQueueItem?.status, myQueueItem?.calledAt, myQueueItem?.clientResponse, isAdvanceNoticeWaiting, currentAlertKey]);
 
   // Tolerance countdown timer when called
   useEffect(() => {
@@ -415,9 +458,40 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
     }
   };
 
+  const handleSilenceAlarmOnly = () => {
+    if (currentAlertKey) {
+      silencedAlertKeyRef.current = currentAlertKey;
+    }
+    NotificationService.stopRepeatingAlarm();
+    setIsAlarmPlaying(false);
+  };
+
   const handleRespondCalled = async (response: 'A_CAMINHO' | 'PEDIU_TOLERANCIA' | 'NAO_PODE') => {
     if (!myQueueItem) return;
+    // Immediately silence all notification sounds & close active OS notifications
+    if (currentAlertKey) {
+      silencedAlertKeyRef.current = currentAlertKey;
+    }
     NotificationService.stopRepeatingAlarm();
+    setIsAlarmPlaying(false);
+
+    // Optimistic UI update so the customer sees immediate feedback
+    const updatedOptimistic: WaitingQueueItem = {
+      ...myQueueItem,
+      clientResponse: response,
+      clientResponseTime: new Date().toISOString(),
+      status:
+        response === 'A_CAMINHO'
+          ? myQueueItem.status === 'CHAMADO' || myQueueItem.status === 'PEDIU_TOLERANCIA'
+            ? 'A_CAMINHO'
+            : myQueueItem.status
+          : response === 'PEDIU_TOLERANCIA'
+          ? 'PEDIU_TOLERANCIA'
+          : 'DESISTIU',
+    };
+    setMyDirectTicketItem(updatedOptimistic);
+    setQueue((prev) => prev.map((q) => (q.id === myQueueItem.id ? updatedOptimistic : q)));
+
     await StorageService.respondCalledQueueItem(myQueueItem.id, response);
     loadData();
   };
@@ -761,10 +835,10 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
               myQueueItem.status === 'A_CAMINHO' ||
               myQueueItem.status === 'PEDIU_TOLERANCIA') && (
               <div className={`rounded-3xl bg-gradient-to-b from-emerald-500 to-emerald-600 text-slate-950 p-6 text-center shadow-2xl space-y-4 border-2 border-emerald-300 transition-all ${
-                isVisualVibrating ? 'ring-8 ring-amber-300 scale-[1.02] animate-bounce' : 'animate-pulse'
+                isVisualVibrating ? 'ring-8 ring-amber-300 scale-[1.02] animate-bounce' : myQueueItem.status === 'CHAMADO' ? 'animate-pulse' : ''
               }`}>
                 <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-emerald-400 font-bold shadow-lg">
-                  <Scissors className="h-7 w-7 animate-bounce" />
+                  <Scissors className={`h-7 w-7 ${myQueueItem.status === 'CHAMADO' ? 'animate-bounce' : ''}`} />
                 </div>
 
                 <div>
@@ -778,18 +852,30 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
                     Seu barbeiro está pronto para atender você ({myQueueItem.serviceName}). Dirija-se à cadeira agora!
                   </p>
 
-                  <div className="mt-2 flex items-center justify-center gap-2">
-                    <button
-                      onClick={() => {
-                        NotificationService.unlockAudio();
-                        NotificationService.playSound('CALLED');
-                        NotificationService.vibrate([600, 200, 600, 200, 1000]);
-                      }}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/90 text-amber-300 text-xs font-bold hover:bg-slate-950 transition cursor-pointer shadow-md"
-                    >
-                      <Volume2 className="h-3.5 w-3.5 text-amber-400 animate-pulse" />
-                      <span>Tocar Som da Chamada 🔊</span>
-                    </button>
+                  <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+                    {isAlarmPlaying ? (
+                      <button
+                        type="button"
+                        onClick={handleSilenceAlarmOnly}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-950 text-rose-200 text-xs font-bold hover:bg-rose-900 transition cursor-pointer shadow-md border border-rose-400/40"
+                      >
+                        <VolumeX className="h-3.5 w-3.5 text-rose-300" />
+                        <span>Parar Som Agora 🔕</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          NotificationService.unlockAudio();
+                          NotificationService.playSound('CALLED');
+                          NotificationService.vibrate([600, 200, 600, 200, 1000]);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/90 text-amber-300 text-xs font-bold hover:bg-slate-950 transition cursor-pointer shadow-md"
+                      >
+                        <Volume2 className="h-3.5 w-3.5 text-amber-400" />
+                        <span>Tocar Som da Chamada 🔊</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -813,36 +899,54 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
 
                 {/* CLIENT INTERACTIVE ACTIONS (#Requirement 7) */}
                 <div className="space-y-2 pt-1">
-                  {myQueueItem.clientResponse === 'A_CAMINHO' ? (
-                    <div className="p-3 rounded-xl bg-slate-950 text-emerald-300 text-xs font-bold flex items-center justify-center gap-2 border border-emerald-400">
-                      <CheckCircle2 className="h-4 w-4" />
-                      <span>Você confirmou: A caminho da cadeira!</span>
+                  {myQueueItem.status === 'A_CAMINHO' ? (
+                    <div className="p-3.5 rounded-xl bg-slate-950 text-emerald-300 text-xs font-bold flex flex-col items-center justify-center gap-1 border border-emerald-400 shadow-lg">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                        <span>Você confirmou: Já está indo para a cadeira!</span>
+                      </div>
+                      <span className="text-[11px] text-slate-400 font-medium">
+                        🔕 Som da notificação silenciado. O barbeiro já foi avisado!
+                      </span>
                     </div>
-                  ) : myQueueItem.clientResponse === 'PEDIU_TOLERANCIA' ? (
-                    <div className="p-3 rounded-xl bg-slate-950 text-amber-300 text-xs font-bold flex items-center justify-center gap-2 border border-amber-400">
-                      <Clock className="h-4 w-4" />
-                      <span>Tolerância adicional solicitada (+3 minutos).</span>
-                    </div>
-                  ) : (
-                    <>
+                  ) : myQueueItem.status === 'PEDIU_TOLERANCIA' ? (
+                    <div className="space-y-2">
+                      <div className="p-3 rounded-xl bg-slate-950 text-amber-300 text-xs font-bold flex items-center justify-center gap-2 border border-amber-400">
+                        <Clock className="h-4 w-4" />
+                        <span>Tolerância adicional solicitada (+3 minutos).</span>
+                      </div>
                       <button
+                        type="button"
                         onClick={() => handleRespondCalled('A_CAMINHO')}
                         className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-950 hover:bg-slate-900 text-white font-bold py-3 text-xs shadow-lg transition cursor-pointer"
                       >
                         <UserCheck className="h-4 w-4 text-emerald-400" />
-                        <span>Estou indo para o atendimento</span>
+                        <span>🏃 Já estou indo! (Parar som)</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleRespondCalled('A_CAMINHO')}
+                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-slate-950 hover:bg-slate-900 text-white font-black py-3.5 text-sm shadow-xl transition cursor-pointer transform active:scale-95 border border-emerald-300/40"
+                      >
+                        <UserCheck className="h-5 w-5 text-emerald-400" />
+                        <span>🏃 Já estou indo! (Parar som)</span>
                       </button>
 
                       <div className="grid grid-cols-2 gap-2">
                         <button
+                          type="button"
                           onClick={() => handleRespondCalled('PEDIU_TOLERANCIA')}
-                          className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-900 text-slate-900 font-bold py-2.5 text-[11px] transition cursor-pointer border border-slate-900"
+                          className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-950/90 hover:bg-slate-950 text-amber-300 font-bold py-2.5 text-[11px] transition cursor-pointer border border-slate-900"
                         >
                           <Clock className="h-3.5 w-3.5" />
                           <span>Preciso de +3 min</span>
                         </button>
 
                         <button
+                          type="button"
                           onClick={() => handleRespondCalled('NAO_PODE')}
                           className="flex items-center justify-center gap-1.5 rounded-xl bg-rose-600/90 hover:bg-rose-700 text-white font-bold py-2.5 text-[11px] transition cursor-pointer"
                         >
@@ -856,16 +960,62 @@ export const PublicQueue: React.FC<PublicQueueProps> = ({
               </div>
             )}
 
-            {/* ALERT STATE 2: NEXT IN LINE ("VOCÊ É O PRÓXIMO") */}
-            {myQueueItem.status === 'PROXIMO' && (
-              <div className="rounded-3xl bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 p-6 text-center shadow-2xl space-y-2 border-2 border-amber-300">
-                <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-950 text-amber-400 font-bold shadow-md">
-                  <Clock className="h-5 w-5 animate-pulse" />
+            {/* ALERT STATE 2: ADVANCE WARNING BEFORE SITTING ON CHAIR ("SUA VEZ ESTÁ CHEGANDO") */}
+            {isAdvanceNoticeWaiting && (
+              <div className={`rounded-3xl bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 p-6 text-center shadow-2xl space-y-3 border-2 border-amber-300 transition-all ${
+                isVisualVibrating ? 'ring-4 ring-white scale-[1.01]' : ''
+              }`}>
+                <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-amber-400 font-bold shadow-md">
+                  <BellRing className={`h-6 w-6 ${isAlarmPlaying ? 'animate-bounce text-emerald-400' : 'animate-pulse'}`} />
                 </div>
-                <h2 className="text-2xl font-black tracking-tight">Você é o próximo da fila! 💈</h2>
-                <p className="text-xs text-slate-900 font-bold leading-relaxed">
-                  Prepare-se para o atendimento! Aproxime-se da barbearia. Faltam cerca de 5 minutos para a chamada.
-                </p>
+
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider bg-slate-950 text-amber-300 px-3 py-1 rounded-full">
+                    Aviso Antecipado
+                  </span>
+                  <h2 className="mt-2 text-2xl font-black tracking-tight leading-tight">
+                    {myQueueItem.status === 'PROXIMO'
+                      ? 'Você é o próximo da fila! 💈'
+                      : 'Sua vez está chegando! 💈'}
+                  </h2>
+                  <p className="mt-1 text-xs text-slate-900 font-bold leading-relaxed">
+                    Prepare-se para sentar na cadeira! Aproxime-se da barbearia (previsão ~{estimatedTime} min). Confirme abaixo para avisar o barbeiro e parar o som do alerta.
+                  </p>
+                </div>
+
+                {myQueueItem.clientResponse === 'A_CAMINHO' ? (
+                  <div className="p-3.5 rounded-2xl bg-slate-950 text-emerald-300 text-xs font-bold flex flex-col items-center justify-center gap-1 border border-emerald-400/50 shadow-md">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                      <span>Confirmado: Você já está indo!</span>
+                    </div>
+                    <span className="text-[11px] text-slate-400 font-medium">
+                      🔕 Som da notificação parado. O barbeiro já sabe que você está a caminho!
+                    </span>
+                  </div>
+                ) : (
+                  <div className="space-y-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleRespondCalled('A_CAMINHO')}
+                      className="w-full flex items-center justify-center gap-2 rounded-2xl bg-slate-950 hover:bg-slate-900 text-white font-black py-3.5 px-4 text-sm shadow-xl transition cursor-pointer transform active:scale-95"
+                    >
+                      <UserCheck className="h-5 w-5 text-emerald-400" />
+                      <span>🏃 Já estou indo! (Parar som)</span>
+                    </button>
+
+                    {isAlarmPlaying && (
+                      <button
+                        type="button"
+                        onClick={handleSilenceAlarmOnly}
+                        className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-950/20 hover:bg-slate-950/30 text-slate-950 font-bold text-[11px] transition cursor-pointer"
+                      >
+                        <VolumeX className="h-3.5 w-3.5" />
+                        <span>Silenciar apenas o som</span>
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

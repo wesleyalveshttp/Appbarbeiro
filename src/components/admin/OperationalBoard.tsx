@@ -422,9 +422,16 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
                       </button>
                     </div>
 
-                    <div className="text-[10px] text-slate-400 flex items-center gap-1.5">
-                      <Clock className="h-3 w-3 text-slate-500" />
-                      <span>{calculateMinutesElapsed(item.joinedAt)} min na fila</span>
+                    <div className="text-[10px] text-slate-400 flex flex-wrap items-center gap-2">
+                      <span className="flex items-center gap-1.5">
+                        <Clock className="h-3 w-3 text-slate-500" />
+                        <span>{calculateMinutesElapsed(item.joinedAt)} min na fila</span>
+                      </span>
+                      {item.clientResponse === 'A_CAMINHO' && (
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold">
+                          🏃 Já está indo!
+                        </span>
+                      )}
                     </div>
 
                     <div className="pt-1 flex items-center gap-2">
@@ -486,13 +493,21 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
                           <div className="text-[11px] text-blue-200">{item.serviceName}</div>
                         </div>
                       </div>
-                      <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300">
+                      <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                        item.status === 'A_CAMINHO' || item.clientResponse === 'A_CAMINHO'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                          : 'bg-blue-500/20 text-blue-300'
+                      }`}>
                         {item.status === 'CHAMADO'
-                          ? 'Chamado'
+                          ? item.clientResponse === 'A_CAMINHO'
+                            ? '🏃 Já está indo!'
+                            : 'Chamado'
                           : item.status === 'A_CAMINHO'
-                          ? 'A Caminho'
+                          ? '🏃 Já está indo!'
                           : item.status === 'PEDIU_TOLERANCIA'
                           ? '+3 min'
+                          : item.clientResponse === 'A_CAMINHO'
+                          ? 'Próximo · 🏃 Indo'
                           : 'Próximo'}
                       </span>
                     </div>

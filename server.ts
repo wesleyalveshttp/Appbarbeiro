@@ -342,7 +342,8 @@ app.get('/api/health', (req: Request, res: Response) => {
   res.json({
     status: 'ok',
     name: 'BarberOS',
-    version: '2.0.0-supabase-postgres',
+    version: '2.0.0',
+    databaseBackend: SupabaseDBService.getActiveBackendName(),
     supabaseConfigured: SupabaseDBService.isConfigured(),
     mercadopagoConfigured: !!MP_ACCESS_TOKEN,
   });
@@ -507,17 +508,21 @@ app.get('/api/supabase/status', async (req: Request, res: Response) => {
     return res.json({
       isConfigured: false,
       tablesReady: false,
-      message: 'Supabase não configurado. Defina SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no ambiente ou na Vercel.',
+      message: 'Banco de dados não configurado. Defina SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY ou configure o Cloud Firestore.',
       schemaScript: 'supabase-schema.sql'
     });
   }
 
   const tablesReady = await SupabaseDBService.checkTablesReady(true);
+  const backend = SupabaseDBService.getActiveBackendName();
   res.json({
     isConfigured: true,
     tablesReady,
+    backend,
     instructions: tablesReady
-      ? 'Banco de dados Supabase (PostgreSQL) conectado e tabelas verificadas.'
+      ? backend === 'firestore'
+        ? 'Banco de dados Cloud Firestore conectado e operacional.'
+        : 'Banco de dados Supabase (PostgreSQL) conectado e tabelas verificadas.'
       : 'Tabelas não encontradas no schema cache. Execute supabase-schema.sql no SQL Editor do Supabase.',
     schemaScript: 'supabase-schema.sql'
   });
@@ -811,20 +816,32 @@ app.post('/api/auth/login-owner', async (req: Request, res: Response) => {
       });
     }
 
-    if (!org.ownerPasswordHash || !org.ownerSalt) {
+    const trimmedPassword = String(password).trim();
+    let isMatch = false;
+
+    if (org.ownerPasswordHash && org.ownerSalt) {
+      isMatch = verifyPassword(trimmedPassword, org.ownerPasswordHash, org.ownerSalt);
+    } else if (org.ownerPassword) {
+      isMatch = trimmedPassword === String(org.ownerPassword).trim();
+      if (isMatch) {
+        // Transparently upgrade legacy plaintext password to PBKDF2 hash
+        await SupabaseDBService.updateOrganization(org.id, {
+          ownerPassword: trimmedPassword,
+        }).catch(() => null);
+      }
+    } else {
       return res.status(401).json({
         error: 'Credenciais de acesso não configuradas para esta barbearia.',
       });
     }
 
-    const isMatch = verifyPassword(String(password).trim(), org.ownerPasswordHash, org.ownerSalt);
     if (!isMatch) {
       return res.status(401).json({
         error: 'Senha incorreta para esta barbearia. Verifique sua senha de acesso.',
       });
     }
 
-    // Create durable session in Supabase
+    // Create durable session in DB
     const sessionToken = `sess_${crypto.randomBytes(24).toString('hex')}`;
     const uid = `usr_owner_${org.id}`;
     const nowIso = new Date().toISOString();
@@ -852,7 +869,7 @@ app.post('/api/auth/login-owner', async (req: Request, res: Response) => {
       SupabaseDBService.getQueueForOrganization(org.id),
     ]);
 
-    const { ownerPasswordHash, ownerSalt, ...safeOrg } = org;
+    const { ownerPassword, ownerPasswordHash, ownerSalt, ...safeOrg } = org;
 
     return res.json({
       success: true,
@@ -979,14 +996,20 @@ app.get('/api/organizations', async (req: Request, res: Response) => {
   }
 
   try {
+    const sanitizeOrg = (o: any) => {
+      if (!o) return o;
+      const { ownerPassword, ownerPasswordHash, ownerSalt, ...safe } = o;
+      return safe;
+    };
+
     if (session && (session.role === 'SUPERADMIN' || session.role === 'SUPER_ADMIN')) {
       const orgs = await SupabaseDBService.getAllOrganizations();
-      return res.json({ organizations: orgs });
+      return res.json({ organizations: orgs.map(sanitizeOrg) });
     }
 
     if (session && session.role === 'OWNER' && session.organizationId) {
       const org = await SupabaseDBService.getOrganizationById(session.organizationId);
-      return res.json({ organizations: org ? [org] : [] });
+      return res.json({ organizations: org ? [sanitizeOrg(org)] : [] });
     }
 
     // Public / Unauthenticated: return only active public summaries
@@ -1020,7 +1043,7 @@ app.get('/api/organizations/:id', async (req: Request, res: Response) => {
 
     const isAuthorized = session && (session.role === 'SUPERADMIN' || session.role === 'SUPER_ADMIN' || session.organizationId === org.id);
     if (isAuthorized) {
-      const { ownerPasswordHash, ownerSalt, ...safeOrg } = org;
+      const { ownerPassword, ownerPasswordHash, ownerSalt, ...safeOrg } = org;
       return res.json({ organization: safeOrg });
     }
 
@@ -1290,9 +1313,9 @@ app.post('/api/queue/call-next', async (req: Request, res: Response) => {
         sendQueuePushNotification(
           organizationId,
           nextWaiting.notificationToken,
-          'Você é o próximo! 💈',
-          `Prepare-se! Sua senha é #${nextWaiting.ticketNumber}.`,
-          { type: 'NEXT', ticketNumber: nextWaiting.ticketNumber }
+          '💈 Sua vez está chegando! Prepare-se!',
+          `Faltam poucos minutos para você sentar na cadeira (Senha #${nextWaiting.ticketNumber}). Aperte "Já estou indo!" para confirmar.`,
+          { type: 'NEXT', ticketNumber: nextWaiting.ticketNumber, queueId: nextWaiting.id }
         );
       }
       for (let i = 1; i < remainingWaiting.length; i++) {
@@ -1355,8 +1378,9 @@ app.post('/api/queue/call-specific', async (req: Request, res: Response) => {
           sendQueuePushNotification(
             targetOrgId,
             nextWaiting.notificationToken,
-            'Você é o próximo! 💈',
-            `Prepare-se! Sua senha é #${nextWaiting.ticketNumber}.`
+            '💈 Sua vez está chegando! Prepare-se!',
+            `Faltam poucos minutos para você sentar na cadeira (Senha #${nextWaiting.ticketNumber}). Aperte "Já estou indo!" para confirmar.`,
+            { type: 'NEXT', ticketNumber: nextWaiting.ticketNumber, queueId: nextWaiting.id }
           );
         }
       }
@@ -1427,7 +1451,11 @@ app.post('/api/queue/respond', async (req: Request, res: Response) => {
     };
 
     if (response === 'A_CAMINHO') {
-      updates.status = 'A_CAMINHO';
+      if (item.status === 'CHAMADO' || item.status === 'PEDIU_TOLERANCIA') {
+        updates.status = 'A_CAMINHO';
+      } else {
+        updates.status = item.status;
+      }
     } else if (response === 'PEDIU_TOLERANCIA') {
       updates.status = 'PEDIU_TOLERANCIA';
       const curExpiry = item.calledToleranceExpiresAt ? new Date(item.calledToleranceExpiresAt) : now;
@@ -1493,8 +1521,9 @@ app.post('/api/queue/to-chair', async (req: Request, res: Response) => {
         sendQueuePushNotification(
           targetOrgId,
           nextInLine.notificationToken,
-          'Você é o próximo! 💈',
-          `O cliente da sua frente sentou na cadeira. Prepare-se! (Senha #${nextInLine.ticketNumber})`
+          '💈 Sua vez está chegando! Prepare-se!',
+          `O cliente da sua frente sentou na cadeira (Senha #${nextInLine.ticketNumber}). Aperte "Já estou indo!" para confirmar.`,
+          { type: 'NEXT', ticketNumber: nextInLine.ticketNumber, queueId: nextInLine.id }
         );
       }
     }
@@ -1546,8 +1575,9 @@ app.post('/api/queue/finish', async (req: Request, res: Response) => {
         sendQueuePushNotification(
           targetOrgId,
           firstInLine.notificationToken,
-          '✂️ Sua vez chegou!',
-          `O atendimento anterior terminou. Você assumiu o 1º lugar na fila! (Senha #${firstInLine.ticketNumber})`
+          '💈 Sua vez está chegando! Você é o próximo!',
+          `O atendimento anterior terminou. Você assumiu o 1º lugar na fila (Senha #${firstInLine.ticketNumber}). Aperte "Já estou indo!"`,
+          { type: 'NEXT', ticketNumber: firstInLine.ticketNumber, queueId: firstInLine.id }
         );
       }
 
@@ -1641,7 +1671,8 @@ app.post('/api/queue/mark-noshow', async (req: Request, res: Response) => {
           targetOrgId,
           firstInLine.notificationToken,
           '✂️ Prepare-se: Você é o próximo!',
-          `A cadeira foi liberada. Você agora é o 1º da fila na barbearia! (Senha #${firstInLine.ticketNumber})`
+          `A cadeira foi liberada. Você agora é o 1º da fila (Senha #${firstInLine.ticketNumber})! Aperte "Já estou indo!"`,
+          { type: 'NEXT', ticketNumber: firstInLine.ticketNumber, queueId: firstInLine.id }
         );
       }
     }
@@ -2529,8 +2560,8 @@ async function runServerAutoPilotCycle() {
               orgId,
               q.notificationToken,
               `💈 ${org.name}: Sua vez está chegando!`,
-              `Sua previsão de corte (Senha #${q.ticketNumber}) é em aproximadamente ${wait} minutos. Venha para a barbearia!`,
-              { type: 'REMINDER_15MIN', ticketNumber: q.ticketNumber }
+              `Sua previsão para sentar na cadeira (Senha #${q.ticketNumber}) é em ~${wait} minutos. Aperte "Já estou indo!" para confirmar!`,
+              { type: 'REMINDER_15MIN', ticketNumber: q.ticketNumber, queueId: q.id }
             );
           }
 

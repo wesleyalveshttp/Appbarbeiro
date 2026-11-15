@@ -10,7 +10,7 @@ const supabaseUrl =
   process.env.SUPABASE_URL ||
   process.env.NEXT_PUBLIC_SUPABASE_URL ||
   process.env.VITE_SUPABASE_URL ||
-  'https://xsmcfrualbyswoccyicl.supabase.co';
+  '';
 
 // SUPABASE_SERVICE_ROLE_KEY must be strictly loaded from backend environment variables.
 // Supports common aliases used in Vercel and CI environments.
@@ -20,7 +20,7 @@ const serviceRoleKey =
   process.env.SUPABASE_SECRET_KEY ||
   process.env.SUPABASE_ADMIN_KEY ||
   process.env.SUPABASE_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhzbWNmcnVhbGJ5c3dvY2N5aWNsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjI2MzIzNiwiZXhwIjoyMTA3ODM5MjM2fQ.FRg0B02pEwt9qxmj0NrWeCJpdwtEfdM3AVrxOiULDLc';
+  '';
 
 export const isSupabaseAdminConfigured = (): boolean => {
   return Boolean(

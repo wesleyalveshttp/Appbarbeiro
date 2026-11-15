@@ -618,6 +618,11 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
                               É o Próximo
                             </span>
                           )}
+                          {item.clientResponse === 'A_CAMINHO' && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                              🏃 Já está indo!
+                            </span>
+                          )}
                           {item.notes?.includes('[Vez mantida]') && (
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
                               ⭐ Vez Mantida

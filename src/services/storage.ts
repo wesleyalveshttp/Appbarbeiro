@@ -1946,7 +1946,9 @@ export class StorageService {
     item.clientResponseTime = now.toISOString();
 
     if (response === 'A_CAMINHO') {
-      item.status = 'A_CAMINHO';
+      if (item.status === 'CHAMADO' || item.status === 'PEDIU_TOLERANCIA') {
+        item.status = 'A_CAMINHO';
+      }
     } else if (response === 'PEDIU_TOLERANCIA') {
       item.status = 'PEDIU_TOLERANCIA';
       const curExpiry = item.calledToleranceExpiresAt ? new Date(item.calledToleranceExpiresAt) : now;

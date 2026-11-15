@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { getSupabaseAdminClient, isSupabaseAdminConfigured } from '../lib/supabase-admin.ts';
+import { FirestoreDBService } from './firestore-db.ts';
 
 // Cryptographic Password Hashing (Zero Plaintext Passwords)
 export function hashPassword(password: string, salt?: string): { hash: string; salt: string } {
@@ -24,9 +25,29 @@ export class SupabaseDBService {
   private static tablesReadyCache: boolean | null = null;
   private static lastTableCheck = 0;
   private static readonly CHECK_INTERVAL_MS = 15000;
+  private static useFirestoreFallback = false;
+  private static loggedFirestoreFallback = false;
 
   static isConfigured(): boolean {
-    return isSupabaseAdminConfigured();
+    return isSupabaseAdminConfigured() || FirestoreDBService.isConfigured();
+  }
+
+  static getActiveBackendName(): 'supabase' | 'firestore' {
+    if (!isSupabaseAdminConfigured() || this.useFirestoreFallback) {
+      return FirestoreDBService.isConfigured() ? 'firestore' : 'supabase';
+    }
+    return 'supabase';
+  }
+
+  private static async shouldUseFirestore(): Promise<boolean> {
+    if (!isSupabaseAdminConfigured()) {
+      return FirestoreDBService.isConfigured();
+    }
+    if (this.useFirestoreFallback && FirestoreDBService.isConfigured()) {
+      return true;
+    }
+    await this.checkTablesReady();
+    return this.useFirestoreFallback && FirestoreDBService.isConfigured();
   }
 
   // ---------------------------------------------------------------------------
@@ -35,9 +56,19 @@ export class SupabaseDBService {
   private static lastCheckError: string | null = null;
 
   static async checkTablesReady(force = false): Promise<boolean> {
-    if (!this.isConfigured()) {
-      this.lastCheckError = 'Supabase backend não configurado';
+    if (!isSupabaseAdminConfigured()) {
+      if (FirestoreDBService.isConfigured()) {
+        this.useFirestoreFallback = true;
+        this.lastCheckError = null;
+        this.tablesReadyCache = true;
+        return FirestoreDBService.checkReady();
+      }
+      this.lastCheckError = 'Banco de dados não configurado';
       return false;
+    }
+
+    if (!force && this.useFirestoreFallback && FirestoreDBService.isConfigured()) {
+      return true;
     }
 
     const now = Date.now();
@@ -51,16 +82,53 @@ export class SupabaseDBService {
       this.lastTableCheck = now;
 
       if (error) {
+        const msg = String(error.message || '');
+        const isNetworkError =
+          msg.includes('fetch failed') ||
+          msg.includes('ENOTFOUND') ||
+          msg.includes('ECONNREFUSED') ||
+          msg.includes('ETIMEDOUT');
+
+        if (isNetworkError && FirestoreDBService.isConfigured()) {
+          this.useFirestoreFallback = true;
+          this.lastCheckError = null;
+          this.tablesReadyCache = true;
+          if (!this.loggedFirestoreFallback) {
+            this.loggedFirestoreFallback = true;
+            console.log('☁️ [DB] Supabase inacessível — operando via Cloud Firestore.');
+          }
+          return true;
+        }
+
         console.error('[SupabaseDBService.checkTablesReady error]:', error.code, error.message);
         this.lastCheckError = `[${error.code}] ${error.message}`;
         this.tablesReadyCache = false;
         return false;
       }
 
+      this.useFirestoreFallback = false;
       this.lastCheckError = null;
       this.tablesReadyCache = true;
       return true;
     } catch (err: any) {
+      const msg = String(err?.message || '');
+      const isNetworkError =
+        msg.includes('fetch failed') ||
+        msg.includes('ENOTFOUND') ||
+        msg.includes('ECONNREFUSED') ||
+        msg.includes('ETIMEDOUT');
+
+      if (isNetworkError && FirestoreDBService.isConfigured()) {
+        this.useFirestoreFallback = true;
+        this.lastCheckError = null;
+        this.tablesReadyCache = true;
+        if (!this.loggedFirestoreFallback) {
+          this.loggedFirestoreFallback = true;
+          console.log('☁️ [DB] Supabase inacessível — operando via Cloud Firestore.');
+        }
+        return true;
+      }
+
       console.error('[SupabaseDBService.checkTablesReady exception]:', err);
       this.lastCheckError = err.message || 'Exceção ao conectar';
       this.tablesReadyCache = false;
@@ -72,12 +140,15 @@ export class SupabaseDBService {
     if (!isReady) {
       const detail = this.lastCheckError ? ` [${this.lastCheckError}]` : '';
       throw new Error(
-        `Tabelas do Supabase não encontradas no schema cache${detail}. Execute o script supabase-schema.sql no SQL Editor do seu projeto Supabase: https://supabase.com/dashboard/project/xsmcfrualbyswoccyicl/sql`
+        `Tabelas do banco de dados não encontradas${detail}. Verifique a conexão com o Firestore ou execute supabase-schema.sql no Supabase.`
       );
     }
   }
 
   static async ensureDefaultSeed(): Promise<void> {
+    if (await this.shouldUseFirestore()) {
+      return FirestoreDBService.ensureDefaultSeed();
+    }
     const ready = await this.checkTablesReady();
     if (!ready) return;
     try {
@@ -156,6 +227,7 @@ export class SupabaseDBService {
   // ORGANIZATIONS (BARBERSHOPS)
   // ---------------------------------------------------------------------------
   static async getOrganizationById(id: string): Promise<any | null> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.getOrganizationById(id);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -173,6 +245,7 @@ export class SupabaseDBService {
   }
 
   static async getOrganizationBySlug(slug: string): Promise<any | null> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.getOrganizationBySlug(slug);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -191,6 +264,7 @@ export class SupabaseDBService {
   }
 
   static async getOrganizationByLogin(term: string): Promise<any | null> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.getOrganizationByLogin(term);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -227,6 +301,7 @@ export class SupabaseDBService {
   }
 
   static async getAllOrganizations(): Promise<any[]> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.getAllOrganizations();
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -261,6 +336,7 @@ export class SupabaseDBService {
     isActive?: boolean;
     subscription?: any;
   }): Promise<any> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.createOrganization(org);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -316,6 +392,7 @@ export class SupabaseDBService {
   }
 
   static async updateOrganization(id: string, updates: Partial<any>): Promise<any> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.updateOrganization(id, updates);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -428,6 +505,7 @@ export class SupabaseDBService {
       invoices?: any[];
     }
   ): Promise<any> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.updateSubscriptionForOrg(organizationId, subscription);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -487,6 +565,7 @@ export class SupabaseDBService {
   }
 
   static async deleteOrganization(id: string): Promise<boolean> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.deleteOrganization(id);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -537,6 +616,7 @@ export class SupabaseDBService {
     professionals: any[];
     queue: any[];
   } | null> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.getPublicEstablishment(slug);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -694,6 +774,7 @@ export class SupabaseDBService {
     notificationToken?: string;
     subscriptionData?: any;
   }): Promise<any> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.joinQueue(params);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -807,6 +888,7 @@ export class SupabaseDBService {
   // QUEUE OPERATIONS (TENANT ISOLATED)
   // ---------------------------------------------------------------------------
   static async getQueueForOrganization(organizationId: string): Promise<any[]> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.getQueueForOrganization(organizationId);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -822,6 +904,7 @@ export class SupabaseDBService {
   }
 
   static async getQueueItemById(id: string, organizationId?: string): Promise<any | null> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.getQueueItemById(id, organizationId);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -850,8 +933,12 @@ export class SupabaseDBService {
       estimatedWaitMinutes?: number;
       notes?: string;
       ticketNumber?: number;
+      clientResponse?: string;
+      clientResponseTime?: string;
+      toleranceExtraMinutes?: number;
     }
   ): Promise<any> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.updateQueueItemStatus(id, organizationId, updates);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -869,6 +956,26 @@ export class SupabaseDBService {
     if (updates.notes !== undefined) dbUpdates.notes = updates.notes;
     if (updates.ticketNumber !== undefined) dbUpdates.ticket_number = updates.ticketNumber;
 
+    if (updates.clientResponse !== undefined) {
+      let baseNotes = updates.notes;
+      if (baseNotes === undefined) {
+        const current = await this.getQueueItemById(id, organizationId).catch(() => null);
+        baseNotes = current?.notes || '';
+      }
+      const cleanedNotes = String(baseNotes || '')
+        .replace(/\s*\[RESP:[^\]]+\]/g, '')
+        .replace(/\s*\[Cliente já está indo[^\]]*\]/g, '')
+        .trim();
+      const timeTag = updates.clientResponseTime || new Date().toISOString();
+      const humanLabel =
+        updates.clientResponse === 'A_CAMINHO'
+          ? '[Cliente já está indo]'
+          : updates.clientResponse === 'PEDIU_TOLERANCIA'
+          ? '[Pediu +3 min]'
+          : '';
+      dbUpdates.notes = `${cleanedNotes} ${humanLabel} [RESP:${updates.clientResponse}@${timeTag}]`.trim();
+    }
+
     const { data, error } = await client
       .from('queue')
       .update(dbUpdates)
@@ -883,6 +990,7 @@ export class SupabaseDBService {
   }
 
   static async removeQueueItem(id: string, organizationId: string): Promise<boolean> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.removeQueueItem(id, organizationId);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -901,6 +1009,7 @@ export class SupabaseDBService {
   // SERVICES (TENANT ISOLATED)
   // ---------------------------------------------------------------------------
   static async getServicesForOrg(organizationId: string): Promise<any[]> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.getServicesForOrg(organizationId);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -937,6 +1046,7 @@ export class SupabaseDBService {
     professionalIds?: string[];
     isActive?: boolean;
   }): Promise<any> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.createService(service);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -960,6 +1070,7 @@ export class SupabaseDBService {
   }
 
   static async updateService(id: string, organizationId: string, updates: any): Promise<any> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.updateService(id, organizationId, updates);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -987,6 +1098,7 @@ export class SupabaseDBService {
   }
 
   static async deleteService(id: string, organizationId: string): Promise<boolean> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.deleteService(id, organizationId);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -1000,6 +1112,7 @@ export class SupabaseDBService {
   // PROFESSIONALS (TENANT ISOLATED)
   // ---------------------------------------------------------------------------
   static async getProfessionalsForOrg(organizationId: string): Promise<any[]> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.getProfessionalsForOrg(organizationId);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -1044,6 +1157,7 @@ export class SupabaseDBService {
     workingDays?: number[];
     isActive?: boolean;
   }): Promise<any> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.createProfessional(prof);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -1071,6 +1185,7 @@ export class SupabaseDBService {
   }
 
   static async updateProfessional(id: string, organizationId: string, updates: any): Promise<any> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.updateProfessional(id, organizationId, updates);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -1102,6 +1217,7 @@ export class SupabaseDBService {
   }
 
   static async deleteProfessional(id: string, organizationId: string): Promise<boolean> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.deleteProfessional(id, organizationId);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -1115,6 +1231,7 @@ export class SupabaseDBService {
   // APPOINTMENTS (TENANT ISOLATED)
   // ---------------------------------------------------------------------------
   static async getAppointmentsForOrg(organizationId: string, date?: string): Promise<any[]> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.getAppointmentsForOrg(organizationId, date);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -1159,6 +1276,7 @@ export class SupabaseDBService {
     totalPrice?: number;
     notes?: string;
   }): Promise<any> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.createAppointment(apt);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -1186,6 +1304,7 @@ export class SupabaseDBService {
   }
 
   static async updateAppointment(id: string, organizationId: string, updates: any): Promise<any> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.updateAppointment(id, organizationId, updates);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -1211,6 +1330,7 @@ export class SupabaseDBService {
   }
 
   static async deleteAppointment(id: string, organizationId: string): Promise<boolean> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.deleteAppointment(id, organizationId);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -1224,6 +1344,7 @@ export class SupabaseDBService {
   // CUSTOMERS (TENANT ISOLATED)
   // ---------------------------------------------------------------------------
   static async getCustomersForOrg(organizationId: string): Promise<any[]> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.getCustomersForOrg(organizationId);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -1246,6 +1367,7 @@ export class SupabaseDBService {
     email?: string;
     spentIncrement?: number;
   }): Promise<any> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.createOrUpdateCustomer(cust);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -1305,6 +1427,7 @@ export class SupabaseDBService {
   // TRANSACTIONS & FINANCIALS (TENANT ISOLATED)
   // ---------------------------------------------------------------------------
   static async getTransactionsForOrg(organizationId: string): Promise<any[]> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.getTransactionsForOrg(organizationId);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -1330,6 +1453,7 @@ export class SupabaseDBService {
     professionalId?: string;
     date?: string;
   }): Promise<any> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.createTransaction(tx);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -1367,6 +1491,7 @@ export class SupabaseDBService {
     expiresAt?: string;
     metadata?: any;
   }): Promise<any> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.saveSubscription(sub);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -1391,6 +1516,7 @@ export class SupabaseDBService {
   }
 
   static async getSubscriptionForOrg(organizationId: string): Promise<any | null> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.getSubscriptionForOrg(organizationId);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -1411,6 +1537,7 @@ export class SupabaseDBService {
   // WEB PUSH SUBSCRIPTIONS
   // ---------------------------------------------------------------------------
   static async savePushSubscription(organizationId: string, token: string, subscriptionData: any): Promise<void> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.savePushSubscription(organizationId, token, subscriptionData);
     const ready = await this.checkTablesReady();
     if (!ready) return;
 
@@ -1427,6 +1554,7 @@ export class SupabaseDBService {
   }
 
   static async getPushSubscriptionsForOrg(organizationId: string): Promise<any[]> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.getPushSubscriptionsForOrg(organizationId);
     const ready = await this.checkTablesReady();
     if (!ready) return [];
 
@@ -1443,6 +1571,7 @@ export class SupabaseDBService {
   }
 
   static async getPushSubscriptionByToken(token: string): Promise<any | null> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.getPushSubscriptionByToken(token);
     const ready = await this.checkTablesReady();
     if (!ready) return null;
 
@@ -1460,6 +1589,7 @@ export class SupabaseDBService {
   }
 
   static async deletePushSubscription(token: string): Promise<void> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.deletePushSubscription(token);
     const ready = await this.checkTablesReady();
     if (!ready) return;
 
@@ -1481,6 +1611,7 @@ export class SupabaseDBService {
     userName?: string;
     expiresAt: string;
   }): Promise<any> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.createSession(session);
     const ready = await this.checkTablesReady();
     this.assertTablesReady(ready);
 
@@ -1504,6 +1635,7 @@ export class SupabaseDBService {
   }
 
   static async getSession(token: string): Promise<any | null> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.getSession(token);
     const ready = await this.checkTablesReady();
     if (!ready) return null;
 
@@ -1536,6 +1668,7 @@ export class SupabaseDBService {
   }
 
   static async deleteSession(token: string): Promise<boolean> {
+    if (await this.shouldUseFirestore()) return FirestoreDBService.deleteSession(token);
     const ready = await this.checkTablesReady();
     if (!ready) return false;
 
@@ -1586,6 +1719,15 @@ export class SupabaseDBService {
   }
 
   private static mapQueueItemFromDb(row: any): any {
+    const rawNotes = String(row.notes || '');
+    const respMatch = rawNotes.match(/\[RESP:(A_CAMINHO|PEDIU_TOLERANCIA|NAO_PODE)(?:@([^\]]+))?\]/);
+    const derivedResponse =
+      row.client_response ||
+      (respMatch ? respMatch[1] : undefined) ||
+      (row.status === 'A_CAMINHO' ? 'A_CAMINHO' : row.status === 'PEDIU_TOLERANCIA' ? 'PEDIU_TOLERANCIA' : undefined);
+    const derivedResponseTime = row.client_response_time || (respMatch && respMatch[2] ? respMatch[2] : undefined);
+    const displayNotes = rawNotes.replace(/\s*\[RESP:[^\]]+\]/g, '').trim() || undefined;
+
     return {
       id: row.id,
       ticketNumber: row.ticket_number,
@@ -1597,7 +1739,7 @@ export class SupabaseDBService {
       preferredProfessionalId: row.preferred_professional_id,
       assignedProfessionalId: row.assigned_professional_id,
       status: row.status,
-      notes: row.notes,
+      notes: displayNotes,
       joinedAt: row.joined_at,
       estimatedWaitMinutes: row.estimated_wait_minutes,
       notificationToken: row.notification_token,
@@ -1606,6 +1748,8 @@ export class SupabaseDBService {
       calledToleranceExpiresAt: row.called_tolerance_expires_at,
       onChairAt: row.on_chair_at,
       finishedAt: row.finished_at,
+      clientResponse: derivedResponse,
+      clientResponseTime: derivedResponseTime,
     };
   }
 

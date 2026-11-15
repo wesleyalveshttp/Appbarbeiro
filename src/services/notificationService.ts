@@ -12,6 +12,7 @@ export interface PushNotificationPayload {
   vibratePattern?: number[];
   ticketNumber?: number;
   url?: string;
+  skipSound?: boolean;
 }
 
 export interface RemotePushSubscriptionResult {
@@ -101,27 +102,35 @@ class NotificationServiceClass {
 
       // Listen for push messages dispatched to active window
       navigator.serviceWorker.addEventListener('message', (event) => {
-        const { type, payload, playAlarm, action } = event.data || {};
+        const { type, payload, silenceAlarm, action } = event.data || {};
 
         if (type === 'REMOTE_PUSH_RECEIVED' && payload) {
           console.log('🔔 Remote push notification received in client:', payload);
-          // Only play ringtone if it's the customer's call or turn
           if (payload.isCalled || payload.type === 'CALLED') {
-            this.startRepeatingAlarm('CALLED', 4000);
-          } else if (payload.type === 'NEXT') {
-            this.playSound('NEXT');
-            this.vibrate([350, 150, 350, 150, 350]);
+            this.startRepeatingAlarm('CALLED', 3500);
+          } else if (payload.type === 'NEXT' || payload.type === 'REMINDER_15MIN') {
+            this.startRepeatingAlarm('NEXT', 4500);
           }
 
           // Emit local event so components update immediately
           window.dispatchEvent(
             new CustomEvent('barberos_remote_push_alert', { detail: payload })
           );
+        } else if (type === 'SILENCE_ALARM' || silenceAlarm) {
+          console.log('🔕 Silencing notification alarm via Service Worker action:', action);
+          this.stopRepeatingAlarm();
+          window.dispatchEvent(
+            new CustomEvent('barberos_alarm_silenced', { detail: { payload, action } })
+          );
         } else if (type === 'PUSH_NOTIFICATION_CLICKED') {
-          console.log('🎯 Push notification clicked, focusing window and sounding confirmation chime:', { payload, action });
-          this.unlockAudio();
-          this.playSound('CALLED');
-          this.vibrate([500, 150, 500, 150, 800]);
+          if (action === 'on_my_way' || action === 'tolerance' || action === 'silence_alarm') {
+            this.stopRepeatingAlarm();
+            window.dispatchEvent(
+              new CustomEvent('barberos_alarm_silenced', { detail: { payload, action } })
+            );
+          } else {
+            this.unlockAudio();
+          }
 
           window.dispatchEvent(
             new CustomEvent('barberos_push_clicked', { detail: { payload, action } })
@@ -275,6 +284,20 @@ class NotificationServiceClass {
   private persistentAudio: HTMLAudioElement | null = null;
   private repeatingAlarmTimer: any = null;
   private cachedAudioUrls: Record<string, string> = {};
+  private activeOscillators: OscillatorNode[] = [];
+  private activeMasterGains: GainNode[] = [];
+  private alarmPlaying = false;
+
+  public isAlarmPlaying(): boolean {
+    return this.alarmPlaying;
+  }
+
+  private emitAlarmState(playing: boolean): void {
+    this.alarmPlaying = playing;
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('barberos_alarm_state', { detail: { playing } }));
+    }
+  }
 
   private getAudioContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
@@ -463,15 +486,21 @@ class NotificationServiceClass {
     }
   }
 
-  // Start continuous repeating loud chime alarm until client confirms arrival or leaves
+  // Start continuous repeating chime alarm until client confirms "Já estou indo" or leaves
   public startRepeatingAlarm(type: 'CALLED' | 'NEXT' = 'CALLED', intervalMs: number = 4200) {
     this.stopRepeatingAlarm();
+    this.emitAlarmState(true);
     this.playSound(type);
-    this.vibrate([600, 200, 600, 200, 1000, 250, 1000]);
+    const vibPattern =
+      type === 'CALLED'
+        ? [600, 200, 600, 200, 1000, 250, 1000]
+        : [350, 150, 350, 150, 450];
+    this.vibrate(vibPattern);
 
     this.repeatingAlarmTimer = setInterval(() => {
+      if (!this.alarmPlaying) return;
       this.playSound(type);
-      this.vibrate([600, 200, 600, 200, 1000, 250, 1000]);
+      this.vibrate(vibPattern);
     }, intervalMs);
   }
 
@@ -480,6 +509,52 @@ class NotificationServiceClass {
       clearInterval(this.repeatingAlarmTimer);
       this.repeatingAlarmTimer = null;
     }
+
+    // Immediately silence HTML5 persistent audio
+    if (this.persistentAudio) {
+      try {
+        this.persistentAudio.pause();
+        this.persistentAudio.currentTime = 0;
+      } catch {}
+    }
+
+    // Immediately silence and stop all active Web Audio oscillators & gain nodes
+    for (const gain of this.activeMasterGains) {
+      try {
+        gain.gain.cancelScheduledValues(0);
+        gain.gain.setValueAtTime(0, this.audioCtx?.currentTime || 0);
+        gain.disconnect();
+      } catch {}
+    }
+    this.activeMasterGains = [];
+
+    for (const osc of this.activeOscillators) {
+      try {
+        osc.stop();
+        osc.disconnect();
+      } catch {}
+    }
+    this.activeOscillators = [];
+
+    // Stop any ongoing hardware vibration
+    if (typeof window !== 'undefined' && 'navigator' in window && typeof navigator.vibrate === 'function') {
+      try {
+        navigator.vibrate(0);
+      } catch {}
+    }
+
+    // Close active Service Worker notifications so OS stops notification alert
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+      navigator.serviceWorker
+        .getRegistration()
+        .then((reg) => reg?.getNotifications?.())
+        .then((notifications) => {
+          notifications?.forEach((n) => n.close());
+        })
+        .catch(() => {});
+    }
+
+    this.emitAlarmState(false);
   }
 
   // Rich bell tone with harmonics and natural decay
@@ -502,6 +577,13 @@ class NotificationServiceClass {
     osc2.connect(gainNode);
     gainNode.connect(ctx.destination);
 
+    this.activeOscillators.push(osc1, osc2);
+    this.activeMasterGains.push(gainNode);
+    osc1.onended = () => {
+      this.activeOscillators = this.activeOscillators.filter((o) => o !== osc1 && o !== osc2);
+      this.activeMasterGains = this.activeMasterGains.filter((g) => g !== gainNode);
+    };
+
     osc1.start(startTime);
     osc2.start(startTime);
     osc1.stop(startTime + duration + 0.05);
@@ -521,6 +603,13 @@ class NotificationServiceClass {
 
     osc.connect(gain);
     gain.connect(ctx.destination);
+
+    this.activeOscillators.push(osc);
+    this.activeMasterGains.push(gain);
+    osc.onended = () => {
+      this.activeOscillators = this.activeOscillators.filter((o) => o !== osc);
+      this.activeMasterGains = this.activeMasterGains.filter((g) => g !== gain);
+    };
 
     osc.start(startTime);
     osc.stop(startTime + duration + 0.05);
@@ -557,8 +646,10 @@ class NotificationServiceClass {
         ? [300, 150, 300, 150, 300]
         : [250, 100, 250]);
 
-    this.playSound(payload.type);
-    this.vibrate(vibration);
+    if (!payload.skipSound) {
+      this.playSound(payload.type);
+      this.vibrate(vibration);
+    }
 
     if (Notification.permission !== 'granted') {
       return false;
