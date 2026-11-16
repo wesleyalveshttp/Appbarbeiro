@@ -113,8 +113,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ organization }) => {
 
         <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800">
           <span className="text-xs text-slate-400">Tempo Médio na Fila</span>
-          <div className="mt-2 text-2xl font-black text-amber-400 font-mono">
-            ~{avgWaitTime} min
+          <div className="mt-2 text-2xl font-black text-amber-400 font-mono tabular-nums">
+            {avgWaitTime} min
           </div>
           <span className="text-[11px] text-slate-500">Estimativa calculada</span>
         </div>

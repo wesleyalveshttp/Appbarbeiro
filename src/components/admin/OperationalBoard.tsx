@@ -648,8 +648,8 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
 
                     <div className="flex items-center justify-between text-[11px] text-slate-300 bg-slate-900/80 p-2 rounded-lg border border-slate-800">
                       <span>Barbeiro: <strong>{apt.professionalName}</strong></span>
-                      <span className="text-emerald-400 font-mono font-semibold">
-                        ~{calculateMinutesElapsed(apt.onChairAt)} min
+                      <span className="text-emerald-400 font-mono font-semibold tabular-nums">
+                        {calculateMinutesElapsed(apt.onChairAt)} min
                       </span>
                     </div>
 
@@ -695,8 +695,8 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
 
                       <div className="flex items-center justify-between text-[11px] text-slate-300 bg-slate-900/80 p-2 rounded-lg border border-slate-800">
                         <span>Barbeiro: <strong>{prof?.name || 'Profissional'}</strong></span>
-                        <span className="text-emerald-400 font-mono font-semibold">
-                          ~{calculateMinutesElapsed(item.onChairAt)} min
+                        <span className="text-emerald-400 font-mono font-semibold tabular-nums">
+                          {calculateMinutesElapsed(item.onChairAt)} min
                         </span>
                       </div>
 

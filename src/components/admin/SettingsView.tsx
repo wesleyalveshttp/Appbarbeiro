@@ -17,7 +17,9 @@ import {
   Lock,
   Eye,
   EyeOff,
-  Globe
+  Globe,
+  AlertTriangle,
+  X
 } from 'lucide-react';
 import { StorageService } from '../../services/storage';
 import { Organization } from '../../types';
@@ -53,6 +55,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ organization, onNavi
 
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -451,17 +454,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ organization, onNavi
 
           <button
             type="button"
-            onClick={() => {
-              if (confirm('Tem certeza que deseja zerar todas as métricas, fila, atendimentos e clientes deste salão para o primeiro uso?')) {
-                StorageService.resetAllMetrics(organization.id);
-                setResetSuccess(true);
-                setTimeout(() => setResetSuccess(false), 3500);
-              }
-            }}
+            onClick={() => setIsResetModalOpen(true)}
             className="flex items-center gap-2 rounded-xl bg-rose-600 hover:bg-rose-500 px-4 py-2 text-xs font-bold text-white shadow-md transition cursor-pointer shrink-0"
           >
             <RotateCcw className="h-3.5 w-3.5" />
-            <span>Zerar Todas as Métricas Agora</span>
+            <span>Zerar Métricas</span>
           </button>
         </div>
 
@@ -472,6 +469,59 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ organization, onNavi
           </div>
         )}
       </div>
+
+      {/* Confirmation Modal for Zerar Métricas */}
+      {isResetModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-2xl border border-rose-500/30 bg-slate-900 p-6 shadow-2xl space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                  <AlertTriangle className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Confirmar Limpeza de Métricas</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">{organization.name}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsResetModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                aria-label="Fechar"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Esta ação apaga permanentemente os agendamentos, fila de espera atual, histórico de clientes, avaliações e lançamentos de caixa deste estabelecimento. Use apenas antes de iniciar a operação real.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsResetModalOpen(false)}
+                className="rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-750 px-4 py-2 text-xs font-semibold text-slate-200 transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  StorageService.resetAllMetrics(organization.id);
+                  setIsResetModalOpen(false);
+                  setResetSuccess(true);
+                  setTimeout(() => setResetSuccess(false), 4000);
+                }}
+                className="rounded-xl bg-rose-600 hover:bg-rose-500 px-4 py-2 text-xs font-bold text-white shadow-md transition cursor-pointer"
+              >
+                Sim, Zerar Métricas
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
