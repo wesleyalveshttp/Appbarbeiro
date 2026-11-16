@@ -676,6 +676,7 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
                 {/* On Chair from Queue */}
                 {onChairQueue.map((item) => {
                   const prof = professionals.find(p => p.id === item.assignedProfessionalId) || professionals[0];
+                  const resolvedPrice = StorageService.getServiceById(item.serviceId)?.price || item.servicePrice || 45;
                   return (
                     <div
                       key={item.id}
@@ -691,6 +692,9 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
                             <div className="text-xs text-emerald-300">{item.serviceName}</div>
                           </div>
                         </div>
+                        <span className="text-xs font-mono font-bold text-emerald-400 bg-slate-950 px-2 py-0.5 rounded tabular-nums">
+                          R$ {resolvedPrice.toFixed(2)}
+                        </span>
                       </div>
 
                       <div className="flex items-center justify-between text-[11px] text-slate-300 bg-slate-900/80 p-2 rounded-lg border border-slate-800">
@@ -707,7 +711,7 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
                             type: 'QUEUE',
                             name: item.customerName,
                             serviceName: item.serviceName,
-                            servicePrice: 45, // default
+                            servicePrice: resolvedPrice,
                             professionalName: prof?.name || 'Barbeiro',
                             professionalId: prof?.id || 'prof-1',
                           })
@@ -766,25 +770,28 @@ export const OperationalBoard: React.FC<OperationalBoardProps> = ({
                   </div>
                 ))}
 
-                {finishedQueue.map((item) => (
-                  <div
-                    key={item.id}
-                    className="rounded-xl bg-slate-950 border border-slate-800/80 p-3 flex items-center justify-between gap-2"
-                  >
-                    <div>
-                      <div className="text-xs font-bold text-slate-200">{item.customerName}</div>
-                      <div className="text-[11px] text-slate-500">{item.serviceName}</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs font-bold text-emerald-400 font-mono">
-                        R$ 45,00
+                {finishedQueue.map((item) => {
+                  const resolvedPrice = StorageService.getServiceById(item.serviceId)?.price || item.servicePrice || 45;
+                  return (
+                    <div
+                      key={item.id}
+                      className="rounded-xl bg-slate-950 border border-slate-800/80 p-3 flex items-center justify-between gap-2"
+                    >
+                      <div>
+                        <div className="text-xs font-bold text-slate-200">{item.customerName}</div>
+                        <div className="text-[11px] text-slate-500">{item.serviceName}</div>
                       </div>
-                      <span className="text-[9px] uppercase px-1 rounded bg-slate-800 text-slate-400">
-                        Fila
-                      </span>
+                      <div className="text-right">
+                        <div className="text-xs font-bold text-emerald-400 font-mono tabular-nums">
+                          R$ {resolvedPrice.toFixed(2).replace('.', ',')}
+                        </div>
+                        <span className="text-[9px] uppercase px-1 rounded bg-slate-800 text-slate-400">
+                          Fila
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </>
             )}
           </div>

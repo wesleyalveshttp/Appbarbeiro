@@ -113,7 +113,10 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
 
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/mercadopago/payment-status/${pixPaymentData.paymentId}`);
+        const token = StorageService.getAuthToken();
+        const res = await fetch(`/api/mercadopago/payment-status/${pixPaymentData.paymentId}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
         if (res.ok) {
           const data = await res.json();
           if (data.status === 'approved') {
@@ -136,9 +139,13 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
     setErrorMessage(null);
 
     try {
+      const token = StorageService.getAuthToken();
       const res = await fetch('/api/mercadopago/create-checkout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           organizationId: organization.id,
           planType: selectedPlan,
@@ -175,9 +182,13 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
     setErrorMessage(null);
 
     try {
+      const token = StorageService.getAuthToken();
       const res = await fetch('/api/mercadopago/create-checkout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           organizationId: organization.id,
           planType: selectedPlan,
@@ -219,7 +230,10 @@ export const SubscriptionCheckoutModal: React.FC<SubscriptionCheckoutModalProps>
     setErrorMessage(null);
 
     try {
-      const res = await fetch(`/api/mercadopago/payment-status/${pixPaymentData.paymentId}`);
+      const token = StorageService.getAuthToken();
+      const res = await fetch(`/api/mercadopago/payment-status/${pixPaymentData.paymentId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       const data = await res.json();
 
       if (data.status === 'approved') {

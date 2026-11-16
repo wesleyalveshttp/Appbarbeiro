@@ -18,8 +18,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({ organization
 
   useEffect(() => {
     reloadNotifications();
-    const unsub = StorageService.getNotifications(organizationId);
-    setNotifications(unsub);
+    const unsub = StorageService.subscribeToRealtimeEvents(() => reloadNotifications());
 
     const handleClickOutside = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
@@ -27,7 +26,10 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({ organization
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    return () => {
+      unsub();
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
   }, [organizationId]);
 
   const unreadCount = notifications.filter(n => !n.isRead).length;

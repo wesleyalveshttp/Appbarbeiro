@@ -190,7 +190,9 @@ export default function App() {
               org = StorageService.getOrganizationById(session.organizationId);
               if (!org) {
                 try {
-                  const orgRes = await fetch(`/api/organizations/${encodeURIComponent(session.organizationId)}`);
+                  const orgRes = await fetch(`/api/organizations/${encodeURIComponent(session.organizationId)}`, {
+                    headers: session.token ? { Authorization: `Bearer ${session.token}` } : {},
+                  });
                   if (orgRes.ok) {
                     const orgData = await orgRes.json();
                     if (orgData?.organization) {
@@ -270,6 +272,22 @@ export default function App() {
     };
   }, []);
 
+  const isSuperAdminRoute =
+    currentRoute === 'superadmin' ||
+    currentRoute === 'superadmin-orgs' ||
+    currentRoute === 'superadmin-plans' ||
+    currentRoute === 'superadmin-logs';
+  const isSuperAdminAuthed = StorageService.isSuperAdminAuthenticated();
+
+  useEffect(() => {
+    if (isSuperAdminRoute && !isSuperAdminAuthed) {
+      setCurrentRoute('landing');
+      setPublicRouteParams({ type: null });
+      setLoginInitialTab('SUPER_ADMIN');
+      setIsLoginModalOpen(true);
+    }
+  }, [isSuperAdminRoute, isSuperAdminAuthed]);
+
   const handleSelectOrg = (org: Organization) => {
     setCurrentOrg(org);
     StorageService.setCurrentOrgId(org.id);
@@ -282,6 +300,10 @@ export default function App() {
   };
 
   const handleChangeRole = (role: UserRole, professionalId?: string) => {
+    if (role === 'SUPER_ADMIN' && !StorageService.isSuperAdminAuthenticated()) {
+      handleOpenLogin('SUPER_ADMIN');
+      return;
+    }
     setCurrentRole(role);
     setSelectedProfessionalId(professionalId);
     StorageService.setCurrentRole(role, professionalId);
@@ -318,6 +340,16 @@ export default function App() {
   };
 
   const handleNavigate = (route: string) => {
+    if (
+      (route === 'superadmin' || route.startsWith('superadmin-')) &&
+      !StorageService.isSuperAdminAuthenticated()
+    ) {
+      setCurrentRoute('landing');
+      setPublicRouteParams({ type: null });
+      setLoginInitialTab('SUPER_ADMIN');
+      setIsLoginModalOpen(true);
+      return;
+    }
     if (route === 'public-queue') {
       handleNavigateToPublic('QUEUE');
       return;
@@ -467,6 +499,7 @@ export default function App() {
   }
 
   const activeSession = authSession.isAuthenticated ? authSession : StorageService.getAuthSession();
+
   const isPublicRoute =
     currentRoute === 'landing' ||
     currentRoute === 'public-booking' ||
@@ -476,7 +509,11 @@ export default function App() {
     currentRoute === 'client-portal';
 
   // 2. Render Marketing Landing Page or Protect Internal Routes if not authenticated
-  if (currentRoute === 'landing' || (!isPublicRoute && !activeSession.isAuthenticated)) {
+  if (
+    currentRoute === 'landing' ||
+    (!isPublicRoute && !activeSession.isAuthenticated) ||
+    (isSuperAdminRoute && !isSuperAdminAuthed)
+  ) {
     return (
       <>
         <LandingPage
@@ -507,9 +544,9 @@ export default function App() {
 
         {/* Global Login Modal */}
         <LoginModal
-          isOpen={isLoginModalOpen}
+          isOpen={isLoginModalOpen || (isSuperAdminRoute && !isSuperAdminAuthed)}
           onClose={() => setIsLoginModalOpen(false)}
-          initialTab={loginInitialTab}
+          initialTab={isSuperAdminRoute && !isSuperAdminAuthed ? 'SUPER_ADMIN' : loginInitialTab}
           onSuccess={handleLoginSuccess}
           onOpenRegister={() => {
             setIsLoginModalOpen(false);
@@ -521,12 +558,7 @@ export default function App() {
   }
 
   // 3. Super Admin Panel doesn't require an active tenant organization
-  if (
-    currentRoute === 'superadmin' ||
-    currentRoute === 'superadmin-orgs' ||
-    currentRoute === 'superadmin-plans' ||
-    currentRoute === 'superadmin-logs'
-  ) {
+  if (isSuperAdminRoute && isSuperAdminAuthed) {
     const adminFallbackOrg = currentOrg || StorageService.getAllOrganizations()[0] || {
       id: 'org-prime',
       name: 'Painel Global SuperAdmin',
@@ -806,10 +838,7 @@ export default function App() {
             )}
 
             {/* Super Admin Global Panel */}
-            {(currentRoute === 'superadmin' ||
-              currentRoute === 'superadmin-orgs' ||
-              currentRoute === 'superadmin-plans' ||
-              currentRoute === 'superadmin-logs') && (
+            {isSuperAdminRoute && isSuperAdminAuthed && (
               <SuperAdminDashboard />
             )}
 

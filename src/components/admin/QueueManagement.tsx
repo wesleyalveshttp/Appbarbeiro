@@ -74,7 +74,10 @@ export const QueueManagement: React.FC<QueueManagementProps> = ({ organization, 
 
   const loadPushLogs = async () => {
     try {
-      const res = await fetch(`/api/push/logs/${organization.id}`);
+      const token = StorageService.getAuthToken();
+      const res = await fetch(`/api/push/logs/${organization.id}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (res.ok) {
         const data = await res.json();
         setPushLogs(data.logs || []);

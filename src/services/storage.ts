@@ -333,7 +333,10 @@ export class StorageService {
   static async syncWithServer(): Promise<AppDatabase | null> {
     if (typeof window === 'undefined') return null;
     try {
-      const res = await fetch('/api/db');
+      const token = this.getAuthToken();
+      const res = await fetch('/api/db', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (res.ok) {
         const serverDb: AppDatabase = await res.json();
         if (serverDb && Array.isArray(serverDb.organizations) && serverDb.organizations.length > 0) {

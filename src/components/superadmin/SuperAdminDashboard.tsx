@@ -72,7 +72,11 @@ export const SuperAdminDashboard: React.FC = () => {
     setCloudSyncing(true);
     setCloudSyncSuccess(null);
     try {
-      const res = await fetch('/api/cloud/sync', { method: 'POST' });
+      const token = StorageService.getAuthToken();
+      const res = await fetch('/api/cloud/sync', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       const data = await res.json();
       if (res.ok && data.success) {
         setCloudSyncSuccess('Sincronização com o Google Cloud Firestore concluída com sucesso!');
